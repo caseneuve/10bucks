@@ -1,0 +1,216 @@
+local Bar = {}
+Bar.__index = Bar
+
+local function attempt(object, method, ...)
+  if not object or type(object[method]) ~= "function" then return nil end
+  local ok, value = pcall(object[method], object, ...)
+  return ok and value or nil
+end
+
+local function truncate(text, maximum)
+  text = tostring(text or "")
+  if #text <= maximum then return text end
+  return text:sub(1, math.max(1, maximum - 1)) .. "…"
+end
+
+local function screenId(screen)
+  return tostring(screen:getUUID())
+end
+
+function Bar.new(hs, engine, repository, workspaces, config)
+  assert(workspaces, "10bucks bar requires workspaces")
+  return setmetatable({
+    hs = hs,
+    engine = engine,
+    repository = repository,
+    workspaces = workspaces,
+    config = config,
+    canvases = {},
+  }, Bar)
+end
+
+-- Draw the two layout modes directly in the canvas. This follows the
+-- overlapping-window and two-pane icons without requiring a separately
+-- installed icon font or relying on text baseline metrics.
+function Bar:layoutIconElements(layout, x, topPadding, contentHeight)
+  local color = self.config.textColor
+  local size = 11
+  -- Canvas text sits high within its frame; reserve five points below the
+  -- smaller geometric icon so its visual center tracks the text glyphs.
+  local y = math.max(0, topPadding + math.max(0, (contentHeight - size) / 2) - 5)
+  local function outline(frame)
+    return {
+      type = "rectangle",
+      action = "stroke",
+      frame = frame,
+      strokeColor = color,
+      strokeWidth = 1.5,
+    }
+  end
+
+  if layout == "columns" then
+    return {
+      outline({ x = x, y = y, w = 13, h = size }),
+      {
+        type = "rectangle",
+        action = "fill",
+        frame = { x = x + 6, y = y + 1, w = 1, h = size - 2 },
+        fillColor = color,
+      },
+    }
+  end
+
+  return {
+    outline({ x = x, y = y, w = 9, h = 8 }),
+    outline({ x = x + 3, y = y + 3, w = 9, h = 8 }),
+  }
+end
+
+-- Return the layout separately so its canvas icon can sit directly beside the
+-- selected/total stack count without an intervening field separator.
+function Bar:status(screen)
+  local window = self.repository:focusedWindow()
+  local context = self.repository:contextForWindow(window) or self.repository:currentContext()
+  if not context then return "stack", "0/0  ·  No focused window" end
+
+  local scope = self.engine.state:scope(context)
+  local column = scope.columns[scope.activeColumn]
+  -- The count retains the selected member as well as the stack total, e.g. 2/3.
+  local position = column.selected and string.format("%d/%d", column.selected, #column.windows) or "0/0"
+  local application = attempt(attempt(window, "application"), "name") or "No focused window"
+  local title = attempt(window, "title")
+  local focus = title and title ~= "" and (application .. " — " .. title) or application
+
+  local fields = { position }
+  local workspaceLabel = self.config.showWorkspaces and self.workspaces:label(screen)
+  if workspaceLabel then table.insert(fields, workspaceLabel) end
+  table.insert(fields, truncate(focus, 90))
+  return scope.layout, table.concat(fields, "  ·  ")
+end
+
+function Bar:pointerOver(frame)
+  if not self.hs.mouse or type(self.hs.mouse.absolutePosition) ~= "function" then return false end
+  local point = self.hs.mouse.absolutePosition()
+  return point and point.x >= frame.x and point.x < frame.x + frame.w
+    and point.y >= frame.y and point.y < frame.y + frame.h
+end
+
+function Bar:isFullscreenSpace(screen)
+  local spaceId = self.workspaces:activeSpace(screen)
+  if spaceId and self.workspaces:isFullscreenSpace(spaceId) then return true end
+
+  -- The Spaces API is private/experimental and can occasionally fail. A
+  -- focused native-fullscreen window is sufficient as a conservative fallback.
+  local focused = self.repository:focusedWindow()
+  local focusedScreen = attempt(focused, "screen")
+  return attempt(focused, "isFullScreen") == true and focusedScreen
+    and screenId(focusedScreen) == screenId(screen)
+end
+
+function Bar:clockText(timestamp)
+  return os.date("%a, %d %b, %H:%M", timestamp)
+end
+
+function Bar:render(canvas, frame, screen)
+  local height = self.config.height
+  local topPadding = self.config.topPadding
+  local contentHeight = height - topPadding
+  local clockWidth = 168
+  local clockX = math.max(0, frame.w - self.config.rightInset - clockWidth)
+  canvas:frame(frame)
+  local layout, status = self:status(screen)
+  local iconX, statusX = 12, 34
+  local elements = {
+    {
+      type = "rectangle",
+      action = "fill",
+      frame = { x = 0, y = 0, w = frame.w, h = height },
+      fillColor = self.config.backgroundColor,
+    },
+  }
+  for _, iconElement in ipairs(self:layoutIconElements(layout, iconX, topPadding, contentHeight)) do
+    table.insert(elements, iconElement)
+  end
+  table.insert(elements, {
+    type = "text",
+    frame = { x = statusX, y = topPadding, w = math.max(0, clockX - statusX - 12), h = contentHeight },
+    text = status,
+    textColor = self.config.textColor,
+    textFont = self.config.font,
+    textSize = self.config.textSize,
+    textLineBreak = "truncateTail",
+  })
+  table.insert(elements, {
+    type = "text",
+    frame = { x = clockX, y = topPadding, w = clockWidth, h = contentHeight },
+    text = self:clockText(),
+    textColor = self.config.textColor,
+    textFont = self.config.font,
+    textSize = self.config.textSize,
+    textAlignment = "right",
+  })
+  canvas:replaceElements(elements)
+end
+
+-- `isShowing()` is process-wide: it can remain true while macOS has left a
+-- canvas behind on the previous native Space. Space changes and the periodic
+-- refresh both reassert visibility to order the canvas onto the active Space.
+function Bar:refresh(reassertVisibility)
+  if not self.config.enabled then return self end
+
+  local present = {}
+  for _, screen in ipairs(self.hs.screen.allScreens()) do
+    local id = screenId(screen)
+    local fullFrame = attempt(screen, "fullFrame")
+    if fullFrame then
+      local frame = { x = fullFrame.x, y = fullFrame.y, w = fullFrame.w, h = self.config.height }
+      local canvas = self.canvases[id]
+      if not canvas then
+        canvas = self.hs.canvas.new(frame)
+        -- A lower-level canvas remains behind macOS's hidden menu-bar window.
+        -- This level is visible in its reserved strip; yield on hover so macOS
+        -- can reveal the Apple/application menu bar.
+        canvas:level("overlay")
+        canvas:behavior({ "canJoinAllSpaces", "stationary", "ignoresCycle" })
+        canvas:clickActivating(false)
+        self.canvases[id] = canvas
+      end
+      self:render(canvas, frame, screen)
+      if self:isFullscreenSpace(screen) or self:pointerOver(frame) then
+        if canvas:isShowing() then canvas:hide() end
+      elseif reassertVisibility or not canvas:isShowing() then
+        canvas:show()
+      end
+      present[id] = true
+    end
+  end
+
+  for id, canvas in pairs(self.canvases) do
+    if not present[id] then
+      canvas:delete()
+      self.canvases[id] = nil
+    end
+  end
+  return self
+end
+
+function Bar:start()
+  if not self.config.enabled then return self end
+  self:refresh()
+  -- The Spaces watcher can fire before macOS finishes its transition. Reassert
+  -- on every refresh as well, because isShowing() cannot tell whether a canvas
+  -- that reports as shown was left behind on another Space.
+  self.timer = self.hs.timer.doEvery(self.config.refreshInterval, function() self:refresh(true) end)
+  return self
+end
+
+function Bar:stop()
+  if self.timer then self.timer:stop() self.timer = nil end
+  for id, canvas in pairs(self.canvases) do
+    canvas:delete()
+    self.canvases[id] = nil
+  end
+  return self
+end
+
+return Bar
