@@ -62,7 +62,13 @@ All defaults use `Hyper` (`cmd` + `alt` + `ctrl` + `shift`).
 git clone https://github.com/caseneuve/10bucks.git
 cd 10bucks
 lua tests/run.lua
-./scripts/package-spoon.sh
+./scripts/install-local.sh
 ```
 
-Reload Hammerspoon after changing Spoon code or `~/.config/10bucks/config.lua`. See [the release procedure](docs/RELEASING.md) when preparing a release.
+`install-local.sh` stops the loaded 10bucks instance, syncs the working-tree
+Spoon to `~/.hammerspoon/Spoons/10bucks.spoon`, and reloads
+Hammerspoon. It requires the Hammerspoon `hs` CLI. The same workflows are
+available as `just test` and `just install` when
+[just](https://github.com/casey/just) is installed.
+
+See [the release procedure](docs/RELEASING.md) when preparing a release.
