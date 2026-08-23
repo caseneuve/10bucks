@@ -16,6 +16,11 @@ if ! grep -Fqx "Tenbucks.version = \"$version\"" "$root/10bucks.spoon/init.lua";
   exit 1
 fi
 
+if ! cmp -s "$root/LICENSE" "$root/10bucks.spoon/LICENSE"; then
+  echo "10bucks.spoon/LICENSE must match the repository LICENSE" >&2
+  exit 1
+fi
+
 case "$output" in
   /*) ;;
   *) output="$root/$output" ;;
@@ -30,7 +35,7 @@ rm -f "$output"
 
 unzip -tq "$output" >/dev/null
 archive_entries="$(unzip -Z1 "$output")"
-for required_file in 10bucks.spoon/init.lua 10bucks.spoon/config.example.lua; do
+for required_file in 10bucks.spoon/init.lua 10bucks.spoon/config.example.lua 10bucks.spoon/LICENSE; do
   if ! grep -Fxq "$required_file" <<< "$archive_entries"; then
     echo "Archive does not contain $required_file" >&2
     exit 1

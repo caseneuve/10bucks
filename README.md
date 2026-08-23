@@ -1,10 +1,8 @@
 # 10bucks
 
 Opinionated macOS tiling window manager built on
-[Hammerspoon](https://www.hammerspoon.org/). Pure slop. GPT Terra wrote it for me for
-$10. Now I can at least try to work on this broken system without immediately having an apoplexy.
-
-## Clanker speak
+[Hammerspoon](https://www.hammerspoon.org/).  Pure vibe slop.  GPT Terra wrote it for me
+for $10.  Works, all things considered.
 
 ## Features
 
@@ -13,6 +11,11 @@ $10. Now I can at least try to work on this broken system without immediately ha
 - Native macOS Space navigation, creation, and removal.
 - A per-display status bar with workspace and layout state.
 - A fuzzy window picker and global previous-window focus.
+
+## Requirements
+
+- macOS with Hammerspoon (tested on 1.1.1).
+- Accessibility access granted to Hammerspoon.
 
 ## Install
 
@@ -40,21 +43,21 @@ Edit `~/.config/10bucks/config.lua`, then reload Hammerspoon. The installed `con
 
 All defaults use `Hyper` (`cmd` + `alt` + `ctrl` + `shift`).
 
-| Key | Action |
-| --- | --- |
-| `space` | Toggle one tabbed stack / two columns |
-| `h` / `l` | Focus previous / next column |
-| `;` | Focus the previously focused standard app window |
-| `j` / `k` | Focus next / previous window in the active stack |
-| `[` / `]` | Move the column divider left / right |
-| `0` | Reset the column split |
-| `g` | Swap the columns |
-| `o` | Move the focused window to the other stack |
-| `n` / `p` | Focus next / previously focused desktop |
-| `u`, then `1`–`9` | Focus or create a numbered desktop |
-| `w` | Find and focus a window |
-| `delete` | Remove the empty current desktop |
-| `r` | Reflow the current screen/Space |
+| Key               | Action                                           |
+|-------------------|--------------------------------------------------|
+| `space`           | Toggle one tabbed stack / two columns            |
+| `h` / `l`         | Focus previous / next column                     |
+| `;`               | Focus the previously focused standard app window |
+| `j` / `k`         | Focus next / previous window in the active stack |
+| `[` / `]`         | Move the column divider left / right             |
+| `0`               | Reset the column split                           |
+| `g`               | Swap the columns                                 |
+| `o`               | Move the focused window to the other stack       |
+| `n` / `p`         | Focus next / previously focused desktop          |
+| `u`, then `1`–`9` | Focus or create a numbered desktop               |
+| `w`               | Find and focus a window                          |
+| `delete`          | Remove the empty current desktop                 |
+| `r`               | Reflow the current screen/Space                  |
 
 ## Development
 

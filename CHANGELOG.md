@@ -8,6 +8,11 @@ on the same date appends `.N`, for example `2026.08.22.2`.
 
 ## [Unreleased]
 
+### Changed
+
+- Include the MIT license in the distributed Spoon archive.
+- Identify the Spoon author as `caseneuve`.
+
 ## [2026.08.23-alpha.1] - 2026-08-23
 
 ### Changed
