@@ -4,6 +4,10 @@ local screen = {
   getUUID = function() return "screen-a" end,
 }
 
+local secondScreen = {
+  getUUID = function() return "screen-b" end,
+}
+
 local function fakeSpaces(active)
   local calls = {}
   return {
@@ -122,6 +126,7 @@ return {
     assert(service:label(screen) == "[1] 2 3 4")
 
     table.remove(spacesForScreen, 3)
+    service:invalidateLabelCache(screen)
     assert(service:label(screen) == "[1] 2 4")
     local added, desktop = service:addDesktop(screen, 7)
     assert(added and desktop.index == 7)
@@ -170,5 +175,234 @@ return {
     assert(service:label(screen) == "1 [2]")
     service:clearPendingDesktop(screen)
     assert(service:label(screen) == "[1] 2")
+  end,
+
+  ["workspace label cache reuses a value within its TTL"] = function()
+    local clock, calls = 10, { spaces = 0, types = 0, active = 0 }
+    local spaces = {
+      spacesForScreen = function()
+        calls.spaces = calls.spaces + 1
+        return { 11, 12, 13, 14 }
+      end,
+      spaceType = function(spaceId)
+        calls.types = calls.types + 1
+        return ({ [11] = "user", [12] = "fullscreen", [13] = "user", [14] = "fullscreen" })[spaceId]
+      end,
+      activeSpaceOnScreen = function()
+        calls.active = calls.active + 1
+        return 13
+      end,
+      gotoSpace = function() return true end,
+    }
+    local service = Workspaces.new({
+      spaces = spaces,
+      timer = { secondsSinceEpoch = function() return clock end },
+    })
+
+    assert(service:label(screen) == "1 [2]")
+    assert(service:label(screen) == "1 [2]")
+    assert(calls.spaces == 1 and calls.types == 4 and calls.active == 1)
+  end,
+
+  ["workspace label cache recomputes after its TTL expires"] = function()
+    local clock, calls = 10, 0
+    local spaces = {
+      spacesForScreen = function()
+        calls = calls + 1
+        return { 11 }
+      end,
+      spaceType = function() return "user" end,
+      activeSpaceOnScreen = function() return 11 end,
+      gotoSpace = function() return true end,
+    }
+    local service = Workspaces.new({
+      spaces = spaces,
+      timer = { secondsSinceEpoch = function() return clock end },
+    })
+
+    assert(service:label(screen) == "[1]")
+    clock = 11
+    assert(service:label(screen) == "[1]")
+    assert(calls == 2)
+  end,
+
+  ["workspace label cache retains a cached nil result"] = function()
+    local clock, calls = 10, 0
+    local spaces = {
+      spacesForScreen = function()
+        calls = calls + 1
+        return { 12, 14 }
+      end,
+      spaceType = function() return "fullscreen" end,
+      activeSpaceOnScreen = function() return 12 end,
+      gotoSpace = function() return true end,
+    }
+    local service = Workspaces.new({
+      spaces = spaces,
+      timer = { secondsSinceEpoch = function() return clock end },
+    })
+
+    assert(service:label(screen) == nil)
+    assert(service:label(screen) == nil)
+    assert(calls == 1)
+  end,
+
+  ["pending desktop mutations invalidate the workspace label cache"] = function()
+    local active, pendingCallback = 11, nil
+    local spaces = {
+      spacesForScreen = function() return { 11, 13 } end,
+      spaceType = function() return "user" end,
+      activeSpaceOnScreen = function() return active end,
+      gotoSpace = function() return true end,
+    }
+    local service = Workspaces.new({
+      spaces = spaces,
+      timer = {
+        doAfter = function(_, callback)
+          pendingCallback = callback
+          return { stop = function() end }
+        end,
+      },
+    })
+
+    assert(service:label(screen) == "[1] 2")
+    service:setPendingDesktop(screen, { id = 13, index = 2 })
+    assert(service:label(screen) == "1 [2]")
+    service:clearPendingDesktop(screen)
+    assert(service:label(screen) == "[1] 2")
+
+    service:setPendingDesktop(screen, { id = 13, index = 2 })
+    assert(service:label(screen) == "1 [2]")
+    assert(type(pendingCallback) == "function")
+    pendingCallback()
+    assert(service:label(screen) == "[1] 2")
+  end,
+
+  ["workspace watcher invalidates every screen before its callback"] = function()
+    local calls = { ["screen-a"] = 0, ["screen-b"] = 0 }
+    local watcherCallback, externalCalls = nil, 0
+    local spaces = {
+      spacesForScreen = function(receivedScreen)
+        local key = receivedScreen:getUUID()
+        calls[key] = calls[key] + 1
+        return key == "screen-a" and { 11 } or { 21 }
+      end,
+      spaceType = function() return "user" end,
+      activeSpaceOnScreen = function(receivedScreen)
+        return receivedScreen:getUUID() == "screen-a" and 11 or 21
+      end,
+      gotoSpace = function() return true end,
+      watcher = {
+        new = function(callback)
+          watcherCallback = callback
+          return { start = function() end, stop = function() end }
+        end,
+      },
+    }
+    local service = Workspaces.new({ spaces = spaces })
+    assert(service:label(screen) == "[1]")
+    assert(service:label(secondScreen) == "[1]")
+    service:start(function()
+      externalCalls = externalCalls + 1
+      assert(service:label(screen) == "[1]")
+      assert(service:label(secondScreen) == "[1]")
+    end)
+
+    watcherCallback()
+    assert(externalCalls == 1)
+    assert(calls["screen-a"] == 2 and calls["screen-b"] == 2)
+  end,
+
+  ["successful desktop creation invalidates the affected label cache"] = function()
+    local topology, calls = { 11 }, 0
+    local spaces = {
+      spacesForScreen = function()
+        calls = calls + 1
+        return topology
+      end,
+      spaceType = function() return "user" end,
+      activeSpaceOnScreen = function() return 11 end,
+      gotoSpace = function() return true end,
+      addSpaceToScreen = function()
+        table.insert(topology, 13)
+        return true
+      end,
+    }
+    local service = Workspaces.new({ spaces = spaces })
+    assert(service:label(screen) == "[1]")
+    local before = calls
+
+    local added, desktop = service:addDesktop(screen)
+    assert(added and desktop.id == 13)
+    assert(service:label(screen) == "[1] 2")
+    assert(calls > before)
+  end,
+
+  ["completed desktop removal invalidates the affected label cache"] = function()
+    local topology, calls = { 11, 13 }, 0
+    local spaces = {
+      spacesForScreen = function()
+        calls = calls + 1
+        return topology
+      end,
+      spaceType = function() return "user" end,
+      activeSpaceOnScreen = function() return 11 end,
+      gotoSpace = function() return true end,
+      removeSpace = function(spaceId)
+        assert(spaceId == 13)
+        table.remove(topology, 2)
+        return true
+      end,
+    }
+    local service = Workspaces.new({ spaces = spaces })
+    assert(service:label(screen) == "[1] 2")
+    local before = calls
+    assert(service:queueDesktopRemoval(screen, { id = 13, index = 2 }, { id = 11, index = 1 }))
+    local completed = service:completePendingRemoval(screen)
+
+    assert(completed)
+    assert(service:label(screen) == "[1]")
+    assert(calls > before)
+  end,
+
+  ["forgetting a desktop invalidates its affected label cache"] = function()
+    local topology, calls = { 11, 13 }, 0
+    local spaces = {
+      spacesForScreen = function()
+        calls = calls + 1
+        return topology
+      end,
+      spaceType = function() return "user" end,
+      activeSpaceOnScreen = function() return 11 end,
+      gotoSpace = function() return true end,
+    }
+    local service = Workspaces.new({ spaces = spaces })
+    assert(service:label(screen) == "[1] 2")
+    local before = calls
+    table.remove(topology, 2)
+    service:forgetDesktop(13)
+
+    assert(service:label(screen) == "[1]")
+    assert(calls > before)
+  end,
+
+  ["stopping workspaces clears the label cache"] = function()
+    local calls = 0
+    local spaces = {
+      spacesForScreen = function()
+        calls = calls + 1
+        return { 11 }
+      end,
+      spaceType = function() return "user" end,
+      activeSpaceOnScreen = function() return 11 end,
+      gotoSpace = function() return true end,
+    }
+    local service = Workspaces.new({ spaces = spaces })
+    assert(service:label(screen) == "[1]")
+    local before = calls
+
+    service:stop()
+    assert(service:label(screen) == "[1]")
+    assert(calls > before)
   end,
 }

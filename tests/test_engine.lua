@@ -31,6 +31,11 @@ local function repositoryWith(ids)
     screenForContext = function() return { id = "screen-a" } end,
     screenFrame = function() return { x = 0, y = 0, w = 1000, h = 800 } end,
     windowForId = function(self, id) return self.windows[id] end,
+    onscreenWindowIds = function(self)
+      local ids = {}
+      for id in pairs(self.windows) do ids[id] = true end
+      return ids
+    end,
     historyWindowForId = function(self, id) return self.windows[id] end,
     setFrame = function(_, window, frame) window:setFrame(frame) end,
     focus = function(_, window) window:focus() end,
@@ -202,10 +207,12 @@ return {
 
   ["closing a focused window returns to the last focused window in its workspace"] = function()
     local engine, repository = build({ 1, 2, 3 }, { initialLayout = "columns" })
+    repository.focusedId = 2
     assert(engine:windowFocused(repository.windows[2]))
+    repository.focusedId = 3
     assert(engine:windowFocused(repository.windows[3]))
     repository.windows[3] = nil
-    assert(engine:windowDestroyed(3, true))
+    assert(engine:windowDestroyed(3))
     -- Window 2 is in the other column, proving the replacement is workspace
     -- focus history rather than merely the closing window's stack sibling.
     assert(repository.windows[2].focused)
@@ -213,6 +220,7 @@ return {
 
   ["closing a focused window with no history focuses the first stack window"] = function()
     local engine, repository = build({ 1, 2 })
+    repository.focusedId = 2
     repository.windows[2] = nil
     assert(engine:windowDestroyed(2))
     assert(repository.windows[1].focused)
@@ -220,19 +228,140 @@ return {
 
   ["closing a background window does not steal focus"] = function()
     local engine, repository = build({ 1, 2 })
+    repository.windows[1].focused = true
     repository.windows[2] = nil
-    assert(engine:windowDestroyed(2, false))
+    assert(engine:windowDestroyed(2))
+    assert(repository.windows[1].focused)
+  end,
+
+  ["closing with no focused application restores the active workspace fallback"] = function()
+    local engine, repository = build({ 1, 2 })
+    repository.focusedId = nil
+    repository.windows[2] = nil
+    assert(engine:windowDestroyed(2))
+    assert(repository.windows[1].focused)
+  end,
+
+  ["active reconciliation recovers when Chromium emits no close lifecycle event"] = function()
+    local engine, repository = build({ 1, 2 }, { initialLayout = "columns" })
+    repository.focusedId = nil
+    repository.windows[2] = nil
+
+    local changed, recovery = engine:reconcileActiveWorkspace()
+
+    assert(changed and recovery)
+    equal(engine.state:windowCount(context), 1)
+    assert(repository.windows[1].focused)
+    equal(repository.windows[1].lastFrame.x, 10)
+    equal(repository.windows[1].lastFrame.w, 980)
+  end,
+
+  ["active reconciliation prunes a stale peer without stealing existing focus"] = function()
+    local engine, repository = build({ 1, 2 }, { initialLayout = "columns" })
+    repository.focusedId = 1
+    repository.windows[2] = nil
+
+    local changed, recovery = engine:reconcileActiveWorkspace()
+
+    assert(changed and not recovery)
+    equal(engine.state:windowCount(context), 1)
+    assert(not repository.windows[1].focused)
+    equal(repository.windows[1].lastFrame.x, 10)
+    equal(repository.windows[1].lastFrame.w, 980)
+  end,
+
+  ["active reconciliation uses one ID snapshot without per-window lookups when nothing changed"] = function()
+    local engine, repository = build({ 1, 2 }, { initialLayout = "columns" })
+    local snapshots, lookups = 0, 0
+    repository.focusedId = 1
+    repository.onscreenWindowIds = function()
+      snapshots = snapshots + 1
+      return { [1] = true, [2] = true }
+    end
+    repository.windowForId = function()
+      lookups = lookups + 1
+      error("unchanged reconciliation must not resolve Accessibility windows")
+    end
+
+    assert(not engine:reconcileActiveWorkspace())
+    equal(snapshots, 1)
+    equal(lookups, 0)
+  end,
+
+  ["engine exposes fallback recovery after an initial focus request"] = function()
+    local engine, repository = build({ 1, 2 })
+    repository.focusedId = nil
+    repository.windows[2] = nil
+    local handled, recovery = engine:windowDestroyed(2)
+    assert(handled and recovery)
+    repository.focusedId = 1
+    assert(not engine:focusRecovery(recovery))
+  end,
+
+  ["inactive recovery does not reflow or prune its workspace scope"] = function()
+    local engine, repository = build({ 1, 2 })
+    local inactive = { screenId = "screen-b", spaceId = "space-b" }
+    repository.windows[99] = fakeWindow(99)
+    engine.state:addWindow(inactive, 99)
+    engine.state:addWindow(inactive, 100)
+    local scope = engine.state:scope(inactive)
+    assert(engine.state:contains(inactive, 100))
+    assert(not repository.windows[99].lastFrame)
+
+    assert(engine:windowDestroyed(99))
+    assert(engine.state:contains(inactive, 100))
+    assert(not repository.windows[99].lastFrame)
+    assert(scope.columns[1].windows[1] == 100)
+  end,
+
+  ["closing preserves an actually focused live window despite a stale hint"] = function()
+    local engine, repository = build({ 1, 2, 3 })
+    repository.focusedId = 3
+    assert(engine:windowFocused(repository.windows[3]))
+    repository.focusedId = 1
+    repository.windows[1].focused = true
+    repository.windows[2] = nil
+    assert(engine:windowDestroyed(2))
+    assert(repository.windows[1].focused)
+    assert(not repository.windows[3].focused)
+  end,
+
+  ["closing preserves a focused modal-like window outside history"] = function()
+    local engine, repository = build({ 1, 2, 3 })
+    repository.isFocusHistoryWindow = function(_, window)
+      return window and window:id() ~= 1
+    end
+    repository.focusedId = 3
+    assert(engine:windowFocused(repository.windows[3]))
+    repository.focusedId = 1
+    repository.windows[1].focused = true
+    repository.windows[2] = nil
+    assert(engine:windowDestroyed(2))
+    assert(repository.windows[1].focused)
+    assert(not repository.windows[3].focused)
+  end,
+
+  ["closing never focuses a fallback in an inactive workspace"] = function()
+    local engine, repository = build({ 1, 2 })
+    repository.currentContext = function()
+      return { screenId = "screen-a", spaceId = "space-b" }
+    end
+    repository.focusedId = nil
+    repository.windows[2] = nil
+    assert(engine:windowDestroyed(2))
     assert(not repository.windows[1].focused)
   end,
 
   ["closing skips stale history and falls back after reflow pruning"] = function()
     local engine, repository = build({ 1, 2, 3 })
+    repository.focusedId = 2
     assert(engine:windowFocused(repository.windows[2]))
+    repository.focusedId = 3
     assert(engine:windowFocused(repository.windows[3]))
     -- Window 2 has already vanished but its destroy event has not arrived.
     repository.windows[2] = nil
     repository.windows[3] = nil
-    assert(engine:windowDestroyed(3, true))
+    assert(engine:windowDestroyed(3))
     assert(repository.windows[1].focused)
   end,
 
@@ -248,7 +377,7 @@ return {
     local engine, repository = build({ 1, 2 }, { initialLayout = "columns" })
     -- A minimized window is no longer layout-eligible, but it is not destroyed.
     repository.windows[1] = nil
-    assert(engine:windowMinimized(1, true))
+    assert(engine:windowMinimized(1))
 
     assert(repository.windows[2].focused)
     equal(repository.windows[2].lastFrame.x, 10)
@@ -259,7 +388,7 @@ return {
   ["restoring a minimized window restores the two-column layout"] = function()
     local engine, repository = build({ 1, 2 }, { initialLayout = "columns" })
     repository.windows[1] = nil
-    assert(engine:windowMinimized(1, true))
+    assert(engine:windowMinimized(1))
     repository.windows[1] = fakeWindow(1)
 
     assert(engine:windowUnminimized(repository.windows[1]))

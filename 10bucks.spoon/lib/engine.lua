@@ -168,29 +168,91 @@ function Engine:windowFocused(window)
   return true
 end
 
+-- Reconcile the active scope independently of Accessibility lifecycle events.
+-- Chromium can remove its last native window on Cmd-W without emitting any
+-- windowNotVisible or windowDestroyed event through hs.window.filter. Polling
+-- the small active managed set closes that gap: stale members are pruned and a
+-- surviving window is focused when macOS leaves the workspace without one.
+function Engine:reconcileActiveWorkspace()
+  local context = self.repository:currentContext()
+  if not self:isDesktopContext(context) then return false end
+
+  local scope = self.state.scopes[self.state:scopeKey(context)]
+  if not scope then return false end
+
+  local onscreenIds = self.repository:onscreenWindowIds()
+  local stale = false
+  for _, column in ipairs(scope.columns) do
+    for _, id in ipairs(column.windows) do
+      if not onscreenIds[id] then stale = true break end
+    end
+    if stale then break end
+  end
+  if stale then self:reflow(context) end
+
+  -- Layout reconciliation is still useful when macOS already chose a valid
+  -- replacement. Never steal focus in that case.
+  if self.repository:focusedWindow() then return stale end
+  if self.state:windowCount(context) == 0 then return stale end
+
+  local recovery = {
+    id = nil,
+    context = context,
+    fallbackColumn = scope.activeColumn,
+  }
+  if self:focusRecovery(recovery) then return true, recovery end
+  return stale
+end
+
 -- A minimized window is temporarily unavailable to layout but remains a live
 -- standard window for global focus history. Destruction is permanent, so only
 -- that path removes its global-history entry.
-function Engine:windowUnavailable(id, wasFocused, destroyed)
-  if destroyed then self.focusHistory:forget(id) end
-  local removal = self.state:forgetWindow(id, wasFocused)
-  if not removal then return false end
-  self:reflow(removal.context)
-  if removal.shouldFocus then
-    -- Reflow prunes windows that vanished before their lifecycle event. Resolve
-    -- the candidate afterwards so a stale history entry cannot swallow the
-    -- first-stack fallback and leave this workspace without focus.
-    self:focus(self.state:focusFallback(removal.context, removal.fallbackColumn), removal.context)
-  end
+function Engine:focusRecovery(recovery)
+  -- Only recover focus in the workspace that is active now. A close event from
+  -- another Space must never pull focus away from the user's current desktop.
+  local active = self.repository:currentContext()
+  local sameActiveContext = active
+    and active.screenId == recovery.context.screenId
+    and active.spaceId == recovery.context.spaceId
+  if not sameActiveContext or not self:isDesktopContext(recovery.context) then return false end
+
+  -- Reflow prunes windows that vanished before their lifecycle event. Resolve
+  -- the candidate afterwards so a stale history entry cannot swallow the
+  -- first-stack fallback and leave this workspace without focus.
+  self:reflow(recovery.context)
+  local focused = self.repository:focusedWindow()
+  local focusedId = focused and focused:id()
+  if focused and focusedId ~= recovery.id then return false end
+
+  local candidate = self.state:focusFallback(recovery.context, recovery.fallbackColumn)
+  local window = candidate and self.repository:windowForId(candidate)
+  if not candidate or not window then return false end
+
+  -- hs.window:focus() only requests focus. The lifecycle may retry this same
+  -- recovery if the postcondition is still absent on its next timer tick.
+  self:focus(candidate, recovery.context)
   return true
 end
 
-function Engine:windowDestroyed(id, wasFocused)
-  return self:windowUnavailable(id, wasFocused, true)
+function Engine:windowUnavailable(id, destroyed)
+  if destroyed then self.focusHistory:forget(id) end
+  local removal = self.state:forgetWindow(id)
+  if not removal then return false end
+  local recovery = {
+    id = id,
+    context = removal.context,
+    fallbackColumn = removal.fallbackColumn,
+  }
+  if self:focusRecovery(recovery) then return true, recovery end
+  return true
 end
 
-function Engine:windowMinimized(id, wasFocused)
-  return self:windowUnavailable(id, wasFocused, false)
+function Engine:windowDestroyed(id)
+  return self:windowUnavailable(id, true)
+end
+
+function Engine:windowMinimized(id)
+  return self:windowUnavailable(id, false)
 end
 
 function Engine:windowUnminimized(window)

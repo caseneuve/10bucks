@@ -177,6 +177,44 @@ return {
     assert(#repository:eligibleWindows() == 2)
   end,
 
+  ["onscreen ID snapshots avoid Accessibility window enumeration"] = function()
+    local calls = 0
+    local repository = WindowRepository.new({
+      window = {
+        _orderedwinids = function()
+          calls = calls + 1
+          return { 10, 20, 30 }
+        end,
+        visibleWindows = function() error("native ID snapshot must avoid Accessibility enumeration") end,
+        filter = requiredWindowFilter(),
+      },
+      screen = {},
+    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+
+    local ids = repository:onscreenWindowIds()
+    assert(calls == 1)
+    assert(ids[10] and ids[20] and ids[30])
+    assert(not ids[40])
+  end,
+
+  ["onscreen ID snapshots fall back to visible windows when the native helper fails"] = function()
+    local first = window(true, "First")
+    local second = window(true, "Second")
+    first.id = function() return 10 end
+    second.id = function() return 20 end
+    local repository = WindowRepository.new({
+      window = {
+        _orderedwinids = function() error("unavailable") end,
+        visibleWindows = function() return { first, second } end,
+        filter = requiredWindowFilter(),
+      },
+      screen = {},
+    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+
+    local ids = repository:onscreenWindowIds()
+    assert(ids[10] and ids[20])
+  end,
+
   ["cross-Space picker excludes fixed-size tracked windows without global enumeration"] = function()
     local fixedSize = window(true, "Fixed-size utility")
     local pickerFilter = {

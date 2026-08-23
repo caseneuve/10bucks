@@ -35,6 +35,10 @@ return {
     -- Non-negative space reserved at the screen's top-right edge.
     rightInset = 24,
     refreshInterval = 0.15, -- positive number of seconds
+    -- Non-negative delay in seconds before the canvas returns after menu reveal.
+    menuBarHideDelay = 0.20,
+    -- Non-negative fade duration in seconds; no greater than menuBarHideDelay.
+    menuBarFadeDuration = 0.10,
     -- Hammerspoon colour tables.
     backgroundColor = { red = 0.08, green = 0.09, blue = 0.12, alpha = 0.45 },
     textColor = { red = 0.9, green = 0.92, blue = 0.96, alpha = 1 },

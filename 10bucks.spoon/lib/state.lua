@@ -150,20 +150,17 @@ function State:setManaged(context, id, managed, columnIndex)
   return true
 end
 
--- Remove a window from every scope. Return the context and focus policy so the
--- engine can resolve a surviving workspace fallback after pruning stale windows.
-function State:forgetWindow(id, wasFocused)
+-- Remove a window from every scope. Return the context and fallback column so
+-- the engine can resolve a surviving workspace fallback after pruning stale windows.
+function State:forgetWindow(id)
   for _, scope in pairs(self.scopes) do
     local columnIndex = removeWindowFromColumns(scope.columns, id)
     if columnIndex then
       scope.unmanaged[id] = nil
       removeFrom(scope.focusHistory, id)
 
-      -- nil retains the original direct-call behavior; lifecycle events pass
-      -- an explicit boolean, so closing a background window never steals focus.
       return {
         context = scope.context,
-        shouldFocus = wasFocused ~= false,
         fallbackColumn = columnIndex,
       }
     end

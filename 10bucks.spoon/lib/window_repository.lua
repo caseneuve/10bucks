@@ -124,6 +124,29 @@ function WindowRepository:eligibleWindows()
   return eligible
 end
 
+-- Return a cheap snapshot of window IDs currently composited onscreen. The
+-- native ID list avoids hs.window.get(), which performs an Accessibility search
+-- and is too expensive for the missed-destroy-event reconciliation timer.
+function WindowRepository:onscreenWindowIds()
+  local orderedIds = self.hs.window._orderedwinids
+  if type(orderedIds) == "function" then
+    local ok, values = pcall(orderedIds)
+    if ok and type(values) == "table" then
+      local ids = {}
+      for _, id in ipairs(values) do ids[id] = true end
+      return ids
+    end
+  end
+
+  -- Compatibility fallback for Hammerspoon builds without the native helper.
+  local ids = {}
+  for _, window in ipairs(self.hs.window.visibleWindows()) do
+    local id = attempt(window, "id", nil)
+    if id then ids[id] = true end
+  end
+  return ids
+end
+
 -- The chooser should see standard application windows in every native Space,
 -- not merely the visible 10bucks scope. hs.window.allWindows() includes many
 -- AX helper surfaces (such as app sidebars); use a dedicated window filter to

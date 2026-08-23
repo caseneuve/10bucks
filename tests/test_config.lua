@@ -46,6 +46,8 @@ return {
     local config = Config.build({ bar = {}, hotkeys = {} })
     assert(config.bar.enabled == Config.defaults.bar.enabled)
     assert(config.bar.height == Config.defaults.bar.height)
+    assert(config.bar.menuBarHideDelay == 0.20)
+    assert(config.bar.menuBarFadeDuration == 0.10)
     assert(config.bar.backgroundColor.alpha == Config.defaults.bar.backgroundColor.alpha)
     assert(config.hotkeys.toggleLayout[2] == "space")
     assert(config.hotkeys.reflow[2] == "r")
@@ -69,12 +71,17 @@ return {
     assert(not pcall(Config.build, { windowFilter = true }))
     assert(not pcall(Config.build, { outerGap = -1 }))
     assert(not pcall(Config.build, { columnGap = -1 }))
+    assert(not pcall(Config.build, { bar = { menuBarHideDelay = -1 } }))
+    assert(not pcall(Config.build, { bar = { menuBarFadeDuration = -1 } }))
+    assert(not pcall(Config.build, { bar = { menuBarHideDelay = 0.05, menuBarFadeDuration = 0.10 } }))
   end,
 
   ["shipped configuration example returns a complete valid table"] = function()
     local config = Config.build(Config.loadFile("10bucks.spoon/config.example.lua"))
     assert(config.initialLayout == "stack")
     assert(config.bar.rightInset == 24)
+    assert(config.bar.menuBarHideDelay == 0.20)
+    assert(config.bar.menuBarFadeDuration == 0.10)
     assert(config.hotkeys.chooseWindow[2] == "w")
     assert(config.hotkeys.deleteWorkspace[2] == "delete")
   end,

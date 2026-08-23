@@ -26,6 +26,7 @@ function Bar.new(hs, engine, repository, workspaces, config)
     workspaces = workspaces,
     config = config,
     canvases = {},
+    handoffs = {},
   }, Bar)
 end
 
@@ -96,6 +97,17 @@ function Bar:pointerOver(frame)
     and point.y >= frame.y and point.y < frame.y + frame.h
 end
 
+-- Hammerspoon's seconds source is fakeable in tests; os.clock is only a
+-- fallback for non-Hammerspoon callers that do not provide hs.timer.
+function Bar:seconds()
+  local timer = self.hs and self.hs.timer
+  if timer and type(timer.secondsSinceEpoch) == "function" then
+    local ok, value = pcall(timer.secondsSinceEpoch)
+    if ok and type(value) == "number" then return value end
+  end
+  return os.clock()
+end
+
 function Bar:isFullscreenSpace(screen)
   local spaceId = self.workspaces:activeSpace(screen)
   if spaceId and self.workspaces:isFullscreenSpace(spaceId) then return true end
@@ -153,10 +165,10 @@ function Bar:render(canvas, frame, screen)
   canvas:replaceElements(elements)
 end
 
--- `isShowing()` is process-wide: it can remain true while macOS has left a
--- canvas behind on the previous native Space. Space changes and the periodic
--- refresh both reassert visibility to order the canvas onto the active Space.
-function Bar:refresh(reassertVisibility)
+-- Refresh the canvas content and recover canvases that are actually hidden.
+-- A pointer handoff temporarily suppresses the canvas while macOS retracts its
+-- auto-hidden menu bar; refreshes do not reorder canvases that are already shown.
+function Bar:refresh()
   if not self.config.enabled then return self end
 
   local present = {}
@@ -168,19 +180,40 @@ function Bar:refresh(reassertVisibility)
       local canvas = self.canvases[id]
       if not canvas then
         canvas = self.hs.canvas.new(frame)
-        -- A lower-level canvas remains behind macOS's hidden menu-bar window.
-        -- This level is visible in its reserved strip; yield on hover so macOS
-        -- can reveal the Apple/application menu bar.
-        canvas:level("overlay")
+        -- Match macOS's native menu-bar window level. When the menu bar
+        -- auto-reveals, macOS orders it above this same-level canvas.
+        canvas:level("mainMenu")
         canvas:behavior({ "canJoinAllSpaces", "stationary", "ignoresCycle" })
         canvas:clickActivating(false)
         self.canvases[id] = canvas
       end
       self:render(canvas, frame, screen)
-      if self:isFullscreenSpace(screen) or self:pointerOver(frame) then
+      local pointerOver = self:pointerOver(frame)
+      local handoff = self.handoffs[id]
+      if self:isFullscreenSpace(screen) then
+        self.handoffs[id] = nil
         if canvas:isShowing() then canvas:hide() end
-      elseif reassertVisibility or not canvas:isShowing() then
-        canvas:show()
+      elseif pointerOver then
+        local untilTime = self:seconds() + self.config.menuBarHideDelay
+        if not handoff or handoff.phase ~= "suppressing" then
+          handoff = { phase = "suppressing", suppressUntil = untilTime, hideRequested = false }
+          self.handoffs[id] = handoff
+        else
+          handoff.suppressUntil = untilTime
+        end
+        if not handoff.hideRequested then
+          handoff.hideRequested = true
+          if canvas:isShowing() then canvas:hide(self.config.menuBarFadeDuration or 0) end
+        end
+      elseif handoff and handoff.phase == "suppressing" and self:seconds() < handoff.suppressUntil then
+        -- Keep the canvas suppressed while the native menu bar retracts.
+      elseif handoff and handoff.phase == "showing" then
+        if canvas:isShowing() then self.handoffs[id] = nil end
+      elseif not canvas:isShowing() then
+        canvas:show(self.config.menuBarFadeDuration or 0)
+        self.handoffs[id] = { phase = "showing" }
+      else
+        self.handoffs[id] = nil
       end
       present[id] = true
     end
@@ -190,6 +223,7 @@ function Bar:refresh(reassertVisibility)
     if not present[id] then
       canvas:delete()
       self.canvases[id] = nil
+      self.handoffs[id] = nil
     end
   end
   return self
@@ -198,10 +232,7 @@ end
 function Bar:start()
   if not self.config.enabled then return self end
   self:refresh()
-  -- The Spaces watcher can fire before macOS finishes its transition. Reassert
-  -- on every refresh as well, because isShowing() cannot tell whether a canvas
-  -- that reports as shown was left behind on another Space.
-  self.timer = self.hs.timer.doEvery(self.config.refreshInterval, function() self:refresh(true) end)
+  self.timer = self.hs.timer.doEvery(self.config.refreshInterval, function() self:refresh() end)
   return self
 end
 
@@ -210,7 +241,9 @@ function Bar:stop()
   for id, canvas in pairs(self.canvases) do
     canvas:delete()
     self.canvases[id] = nil
+    self.handoffs[id] = nil
   end
+  self.handoffs = {}
   return self
 end
 

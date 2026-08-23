@@ -16,6 +16,7 @@ local function screenKey(screen)
 end
 
 local LABEL_SETTINGS_PREFIX = "10bucks.workspaceLabels."
+local LABEL_CACHE_TTL = 1
 
 function Workspaces.new(hs)
   return setmetatable({
@@ -25,6 +26,7 @@ function Workspaces.new(hs)
     pendingRemovals = {},
     pendingRemovalTimers = {},
     labelStates = {},
+    labelCache = {},
     activeDesktops = {},
     previouslyFocusedDesktops = {},
   }, Workspaces)
@@ -108,6 +110,27 @@ end
 
 function Workspaces:saveLabelState(screen, state)
   call(self.hs and self.hs.settings, "set", LABEL_SETTINGS_PREFIX .. screenKey(screen), state)
+  self:invalidateLabelCache(screen)
+  return self
+end
+
+-- Hammerspoon's epoch clock is injectable in tests; os.clock keeps this module
+-- usable by non-Hammerspoon callers while retaining a one-second cache TTL.
+function Workspaces:seconds()
+  local timer = self.hs and self.hs.timer
+  if timer and type(timer.secondsSinceEpoch) == "function" then
+    local ok, value = pcall(timer.secondsSinceEpoch)
+    if ok and type(value) == "number" then return value end
+  end
+  return os.clock()
+end
+
+function Workspaces:invalidateLabelCache(screen)
+  if screen then
+    self.labelCache[screenKey(screen)] = nil
+  else
+    self.labelCache = {}
+  end
   return self
 end
 
@@ -208,9 +231,11 @@ function Workspaces:setPendingDesktop(screen, destination)
   local key = screenKey(screen)
   self:clearPendingDesktop(screen)
   self.pending[key] = destination
+  self:invalidateLabelCache(screen)
   if self.hs and self.hs.timer and type(self.hs.timer.doAfter) == "function" then
     self.pendingTimers[key] = self.hs.timer.doAfter(1.5, function()
       self.pending[key], self.pendingTimers[key] = nil, nil
+      self:invalidateLabelCache(screen)
     end)
   end
   return self
@@ -220,6 +245,7 @@ function Workspaces:clearPendingDesktop(screen)
   local key = screenKey(screen)
   if self.pendingTimers[key] then self.pendingTimers[key]:stop() end
   self.pending[key], self.pendingTimers[key] = nil, nil
+  self:invalidateLabelCache(screen)
   return self
 end
 
@@ -269,6 +295,7 @@ function Workspaces:forgetDesktop(spaceId)
     if state.labels[tostring(spaceId)] then
       state.labels[tostring(spaceId)] = nil
       call(self.hs and self.hs.settings, "set", LABEL_SETTINGS_PREFIX .. key, state)
+      self.labelCache[key] = nil
     end
   end
   return self
@@ -346,19 +373,31 @@ function Workspaces:addDesktop(screen, requestedLabel)
 end
 
 function Workspaces:label(screen)
+  local key = screenKey(screen)
+  local now = self:seconds()
+  local cached = self.labelCache[key]
+  if cached and now < cached.expiresAt then return cached.value end
+
   local desktops = self:desktopRecords(screen)
-  if #desktops == 0 then return nil end
-  local active = self:activeSpace(screen)
-  local pending = self.pending[screenKey(screen)]
-  if pending then
-    if active == pending.id then self:clearPendingDesktop(screen)
-    else active = pending.id end
+  local value
+  if #desktops > 0 then
+    local active = self:activeSpace(screen)
+    local pending = self.pending[key]
+    if pending then
+      if active == pending.id then self:clearPendingDesktop(screen)
+      else active = pending.id end
+    end
+    local labels = {}
+    for position, desktop in ipairs(desktops) do
+      labels[position] = desktop.id == active and ("[" .. desktop.index .. "]") or tostring(desktop.index)
+    end
+    value = table.concat(labels, " ")
   end
-  local labels = {}
-  for position, desktop in ipairs(desktops) do
-    labels[position] = desktop.id == active and ("[" .. desktop.index .. "]") or tostring(desktop.index)
-  end
-  return table.concat(labels, " ")
+
+  -- Keep an explicit cache entry even when value is nil; nil labels are valid
+  -- results and must not trigger another private Spaces lookup every tick.
+  self.labelCache[key] = { value = value, expiresAt = now + LABEL_CACHE_TTL }
+  return value
 end
 
 function Workspaces:start(callback)
@@ -367,6 +406,7 @@ function Workspaces:start(callback)
     return self
   end
   self.watcher = self.hs.spaces.watcher.new(function()
+    self:invalidateLabelCache()
     if callback then callback() end
   end)
   self.watcher:start()
@@ -386,6 +426,7 @@ function Workspaces:stop()
   end
   self.pendingRemovals = {}
   self.labelStates = {}
+  self.labelCache = {}
   self.activeDesktops = {}
   self.previouslyFocusedDesktops = {}
   return self

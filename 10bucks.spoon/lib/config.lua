@@ -19,6 +19,8 @@ Config.defaults = {
     -- Preserve a compact gap for macOS's top-right privacy/status indicators.
     rightInset = 24,
     refreshInterval = 0.15,
+    menuBarHideDelay = 0.20,
+    menuBarFadeDuration = 0.10,
     backgroundColor = { red = 0.08, green = 0.09, blue = 0.12, alpha = 0.45 },
     textColor = { red = 0.9, green = 0.92, blue = 0.96, alpha = 1 },
     font = "Menlo",
@@ -152,6 +154,10 @@ function Config.build(override)
     "bar.topPadding must be within the bar height")
   assert(config.bar.rightInset >= 0, "bar.rightInset must not be negative")
   assert(config.bar.refreshInterval > 0, "bar.refreshInterval must be positive")
+  assert(config.bar.menuBarHideDelay >= 0, "bar.menuBarHideDelay must not be negative")
+  assert(config.bar.menuBarFadeDuration >= 0, "bar.menuBarFadeDuration must not be negative")
+  assert(config.bar.menuBarFadeDuration <= config.bar.menuBarHideDelay,
+    "bar.menuBarFadeDuration must not exceed bar.menuBarHideDelay")
   assert(config.bar.textSize > 0, "bar.textSize must be positive")
   return config
 end

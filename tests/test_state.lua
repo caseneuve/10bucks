@@ -121,7 +121,7 @@ return {
     state:selectId(context, 10)
     state:selectId(context, 20)
     state:selectId(context, 30)
-    state:forgetWindow(30, true)
+    state:forgetWindow(30)
     equal(state:selectedId(context), 20)
     equal(state:focusFallback(context), 20)
   end,
@@ -130,7 +130,7 @@ return {
     local state = State.new(config)
     state:addWindow(context, 10)
     state:addWindow(context, 20)
-    state:forgetWindow(20, true)
+    state:forgetWindow(20)
     equal(state:focusFallback(context, 1), 10)
   end,
 
@@ -142,7 +142,7 @@ return {
     state:addWindow(otherContext, 30)
     state:selectId(otherContext, 30)
 
-    state:forgetWindow(20, true)
+    state:forgetWindow(20)
     equal(state:focusFallback(context, 1), 10)
   end,
 

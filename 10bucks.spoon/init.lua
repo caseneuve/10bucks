@@ -81,9 +81,7 @@ function Tenbucks:start()
   self.lifecycle:start()
   self.workspaces:start(function()
     self.engine:workspaceChanged()
-    -- macOS can retain a canvas as "showing" while leaving it on the Space it
-    -- was created in. Reassert it after the native Space watcher fires.
-    self.bar:refresh(true)
+    self.bar:refresh()
   end)
   self.bar:start()
   self.started = true
