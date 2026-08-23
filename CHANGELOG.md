@@ -24,6 +24,7 @@ on the same date appends `.N`, for example `2026.08.22.2`.
 ### Fixed
 
 - Focus recovery after window close or minimize now uses actual focused-window state, is limited to the active workspace, and retries only a bounded number of times.
+- Cross-Space chooser and previous-window focus now switch to the destination Space before focusing, avoiding focus-manager races that briefly select the target and then return to a transient Contexts window.
 
 ## [2026.08.23-alpha.2] - 2026-08-23
 

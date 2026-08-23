@@ -1,6 +1,9 @@
 local WindowRepository = {}
 WindowRepository.__index = WindowRepository
 
+local FOCUS_SPACE_RETRY_DELAY = 0.05
+local MAX_FOCUS_SPACE_RETRIES = 20
+
 local function attempt(object, method, fallback)
   if not object or type(object[method]) ~= "function" then return fallback end
   local ok, value = pcall(object[method], object)
@@ -207,11 +210,84 @@ function WindowRepository:setFrame(window, frame, duration)
   window:setFrame(frame, duration)
 end
 
+function WindowRepository:cancelPendingFocus()
+  self.focusGeneration = (self.focusGeneration or 0) + 1
+  if self.focusTimer and type(self.focusTimer.stop) == "function" then self.focusTimer:stop() end
+  self.focusTimer = nil
+end
+
+function WindowRepository:activeSpaceForWindow(window)
+  local spaces = self.hs.spaces
+  if not spaces then return nil end
+  local screen = attempt(window, "screen", nil)
+  if screen and type(spaces.activeSpaceOnScreen) == "function" then
+    local ok, active = pcall(spaces.activeSpaceOnScreen, screen)
+    if ok then return active end
+  end
+  if type(spaces.focusedSpace) == "function" then
+    local ok, active = pcall(spaces.focusedSpace)
+    if ok then return active end
+  end
+  return nil
+end
+
 function WindowRepository:focus(window)
-  window:focus()
+  if not window or type(window.focus) ~= "function" then return false end
+  self:cancelPendingFocus()
+
+  local spaces = self.hs.spaces
+  local timer = self.hs.timer
+  if not spaces or type(spaces.windowSpaces) ~= "function" or type(spaces.gotoSpace) ~= "function"
+    or not timer or type(timer.doAfter) ~= "function" then
+    window:focus()
+    return true
+  end
+
+  local spacesOk, targetSpaces = pcall(spaces.windowSpaces, window)
+  local destination = spacesOk and type(targetSpaces) == "table" and targetSpaces[1]
+  local activeSpace = self:activeSpaceForWindow(window)
+  if type(targetSpaces) == "table" then
+    for _, targetSpace in ipairs(targetSpaces) do
+      if targetSpace == activeSpace then
+        window:focus()
+        return true
+      end
+    end
+  end
+  if not destination then
+    window:focus()
+    return true
+  end
+
+  -- hs.window:focus() tries to activate a cross-Space window and switch Spaces
+  -- in one operation. With focus-manager applications such as Contexts, the
+  -- target can focus briefly before their transient window wins the incomplete
+  -- transition and returns macOS to the source Space. Switch first, then focus
+  -- only after the target Space is active.
+  local switchedOk, switched = pcall(spaces.gotoSpace, destination)
+  if not switchedOk or switched == false then
+    window:focus()
+    return true
+  end
+
+  local generation = self.focusGeneration
+  local attempts = 0
+  local function finishFocus()
+    if generation ~= self.focusGeneration then return end
+    attempts = attempts + 1
+    if self:activeSpaceForWindow(window) == destination or attempts >= MAX_FOCUS_SPACE_RETRIES then
+      self.focusTimer = nil
+      window:focus()
+      return
+    end
+    self.focusTimer = timer.doAfter(FOCUS_SPACE_RETRY_DELAY, finishFocus)
+  end
+  self.focusTimer = timer.doAfter(FOCUS_SPACE_RETRY_DELAY, finishFocus)
+  return true
 end
 
 function WindowRepository:stop()
+  self:cancelPendingFocus()
   if self.pickerFilter and type(self.pickerFilter.delete) == "function" then self.pickerFilter:delete() end
   self.pickerFilter = nil
   return self

@@ -259,4 +259,98 @@ return {
 
     assert(not repository:isEligible(auxiliary))
   end,
+
+  ["same-Space focus remains immediate"] = function()
+    local focused, switched = false, false
+    local target = {
+      focus = function() focused = true end,
+      screen = function() return {} end,
+    }
+    local repository = WindowRepository.new({
+      window = { filter = requiredWindowFilter() },
+      screen = {},
+      spaces = {
+        windowSpaces = function() return { 10 } end,
+        activeSpaceOnScreen = function() return 10 end,
+        gotoSpace = function() switched = true return true end,
+      },
+      timer = { doAfter = function() error("same-Space focus must not wait") end },
+    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+
+    assert(repository:focus(target))
+    assert(focused)
+    assert(not switched)
+  end,
+
+  ["cross-Space focus waits for the destination before focusing"] = function()
+    local activeSpace, destination, focused = 10, nil, false
+    local delayed = {}
+    local target = {
+      focus = function() focused = true end,
+      screen = function() return {} end,
+    }
+    local repository = WindowRepository.new({
+      window = { filter = requiredWindowFilter() },
+      screen = {},
+      spaces = {
+        windowSpaces = function(candidate)
+          assert(candidate == target)
+          return { 20 }
+        end,
+        activeSpaceOnScreen = function() return activeSpace end,
+        gotoSpace = function(space)
+          destination = space
+          return true
+        end,
+      },
+      timer = {
+        doAfter = function(delay, callback)
+          local timer = { delay = delay, callback = callback, stopped = false }
+          function timer:stop() self.stopped = true end
+          table.insert(delayed, timer)
+          return timer
+        end,
+      },
+    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+
+    assert(repository:focus(target))
+    assert(destination == 20)
+    assert(not focused)
+    assert(#delayed == 1 and delayed[1].delay == 0.05)
+
+    delayed[1].callback()
+    assert(not focused and #delayed == 2)
+    activeSpace = 20
+    delayed[2].callback()
+    assert(focused)
+  end,
+
+  ["stopping the repository cancels a pending cross-Space focus"] = function()
+    local delayed
+    local target = {
+      focus = function() error("cancelled focus must not run") end,
+      screen = function() return {} end,
+    }
+    local repository = WindowRepository.new({
+      window = { filter = requiredWindowFilter() },
+      screen = {},
+      spaces = {
+        windowSpaces = function() return { 20 } end,
+        activeSpaceOnScreen = function() return 10 end,
+        gotoSpace = function() return true end,
+      },
+      timer = {
+        doAfter = function(_, callback)
+          delayed = { callback = callback, stopped = false }
+          function delayed:stop() self.stopped = true end
+          return delayed
+        end,
+      },
+    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+
+    assert(repository:focus(target))
+    repository:stop()
+    assert(delayed.stopped)
+    delayed.callback()
+  end,
 }
