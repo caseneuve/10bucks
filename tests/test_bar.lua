@@ -34,7 +34,7 @@ return {
     assert(instance:clockText(timestamp) == "Sat, 22 Aug, 18:14")
   end,
 
-  ["bar status puts the layout icon before selected stack count, workspaces, and title"] = function()
+  ["bar status puts workspaces and focused title after the icon with stack count last"] = function()
     local focused = {
       application = function() return { name = function() return "Safari" end } end,
       title = function() return "10bucks issue" end,
@@ -61,7 +61,7 @@ return {
 
     local layout, text = instance:status(screen)
     assert(layout == "columns")
-    assert(text == "2/3  ·  1 [2] 3  ·  Safari — 10bucks issue")
+    assert(text == "1 [2] 3 · 10bucks issue  (2/3) ")
 
     local columns = instance:layoutIconElements("columns", 12, 4, 28)
     assert(#columns == 2)

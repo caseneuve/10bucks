@@ -66,26 +66,27 @@ function Bar:layoutIconElements(layout, x, topPadding, contentHeight)
   }
 end
 
--- Return the layout separately so its canvas icon can sit directly beside the
--- selected/total stack count without an intervening field separator.
+-- Return the layout separately so its canvas icon can lead the workspace,
+-- focused-window title, and trailing selected/total stack indicator.
 function Bar:status(screen)
   local window = self.repository:focusedWindow()
   local context = self.repository:contextForWindow(window) or self.repository:currentContext()
-  if not context then return "stack", "0/0  ·  No focused window" end
+  local layout, position = "stack", "0/0"
+  if context then
+    local scope = self.engine.state:scope(context)
+    local column = scope.columns[scope.activeColumn]
+    layout = scope.layout
+    -- Retain the selected member as well as the stack total, e.g. (2/3).
+    position = column.selected and string.format("%d/%d", column.selected, #column.windows) or "0/0"
+  end
 
-  local scope = self.engine.state:scope(context)
-  local column = scope.columns[scope.activeColumn]
-  -- The count retains the selected member as well as the stack total, e.g. 2/3.
-  local position = column.selected and string.format("%d/%d", column.selected, #column.windows) or "0/0"
-  local application = attempt(attempt(window, "application"), "name") or "No focused window"
   local title = attempt(window, "title")
-  local focus = title and title ~= "" and (application .. " — " .. title) or application
-
-  local fields = { position }
+  if not title or title == "" then
+    title = attempt(attempt(window, "application"), "name") or "No focused window"
+  end
   local workspaceLabel = self.config.showWorkspaces and self.workspaces:label(screen)
-  if workspaceLabel then table.insert(fields, workspaceLabel) end
-  table.insert(fields, truncate(focus, 90))
-  return scope.layout, table.concat(fields, "  ·  ")
+  local workspace = workspaceLabel and (workspaceLabel .. " · ") or ""
+  return layout, string.format("%s%s  (%s) ", workspace, truncate(title, 90), position)
 end
 
 function Bar:pointerOver(frame)
