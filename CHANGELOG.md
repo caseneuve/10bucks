@@ -8,10 +8,18 @@ on the same date appends `.N`, for example `2026.08.22.2`.
 
 ## [Unreleased]
 
+## [2026.08.23-alpha.2] - 2026-08-23
+
+### Added
+
+- Local development install workflow via `just install` or `scripts/install-local.sh`.
+- Security policy for private vulnerability reports.
+
 ### Changed
 
 - Include the MIT license in the distributed Spoon archive.
 - Identify the Spoon author as `caseneuve`.
+- Document the tested Hammerspoon version.
 
 ## [2026.08.23-alpha.1] - 2026-08-23
 
