@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/10bucks-logo.png" alt="obligatory AI generated logo that makes no sense" width="160">
+</p>
+
 # 10bucks
 
 Opinionated macOS tiling window manager built on
