@@ -5,9 +5,27 @@ local function requiredWindowFilter()
   return { new = function() return {} end }
 end
 
-local function window(visible, title, bundleID)
+local function accessibility(sizeSettable, modal)
+  return {
+    windowElement = function()
+      return {
+        attributeValue = function(_, attribute)
+          assert(attribute == "AXModal")
+          return modal
+        end,
+        isAttributeSettable = function(_, attribute)
+          assert(attribute == "AXSize")
+          return sizeSettable
+        end,
+      }
+    end,
+  }
+end
+
+local function window(visible, title, bundleID, frame)
   return {
     id = function() return 1 end,
+    frame = function() return frame end,
     isVisible = function() return visible end,
     isFullScreen = function() return false end,
     application = function()
@@ -88,6 +106,99 @@ return {
     assert(#windows == 1 and windows[1] == otherSpace)
     assert(repository:allLiveWindows()[1] == otherSpace)
     assert(created == 1)
+  end,
+
+  ["fixed-size standard windows remain unmanaged"] = function()
+    local fixedSize = window(true, "Fixed-size utility", "com.example.App")
+    local repository = WindowRepository.new({
+      window = { filter = requiredWindowFilter() },
+      screen = {},
+      axuielement = accessibility(false, false),
+    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+
+    assert(not repository:isEligible(fixedSize))
+    assert(not repository:isPickerWindow(fixedSize))
+  end,
+
+  ["modal standard windows remain unmanaged"] = function()
+    local modal = window(true, "Application prompt", "com.example.App")
+    local repository = WindowRepository.new({
+      window = { filter = requiredWindowFilter() },
+      screen = {},
+      axuielement = accessibility(true, true),
+    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+
+    assert(not repository:isEligible(modal))
+    assert(not repository:isPickerWindow(modal))
+  end,
+
+  ["resizable contained TextEdit documents remain eligible"] = function()
+    local larger = window(true, "Untitled 2", "com.apple.TextEdit", { x = 0, y = 0, w = 1000, h = 800 })
+    local smaller = window(true, "Untitled", "com.apple.TextEdit", { x = 100, y = 100, w = 400, h = 300 })
+    larger.id = function() return 1 end
+    smaller.id = function() return 2 end
+    local repository = WindowRepository.new({
+      window = { filter = requiredWindowFilter() },
+      screen = {},
+      axuielement = accessibility(true, false),
+    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+
+    assert(repository:isEligible(larger))
+    assert(repository:isEligible(smaller))
+    assert(repository:isPickerWindow(smaller))
+  end,
+
+  ["accessibility lookup failures do not exclude standard windows"] = function()
+    local ordinary = window(true, "Document", "com.example.App")
+    local repository = WindowRepository.new({
+      window = { filter = requiredWindowFilter() },
+      screen = {},
+      axuielement = { windowElement = function() error("accessibility unavailable") end },
+    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+
+    assert(repository:isEligible(ordinary))
+    assert(repository:isPickerWindow(ordinary))
+  end,
+
+  ["eligible enumeration does not query all applications"] = function()
+    local first = window(true, "First")
+    local second = window(true, "Second")
+    second.id = function() return 2 end
+    local repository = WindowRepository.new({
+      window = {
+        allWindows = function() error("eligible enumeration must not query all applications") end,
+        visibleWindows = function() return { first, second } end,
+        filter = requiredWindowFilter(),
+      },
+      screen = {},
+      axuielement = accessibility(true, false),
+    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+
+    assert(#repository:eligibleWindows() == 2)
+  end,
+
+  ["cross-Space picker excludes fixed-size tracked windows without global enumeration"] = function()
+    local fixedSize = window(true, "Fixed-size utility")
+    local pickerFilter = {
+      getWindows = function(self)
+        return self.predicate(fixedSize) and { fixedSize } or {}
+      end,
+    }
+    local repository = WindowRepository.new({
+      window = {
+        allWindows = function() error("picker must not query all applications") end,
+        filter = {
+          new = function(predicate)
+            pickerFilter.predicate = predicate
+            return pickerFilter
+          end,
+        },
+      },
+      screen = {},
+      axuielement = accessibility(false, false),
+    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+
+    assert(#repository:allLiveWindows() == 0)
   end,
 
   ["title patterns exclude matching ordinary windows"] = function()

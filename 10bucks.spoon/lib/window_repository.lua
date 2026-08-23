@@ -14,6 +14,25 @@ local function matchesAny(text, patterns)
   return false
 end
 
+-- Some applications expose modal or fixed-size dialogs as AXStandardWindow.
+-- Accessibility capabilities identify them without app-specific or geometric heuristics.
+local function isTransientStandardWindow(hs, window)
+  if not hs.axuielement or type(hs.axuielement.windowElement) ~= "function" then return false end
+  local elementOk, element = pcall(hs.axuielement.windowElement, window)
+  if not elementOk or not element then return false end
+
+  if type(element.attributeValue) == "function" then
+    local modalOk, modal = pcall(element.attributeValue, element, "AXModal")
+    if modalOk and modal == true then return true end
+  end
+
+  if type(element.isAttributeSettable) == "function" then
+    local sizeOk, sizeSettable = pcall(element.isAttributeSettable, element, "AXSize")
+    if sizeOk and sizeSettable == false then return true end
+  end
+  return false
+end
+
 function WindowRepository.new(hs, config)
   assert(hs and hs.window and hs.window.filter and type(hs.window.filter.new) == "function" and hs.screen,
     "10bucks requires hs.window.filter and hs.screen")
@@ -69,22 +88,25 @@ function WindowRepository:activeContexts()
   return contexts
 end
 
+function WindowRepository:isExcludedByConfiguration(window)
+  local application = attempt(window, "application", nil)
+  local bundleId = attempt(application, "bundleID", nil)
+  for _, excluded in ipairs(self.config.excludedBundleIDs) do
+    if excluded == bundleId then return true end
+  end
+  return matchesAny(attempt(window, "title", "") or "", self.config.excludedWindowTitles)
+end
+
 function WindowRepository:isWorkspaceWindow(window)
   if not window or not attempt(window, "id", nil) or attempt(window, "isFullScreen", false) then
     return false
   end
-
-  local application = attempt(window, "application", nil)
-  local bundleId = attempt(application, "bundleID", nil)
-  for _, excluded in ipairs(self.config.excludedBundleIDs) do
-    if excluded == bundleId then return false end
-  end
-  if matchesAny(attempt(window, "title", "") or "", self.config.excludedWindowTitles) then return false end
+  if self:isExcludedByConfiguration(window) then return false end
 
   -- AXStandardWindow excludes sheets, utility palettes, menu-bar items, and most transient UI.
   local isStandardWindow = attempt(window, "role", nil) == "AXWindow"
     and attempt(window, "subrole", nil) == "AXStandardWindow"
-  if not isStandardWindow then return false end
+  if not isStandardWindow or isTransientStandardWindow(self.hs, window) then return false end
 
   return not self.config.windowFilter or self.config.windowFilter(window) ~= false
 end
@@ -114,13 +136,8 @@ end
 
 function WindowRepository:isPickerWindow(window)
   if not window or not attempt(window, "id", nil) then return false end
-  local application = attempt(window, "application", nil)
-  local bundleId = attempt(application, "bundleID", nil)
-  for _, excluded in ipairs(self.config.excludedBundleIDs) do
-    if excluded == bundleId then return false end
-  end
-
-  return attempt(window, "isStandard", false)
+  if self:isExcludedByConfiguration(window) or not attempt(window, "isStandard", false) then return false end
+  return not isTransientStandardWindow(self.hs, window)
 end
 
 function WindowRepository:allLiveWindows()

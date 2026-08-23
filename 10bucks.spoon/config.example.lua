@@ -43,6 +43,8 @@ return {
   },
 
   -- Lists of application bundle-ID strings and Lua-pattern strings.
+  -- Modal and fixed-size standard windows are excluded automatically; use
+  -- these lists for any remaining exceptions.
   excludedBundleIDs = { "org.hammerspoon.Hammerspoon", "com.apple.SecurityAgent" },
   excludedWindowTitles = {
     -- "^Picture in Picture$",
