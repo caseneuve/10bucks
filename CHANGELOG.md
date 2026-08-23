@@ -8,6 +8,13 @@ on the same date appends `.N`, for example `2026.08.22.2`.
 
 ## [Unreleased]
 
+## [2026.08.23-alpha.1] - 2026-08-23
+
+### Changed
+
+- Reordered the status bar to show workspaces and the focused window title before the stack position.
+- Modal and fixed-size standard windows now float instead of being managed.
+
 ## [2026.08.22-alpha.1] - 2026-08-22
 
 ### Added
