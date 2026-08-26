@@ -92,6 +92,57 @@ local function build(ids, options)
   return engine, repository
 end
 
+local function deletionFixture(options)
+  options = options or {}
+  local engine, repository = build({})
+  local screen = { id = "screen-a" }
+  local source = { id = "desktop-2", index = 2 }
+  local destination = { id = "desktop-1", index = 1 }
+  local destinationContext = { screenId = "screen-a", spaceId = destination.id }
+  local currentContext = context
+  local observations = { events = {} }
+
+  repository.windows[42] = fakeWindow(42)
+  engine.state:addWindow(destinationContext, 42, 1)
+  repository.currentContext = function() return currentContext end
+  repository.activeContexts = function() return { currentContext } end
+  repository.screenForContext = function() return screen end
+  repository.setFrame = function(_, window, frame)
+    window:setFrame(frame)
+    table.insert(observations.events, "reflow")
+  end
+  repository.focus = function(_, window)
+    table.insert(observations.events, "focus:" .. tostring(window:id()))
+  end
+
+  engine.workspaces = workspaceWith({
+    isAvailable = function() return true end,
+    isDesktopSpace = function() return true end,
+    canRemoveDesktop = function() return true end,
+    activeDesktop = function() return source end,
+    previouslyFocusedDesktop = function() return destination end,
+    queueDesktopRemoval = function(_, _, queuedSource, queuedDestination)
+      observations.queued = { source = queuedSource, destination = queuedDestination }
+      return true
+    end,
+    setPendingDesktop = function() end,
+    clearPendingDesktop = function() end,
+    clearPendingRemoval = function() end,
+    gotoDesktop = function(_, id)
+      observations.selected = id
+      return options.switchFails ~= true
+    end,
+    rememberActiveDesktop = function() end,
+    completePendingRemoval = function()
+      if options.removalFails then return false, "Desktop removal cancelled" end
+      return true, source
+    end,
+  })
+
+  observations.enterDestination = function() currentContext = destinationContext end
+  return engine, observations
+end
+
 return {
   ["engine initially overlaps all managed windows in the stack"] = function()
     local _, repository = build({ 1, 2 })
@@ -532,29 +583,39 @@ return {
     equal(selected, "desktop-2")
   end,
 
-  ["engine deletes an empty desktop only after returning to the previous desktop"] = function()
-    local engine, repository = build({})
-    local queued, selected
-    repository.screenForContext = function() return { id = "screen-a" } end
-    engine.workspaces = workspaceWith({
-      isAvailable = function() return true end,
-      isDesktopSpace = function() return true end,
-      canRemoveDesktop = function() return true end,
-      activeDesktop = function() return { id = "desktop-2", index = 2 } end,
-      previouslyFocusedDesktop = function() return { id = "desktop-1", index = 1 } end,
-      queueDesktopRemoval = function(_, _, source, destination)
-        queued = { source = source, destination = destination }
-        return true
-      end,
-      clearPendingRemoval = function() end,
-      setPendingDesktop = function() end,
-      clearPendingDesktop = function() end,
-      gotoDesktop = function(_, id) selected = id return true end,
-    })
+  ["desktop deletion restores destination focus after reflow"] = function()
+    local engine, observations = deletionFixture()
+
     assert(engine:deleteWorkspace())
-    equal(queued.source.id, "desktop-2")
-    equal(queued.destination.id, "desktop-1")
-    equal(selected, "desktop-1")
+    equal(observations.queued.source.id, "desktop-2")
+    equal(observations.queued.destination.id, "desktop-1")
+    equal(observations.selected, "desktop-1")
+
+    observations.enterDestination()
+    assert(engine:workspaceChanged())
+    equal(observations.events[1], "reflow")
+    equal(observations.events[2], "focus:42")
+    assert(engine.pendingWorkspaceRemovalFocus["screen-a"] == nil)
+  end,
+
+  ["failed desktop removal does not restore destination focus"] = function()
+    local engine, observations = deletionFixture({ removalFails = true })
+
+    assert(engine:deleteWorkspace())
+    observations.enterDestination()
+    assert(engine:workspaceChanged())
+    equal(observations.events[1], "reflow")
+    assert(observations.events[2] == nil)
+    assert(engine.pendingWorkspaceRemovalFocus["screen-a"] == nil)
+  end,
+
+  ["failed desktop switch clears pending focus restoration"] = function()
+    local engine, observations = deletionFixture({ switchFails = true })
+
+    assert(not engine:deleteWorkspace())
+    equal(observations.selected, "desktop-1")
+    assert(#observations.events == 0)
+    assert(engine.pendingWorkspaceRemovalFocus["screen-a"] == nil)
   end,
 
   ["engine refuses to delete a desktop that contains a hidden workspace window"] = function()

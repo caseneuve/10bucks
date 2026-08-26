@@ -21,8 +21,12 @@ Config.defaults = {
     refreshInterval = 0.15,
     menuBarHideDelay = 0.20,
     menuBarFadeDuration = 0.10,
+    -- Used when macOS is in Dark appearance.
     backgroundColor = { red = 0.08, green = 0.09, blue = 0.12, alpha = 0.45 },
     textColor = { red = 0.9, green = 0.92, blue = 0.96, alpha = 1 },
+    -- Used for every other appearance, including macOS Light mode.
+    lightBackgroundColor = { red = 0.94, green = 0.95, blue = 0.97, alpha = 0.65 },
+    lightTextColor = { red = 0.08, green = 0.09, blue = 0.12, alpha = 1 },
     font = "Menlo",
     textSize = 13,
   },

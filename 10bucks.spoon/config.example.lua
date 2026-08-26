@@ -39,9 +39,12 @@ return {
     menuBarHideDelay = 0.20,
     -- Non-negative fade duration in seconds; no greater than menuBarHideDelay.
     menuBarFadeDuration = 0.10,
-    -- Hammerspoon colour tables.
+    -- Hammerspoon colour tables. The first pair is used in macOS Dark mode;
+    -- the second pair is used in Light mode and updates automatically.
     backgroundColor = { red = 0.08, green = 0.09, blue = 0.12, alpha = 0.45 },
     textColor = { red = 0.9, green = 0.92, blue = 0.96, alpha = 1 },
+    lightBackgroundColor = { red = 0.94, green = 0.95, blue = 0.97, alpha = 0.65 },
+    lightTextColor = { red = 0.08, green = 0.09, blue = 0.12, alpha = 1 },
     font = "Menlo", -- font name string
     textSize = 13, -- positive number
   },

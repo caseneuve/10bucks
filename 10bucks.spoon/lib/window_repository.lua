@@ -1,13 +1,36 @@
 local WindowRepository = {}
 WindowRepository.__index = WindowRepository
 
+local FOCUS_SPACE_START_DELAY = 0.01
 local FOCUS_SPACE_RETRY_DELAY = 0.05
-local MAX_FOCUS_SPACE_RETRIES = 20
+local FOCUS_SPACE_SETTLE_DELAY = 0.15
+local MAX_FOCUS_SPACE_RETRIES = 40
+local MISSION_CONTROL_RETRY_DELAY = 0.025
+local MAX_MISSION_CONTROL_RETRIES = 120
 
 local function attempt(object, method, fallback)
   if not object or type(object[method]) ~= "function" then return fallback end
   local ok, value = pcall(object[method], object)
   return ok and value or fallback
+end
+
+local function axAttribute(element, name)
+  if not element then return nil end
+  local directOk, direct = pcall(function() return element[name] end)
+  if directOk and direct ~= nil then return direct end
+  if type(element.attributeValue) ~= "function" then return nil end
+  local ok, value = pcall(element.attributeValue, element, name)
+  return ok and value or nil
+end
+
+local function axChild(element, identifier, displayId)
+  for _, child in ipairs(axAttribute(element, "AXChildren") or {}) do
+    if axAttribute(child, "AXIdentifier") == identifier
+      and (displayId == nil or axAttribute(child, "AXDisplayID") == displayId) then
+      return child
+    end
+  end
+  return nil
 end
 
 local function matchesAny(text, patterns)
@@ -214,6 +237,11 @@ function WindowRepository:cancelPendingFocus()
   self.focusGeneration = (self.focusGeneration or 0) + 1
   if self.focusTimer and type(self.focusTimer.stop) == "function" then self.focusTimer:stop() end
   self.focusTimer = nil
+  if self.focusMissionControlOpen then
+    local toggle = self.hs.spaces and self.hs.spaces.toggleMissionControl
+    if type(toggle) == "function" then pcall(toggle) end
+    self.focusMissionControlOpen = nil
+  end
 end
 
 function WindowRepository:activeSpaceForWindow(window)
@@ -231,13 +259,93 @@ function WindowRepository:activeSpaceForWindow(window)
   return nil
 end
 
+function WindowRepository:missionControlSpacesList(dockElement, screen)
+  local missionControl = axChild(dockElement, "mc")
+  local display = axChild(missionControl, "mc.display", attempt(screen, "id", nil))
+  local spacesGroup = axChild(display, "mc.spaces")
+  return axChild(spacesGroup, "mc.spaces.list")
+end
+
+-- Perform the same Mission Control AXPress as hs.spaces.gotoSpace(), but poll
+-- with timers for up to three seconds instead of blocking Hammerspoon's main
+-- thread. Retain Hammerspoon's stabilization delay before pressing the Space.
+function WindowRepository:startAsyncSpaceSwitch(window, destination, generation, switched)
+  local hs = self.hs
+  local spaces = hs.spaces
+  local timer = hs.timer
+  local screen = attempt(window, "screen", nil)
+  if not screen or not spaces or type(spaces.toggleMissionControl) ~= "function"
+    or type(spaces.spacesForScreen) ~= "function" or not timer
+    or type(timer.doAfter) ~= "function" or not hs.application or not hs.axuielement
+    or type(hs.application.applicationsForBundleID) ~= "function"
+    or type(hs.axuielement.applicationElement) ~= "function" then return false end
+
+  local orderOk, orderedSpaces = pcall(spaces.spacesForScreen, screen)
+  if not orderOk or type(orderedSpaces) ~= "table" then return false end
+  local targetIndex
+  for index, spaceId in ipairs(orderedSpaces) do
+    if spaceId == destination then targetIndex = index break end
+  end
+  if not targetIndex then return false end
+
+  local appsOk, dockApps = pcall(hs.application.applicationsForBundleID, "com.apple.dock")
+  local dock = appsOk and type(dockApps) == "table" and dockApps[1]
+  if not dock then return false end
+  local elementOk, dockElement = pcall(hs.axuielement.applicationElement, dock)
+  if not elementOk or not dockElement then return false end
+
+  -- Chooser selection starts from the normal desktop UI. Calling
+  -- openMissionControl() would first synchronously scan Dock's AX tree and can
+  -- block for seconds after Space creation/removal; the core toggle is instant.
+  if not pcall(spaces.toggleMissionControl) then return false end
+  self.focusMissionControlOpen = true
+
+  local attempts = 0
+  local stabilized = false
+  local function pollMissionControl()
+    if generation ~= self.focusGeneration then return end
+    attempts = attempts + 1
+    local spacesList = self:missionControlSpacesList(dockElement, screen)
+    if spacesList and not stabilized then
+      stabilized = true
+      local delay = type(spaces.MCwaitTime) == "number" and spaces.MCwaitTime or 0.3
+      self.focusTimer = timer.doAfter(delay, pollMissionControl)
+      return
+    end
+
+    if spacesList and stabilized then
+      local button = (axAttribute(spacesList, "AXChildren") or {})[targetIndex]
+      if button and type(button.performAction) == "function" then
+        local actionOk, pressed = pcall(button.performAction, button, "AXPress")
+        if actionOk and pressed then
+          self.focusMissionControlOpen = nil -- AXPress closes Mission Control.
+          self.focusTimer = nil
+          switched()
+          return
+        end
+      end
+    end
+
+    if attempts >= MAX_MISSION_CONTROL_RETRIES then
+      if type(spaces.toggleMissionControl) == "function" then pcall(spaces.toggleMissionControl) end
+      self.focusMissionControlOpen = nil
+      self.focusTimer = nil
+      if type(hs.printf) == "function" then hs.printf("10bucks: timed out switching Spaces") end
+      return
+    end
+    self.focusTimer = timer.doAfter(MISSION_CONTROL_RETRY_DELAY, pollMissionControl)
+  end
+  self.focusTimer = timer.doAfter(MISSION_CONTROL_RETRY_DELAY, pollMissionControl)
+  return true
+end
+
 function WindowRepository:focus(window)
   if not window or type(window.focus) ~= "function" then return false end
   self:cancelPendingFocus()
 
   local spaces = self.hs.spaces
   local timer = self.hs.timer
-  if not spaces or type(spaces.windowSpaces) ~= "function" or type(spaces.gotoSpace) ~= "function"
+  if not spaces or type(spaces.windowSpaces) ~= "function"
     or not timer or type(timer.doAfter) ~= "function" then
     window:focus()
     return true
@@ -259,30 +367,41 @@ function WindowRepository:focus(window)
     return true
   end
 
-  -- hs.window:focus() tries to activate a cross-Space window and switch Spaces
-  -- in one operation. With focus-manager applications such as Contexts, the
-  -- target can focus briefly before their transient window wins the incomplete
-  -- transition and returns macOS to the source Space. Switch first, then focus
-  -- only after the target Space is active.
-  local switchedOk, switched = pcall(spaces.gotoSpace, destination)
-  if not switchedOk or switched == false then
-    window:focus()
-    return true
+  -- A cross-Space target is never focused until its Space is confirmed active
+  -- and remains active through a short settle period. There is deliberately no
+  -- direct-focus fallback: that is the path Contexts can steal and reverse.
+  local generation = self.focusGeneration
+  local function waitForDestination()
+    local attempts = 0
+    local function pollDestination()
+      if generation ~= self.focusGeneration then return end
+      attempts = attempts + 1
+      if self:activeSpaceForWindow(window) == destination then
+        self.focusTimer = timer.doAfter(FOCUS_SPACE_SETTLE_DELAY, function()
+          if generation ~= self.focusGeneration then return end
+          self.focusTimer = nil
+          if self:activeSpaceForWindow(window) == destination then window:focus() end
+        end)
+        return
+      end
+      if attempts >= MAX_FOCUS_SPACE_RETRIES then
+        self.focusTimer = nil
+        if type(self.hs.printf) == "function" then self.hs.printf("10bucks: destination Space did not activate") end
+        return
+      end
+      self.focusTimer = timer.doAfter(FOCUS_SPACE_RETRY_DELAY, pollDestination)
+    end
+    self.focusTimer = timer.doAfter(FOCUS_SPACE_RETRY_DELAY, pollDestination)
   end
 
-  local generation = self.focusGeneration
-  local attempts = 0
-  local function finishFocus()
+  self.focusTimer = timer.doAfter(FOCUS_SPACE_START_DELAY, function()
     if generation ~= self.focusGeneration then return end
-    attempts = attempts + 1
-    if self:activeSpaceForWindow(window) == destination or attempts >= MAX_FOCUS_SPACE_RETRIES then
-      self.focusTimer = nil
-      window:focus()
-      return
+    self.focusTimer = nil
+    if not self:startAsyncSpaceSwitch(window, destination, generation, waitForDestination)
+      and type(self.hs.printf) == "function" then
+      self.hs.printf("10bucks: asynchronous Space switching is unavailable")
     end
-    self.focusTimer = timer.doAfter(FOCUS_SPACE_RETRY_DELAY, finishFocus)
-  end
-  self.focusTimer = timer.doAfter(FOCUS_SPACE_RETRY_DELAY, finishFocus)
+  end)
   return true
 end
 

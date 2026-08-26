@@ -83,6 +83,45 @@ return {
     assert(instance:clockText(timestamp) == "Sat, 22 Aug, 18:14")
   end,
 
+  ["bar switches its rendered palette when the system appearance changes"] = function()
+    local style = "Dark"
+    local darkBackground, darkText = { name = "dark-background" }, { name = "dark-text" }
+    local lightBackground, lightText = { name = "light-background" }, { name = "light-text" }
+    local elements
+    local canvas = {
+      frame = function() end,
+      replaceElements = function(_, value) elements = value end,
+    }
+    local config = Config.build({
+      bar = {
+        backgroundColor = darkBackground,
+        textColor = darkText,
+        lightBackgroundColor = lightBackground,
+        lightTextColor = lightText,
+      },
+    }).bar
+    local instance = Bar.new({
+      host = { interfaceStyle = function() return style end },
+    }, {}, {}, workspaces(), config)
+    instance.status = function() return "stack", "Example" end
+
+    instance:render(canvas, { x = 0, y = 0, w = 1440, h = 32 }, screen)
+    assert(elements[1].fillColor.name == darkBackground.name)
+    assert(elements[2].strokeColor.name == darkText.name)
+    assert(elements[3].strokeColor.name == darkText.name)
+    assert(elements[4].textColor.name == darkText.name)
+    assert(elements[5].textColor.name == darkText.name)
+
+    -- nil is Hammerspoon's documented result for the default (light) style.
+    style = nil
+    instance:render(canvas, { x = 0, y = 0, w = 1440, h = 32 }, screen)
+    assert(elements[1].fillColor.name == lightBackground.name)
+    assert(elements[2].strokeColor.name == lightText.name)
+    assert(elements[3].strokeColor.name == lightText.name)
+    assert(elements[4].textColor.name == lightText.name)
+    assert(elements[5].textColor.name == lightText.name)
+  end,
+
   ["bar status puts workspaces and focused title after the icon with stack count last"] = function()
     local focused = {
       application = function() return { name = function() return "Safari" end } end,

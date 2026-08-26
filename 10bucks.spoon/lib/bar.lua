@@ -33,8 +33,7 @@ end
 -- Draw the two layout modes directly in the canvas. This follows the
 -- overlapping-window and two-pane icons without requiring a separately
 -- installed icon font or relying on text baseline metrics.
-function Bar:layoutIconElements(layout, x, topPadding, contentHeight)
-  local color = self.config.textColor
+function Bar:layoutIconElements(layout, x, topPadding, contentHeight, color)
   local size = 11
   -- Canvas text sits high within its frame; reserve five points below the
   -- smaller geometric icon so its visual center tracks the text glyphs.
@@ -124,6 +123,21 @@ function Bar:clockText(timestamp)
   return os.date("%a, %d %b, %H:%M", timestamp)
 end
 
+-- hs.host.interfaceStyle() reports "Dark" for dark appearance. Hammerspoon
+-- documents its default (light) appearance as nil on older macOS releases, so
+-- every non-Dark value intentionally uses the light palette.
+function Bar:colors()
+  local style
+  if self.hs and self.hs.host and type(self.hs.host.interfaceStyle) == "function" then
+    local ok, value = pcall(self.hs.host.interfaceStyle)
+    if ok then style = value end
+  end
+  if style == "Dark" then
+    return self.config.backgroundColor, self.config.textColor
+  end
+  return self.config.lightBackgroundColor, self.config.lightTextColor
+end
+
 function Bar:render(canvas, frame, screen)
   local height = self.config.height
   local topPadding = self.config.topPadding
@@ -132,23 +146,24 @@ function Bar:render(canvas, frame, screen)
   local clockX = math.max(0, frame.w - self.config.rightInset - clockWidth)
   canvas:frame(frame)
   local layout, status = self:status(screen)
+  local backgroundColor, textColor = self:colors()
   local iconX, statusX = 12, 34
   local elements = {
     {
       type = "rectangle",
       action = "fill",
       frame = { x = 0, y = 0, w = frame.w, h = height },
-      fillColor = self.config.backgroundColor,
+      fillColor = backgroundColor,
     },
   }
-  for _, iconElement in ipairs(self:layoutIconElements(layout, iconX, topPadding, contentHeight)) do
+  for _, iconElement in ipairs(self:layoutIconElements(layout, iconX, topPadding, contentHeight, textColor)) do
     table.insert(elements, iconElement)
   end
   table.insert(elements, {
     type = "text",
     frame = { x = statusX, y = topPadding, w = math.max(0, clockX - statusX - 12), h = contentHeight },
     text = status,
-    textColor = self.config.textColor,
+    textColor = textColor,
     textFont = self.config.font,
     textSize = self.config.textSize,
     textLineBreak = "truncateTail",
@@ -157,7 +172,7 @@ function Bar:render(canvas, frame, screen)
     type = "text",
     frame = { x = clockX, y = topPadding, w = clockWidth, h = contentHeight },
     text = self:clockText(),
-    textColor = self.config.textColor,
+    textColor = textColor,
     textFont = self.config.font,
     textSize = self.config.textSize,
     textAlignment = "right",

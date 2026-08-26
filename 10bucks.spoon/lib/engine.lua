@@ -516,15 +516,24 @@ function Engine:deleteWorkspace()
     return false
   end
 
+  local destinationContext = { screenId = context.screenId, spaceId = destination.id }
+  local returnFocusId = self.state:focusFallback(destinationContext)
   local queued, err = self.workspaces:queueDesktopRemoval(screen, source, destination)
   if not queued then
     self:notify(err or "Unable to remove desktop workspace")
     return false
   end
 
+  self.pendingWorkspaceRemovalFocus = self.pendingWorkspaceRemovalFocus or {}
+  self.pendingWorkspaceRemovalFocus[context.screenId] = returnFocusId and {
+    id = returnFocusId,
+    context = destinationContext,
+  } or nil
+
   self.workspaces:setPendingDesktop(screen, destination)
   local switched, switchErr = self.workspaces:gotoDesktop(destination.id)
   if not switched then
+    self.pendingWorkspaceRemovalFocus[context.screenId] = nil
     self.workspaces:clearPendingDesktop(screen)
     self.workspaces:clearPendingRemoval(screen)
     self:notify(switchErr or "Unable to switch workspace")
@@ -600,6 +609,7 @@ function Engine:newWorkspace(label)
 end
 
 function Engine:workspaceChanged()
+  local returnFocuses = {}
   -- A native Space switch exposes a different set of Accessibility windows.
   -- Seed only the currently visible regular-desktop scopes and never reflow a
   -- fullscreen/tiled scratchpad.
@@ -611,6 +621,11 @@ function Engine:workspaceChanged()
       local removed, result = self.workspaces:completePendingRemoval(screen)
       if removed then self:notify(string.format("Removed empty desktop %d", result.index))
       elseif result then self:notify(result) end
+      if removed or result then
+        local pending = self.pendingWorkspaceRemovalFocus and self.pendingWorkspaceRemovalFocus[context.screenId]
+        if self.pendingWorkspaceRemovalFocus then self.pendingWorkspaceRemovalFocus[context.screenId] = nil end
+        if removed and pending then table.insert(returnFocuses, pending) end
+      end
     end
     if self:isDesktopContext(context) then contexts[self.state:scopeKey(context)] = context end
   end
@@ -622,6 +637,7 @@ function Engine:workspaceChanged()
     end
   end
   for _, context in pairs(contexts) do self:reflow(context) end
+  for _, pending in ipairs(returnFocuses) do self:focus(pending.id, pending.context) end
   return next(contexts) ~= nil
 end
 

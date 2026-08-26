@@ -22,6 +22,73 @@ local function accessibility(sizeSettable, modal)
   }
 end
 
+local function crossSpaceFocusFixture(options)
+  options = options or {}
+  local state = { activeSpace = 10, focused = false, toggles = 0, pressed = false, pressAttempts = 0 }
+  local scheduled = {}
+  local timer = {
+    doAfter = function(delay, callback)
+      local pending = { delay = delay, callback = callback, stopped = false }
+      function pending:stop() self.stopped = true end
+      table.insert(scheduled, pending)
+      return pending
+    end,
+  }
+  local function runNext()
+    local pending = table.remove(scheduled, 1)
+    assert(pending and not pending.stopped, "expected a live scheduled callback")
+    pending.callback()
+    return pending.delay
+  end
+
+  local screen = { id = function() return 7 end }
+  local target = {
+    focus = function() state.focused = true end,
+    screen = function() return screen end,
+  }
+  local buttons = {
+    { performAction = function() error("wrong Space button") end },
+    { performAction = function(_, action)
+      assert(action == "AXPress")
+      state.pressAttempts = state.pressAttempts + 1
+      if options.transientPressFailure and state.pressAttempts == 1 then return false end
+      state.pressed = true
+      state.activeSpace = 20
+      return true
+    end },
+  }
+  local spacesList = { AXIdentifier = "mc.spaces.list", AXChildren = buttons }
+  local spacesGroup = { AXIdentifier = "mc.spaces", AXChildren = { spacesList } }
+  local display = { AXIdentifier = "mc.display", AXDisplayID = 7, AXChildren = { spacesGroup } }
+  local missionControl = { AXIdentifier = "mc", AXChildren = { display } }
+  local dockElement = { AXChildren = options.noMissionControlTree and {} or { missionControl } }
+  local hs = {
+    window = { filter = requiredWindowFilter() },
+    screen = {},
+    spaces = {
+      MCwaitTime = 0.3,
+      windowSpaces = function(candidate) assert(candidate == target) return { 20 } end,
+      activeSpaceOnScreen = function(candidate) assert(candidate == screen) return state.activeSpace end,
+      spacesForScreen = function(candidate) assert(candidate == screen) return { 10, 20 } end,
+      toggleMissionControl = function() state.toggles = state.toggles + 1 end,
+      gotoSpace = function() error("cross-Space focus must not use gotoSpace") end,
+      openMissionControl = function() error("cross-Space focus must not use openMissionControl") end,
+    },
+    timer = timer,
+    application = {
+      applicationsForBundleID = function(bundleID)
+        assert(bundleID == "com.apple.dock")
+        return { {} }
+      end,
+    },
+    axuielement = {
+      applicationElement = function() return dockElement end,
+    },
+  }
+  local repository = WindowRepository.new(hs, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+  return repository, target, state, scheduled, runNext
+end
+
 local function window(visible, title, bundleID, frame)
   return {
     id = function() return 1 end,
@@ -261,7 +328,7 @@ return {
   end,
 
   ["same-Space focus remains immediate"] = function()
-    local focused, switched = false, false
+    local focused = false
     local target = {
       focus = function() focused = true end,
       screen = function() return {} end,
@@ -272,85 +339,56 @@ return {
       spaces = {
         windowSpaces = function() return { 10 } end,
         activeSpaceOnScreen = function() return 10 end,
-        gotoSpace = function() switched = true return true end,
+        gotoSpace = function() error("same-Space focus must not switch Spaces") end,
       },
       timer = { doAfter = function() error("same-Space focus must not wait") end },
     }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
 
     assert(repository:focus(target))
     assert(focused)
-    assert(not switched)
   end,
 
-  ["cross-Space focus waits for the destination before focusing"] = function()
-    local activeSpace, destination, focused = 10, nil, false
-    local delayed = {}
-    local target = {
-      focus = function() focused = true end,
-      screen = function() return {} end,
-    }
-    local repository = WindowRepository.new({
-      window = { filter = requiredWindowFilter() },
-      screen = {},
-      spaces = {
-        windowSpaces = function(candidate)
-          assert(candidate == target)
-          return { 20 }
-        end,
-        activeSpaceOnScreen = function() return activeSpace end,
-        gotoSpace = function(space)
-          destination = space
-          return true
-        end,
-      },
-      timer = {
-        doAfter = function(delay, callback)
-          local timer = { delay = delay, callback = callback, stopped = false }
-          function timer:stop() self.stopped = true end
-          table.insert(delayed, timer)
-          return timer
-        end,
-      },
-    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+  ["cross-Space focus asynchronously switches, settles, then focuses"] = function()
+    local repository, target, state, scheduled, runNext = crossSpaceFocusFixture()
 
     assert(repository:focus(target))
-    assert(destination == 20)
-    assert(not focused)
-    assert(#delayed == 1 and delayed[1].delay == 0.05)
-
-    delayed[1].callback()
-    assert(not focused and #delayed == 2)
-    activeSpace = 20
-    delayed[2].callback()
-    assert(focused)
+    assert(not state.focused and state.toggles == 0)
+    assert(runNext() == 0.01)
+    assert(state.toggles == 1 and not state.focused)
+    assert(runNext() == 0.025)
+    assert(runNext() == 0.3)
+    assert(state.pressed and not state.focused)
+    assert(runNext() == 0.05)
+    assert(not state.focused)
+    assert(runNext() == 0.15)
+    assert(state.focused and #scheduled == 0)
   end,
 
-  ["stopping the repository cancels a pending cross-Space focus"] = function()
-    local delayed
-    local target = {
-      focus = function() error("cancelled focus must not run") end,
-      screen = function() return {} end,
-    }
-    local repository = WindowRepository.new({
-      window = { filter = requiredWindowFilter() },
-      screen = {},
-      spaces = {
-        windowSpaces = function() return { 20 } end,
-        activeSpaceOnScreen = function() return 10 end,
-        gotoSpace = function() return true end,
-      },
-      timer = {
-        doAfter = function(_, callback)
-          delayed = { callback = callback, stopped = false }
-          function delayed:stop() self.stopped = true end
-          return delayed
-        end,
-      },
-    }, { excludedBundleIDs = {}, excludedWindowTitles = {} })
+  ["cross-Space focus retries a transient AXPress rejection"] = function()
+    local repository, target, state, scheduled, runNext = crossSpaceFocusFixture({ transientPressFailure = true })
 
     assert(repository:focus(target))
+    assert(runNext() == 0.01)
+    assert(runNext() == 0.025)
+    assert(runNext() == 0.3)
+    assert(not state.focused and state.pressAttempts == 1 and state.toggles == 1)
+    assert(runNext() == 0.025)
+    assert(state.pressed and state.pressAttempts == 2)
+    assert(runNext() == 0.05)
+    assert(runNext() == 0.15)
+    assert(state.focused and #scheduled == 0)
+  end,
+
+  ["stopping cross-Space focus closes its Mission Control session"] = function()
+    local repository, target, state, scheduled, runNext = crossSpaceFocusFixture({ noMissionControlTree = true })
+
+    assert(repository:focus(target))
+    assert(runNext() == 0.01)
+    assert(state.toggles == 1 and #scheduled == 1)
+    local stale = scheduled[1]
     repository:stop()
-    assert(delayed.stopped)
-    delayed.callback()
+    assert(stale.stopped and state.toggles == 2)
+    stale.callback()
+    assert(not state.focused and #scheduled == 1)
   end,
 }
