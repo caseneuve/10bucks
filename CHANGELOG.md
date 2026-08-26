@@ -8,6 +8,20 @@ on the same date appends `.N`, for example `2026.08.22.2`.
 
 ## [Unreleased]
 
+## [2026.08.26-alpha.1] - 2026-08-26
+
+### Added
+
+- The status bar now adapts its background, text, and layout-icon colours to the active macOS Light or Dark appearance.
+
+### Changed
+
+- Cross-Space focus now drives Mission Control asynchronously, preventing its Space lookup from blocking Hammerspoon while retaining a short destination-settle period before focus.
+
+### Fixed
+
+- Deleting an empty desktop restores the destination desktop's remembered focus after its reflow completes.
+
 ## [2026.08.23-alpha.3] - 2026-08-23
 
 ### Added
