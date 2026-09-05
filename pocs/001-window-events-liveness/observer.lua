@@ -70,7 +70,7 @@ function Observer:_new_run()
   self.lifecycle, self.ownership = Lifecycle.new(), Ownership.new()
   self.app_watchers, self.window_watchers, self.window_identity_cache = {}, {}, {}
   self.window_raw_by_alias, self.ready_emitted, self.metadata_by_window = {}, {}, {}
-  self.destruction_candidates, self.active_target_action = {}, nil
+  self.destruction_candidates, self.active_target_action, self.target_binding_hotkey = {}, nil, nil
   self.space_trigger_generation, self.last_active_space, self.last_active_generation = 0, nil, nil
   self.filter, self.application_watcher, self.spaces_watcher = nil, nil, nil
   self.active_timers, self.window_effects = 0, 0
@@ -456,6 +456,9 @@ end
 
 function Observer:start()
   if self.running then return false, "already_running" end
+  -- Defensive transactional cleanup if an earlier failed/abandoned setup left
+  -- this POC-only adapter handle behind.
+  self:_delete_target_binding_hotkey("startup_reset")
   self:_new_run(); self.running = true; self.trace:lifecycle("start"); self.trace:mark("run_start", { source = "poc001" })
   local ok, startup_error = pcall(function()
     for _, source in ipairs({ "window_filter", "application_watcher", "direct_ax" }) do self.trace:mark("candidate_sources", { source = source }) end
@@ -470,8 +473,18 @@ function Observer:start()
   return true, self.trace:status().run_id
 end
 
+function Observer:_delete_target_binding_hotkey(reason)
+  local hotkey = self.target_binding_hotkey
+  self.target_binding_hotkey = nil
+  if hotkey then
+    protected(function() hotkey:delete() end)
+    if self.trace then self:_fact("target_binding_hotkey_deleted", { source = "operator", reason = reason }) end
+  end
+end
+
 function Observer:stop()
   if not self.running then return false, "already_stopped" end
+  self:_delete_target_binding_hotkey("observer_stop")
   if self.filter then protected(function() self.filter:unsubscribeAll() end); protected(function() self.filter:delete() end); self:_fact("filter_watcher_detached", { source = "window_filter", watcher_kind = "filter", reason = "observer_stop" }) end
   if self.application_watcher then protected(function() self.application_watcher:stop() end); self:_fact("application_watcher_detached", { source = "application_watcher", watcher_kind = "application_lifecycle", reason = "observer_stop" }) end
   if self.spaces_watcher then protected(function() self.spaces_watcher:stop() end); self:_fact("spaces_watcher_detached", { source = "hs_spaces", watcher_kind = "spaces", reason = "observer_stop" }) end
@@ -497,7 +510,50 @@ function Observer:begin_target_action(sample_id, action)
     return false, "target_uncertain"
   end
   self.active_target_action = { app = cached.app, window = cached.window, space = regular, action = action }
-  self.trace:mark("action_begin", { source = "operator", action = action, app = cached.app, window = cached.window, space = regular, retained_prior_regular = regular, action_target_status = "bound" })
+  self.trace:mark("action_begin", { source = "operator", action = action, app = cached.app, window = cached.window, space = regular, expected_source = regular, retained_prior_regular = regular, action_target_status = "bound" })
+  return true
+end
+
+-- POC-only one-shot binding avoids an orchestrator console/hs focus change
+-- selecting the session window instead of the human-selected target. Local
+-- Hammerspoon 1.1.1 source verifies new(...):enable() and hotkey:delete().
+function Observer:arm_target_action(sample_id, action)
+  assert(self.trace, "start the POC before arming")
+  if not self.running then return false, "not_running" end
+  if self.target_binding_hotkey then
+    self.trace:emit("action_target_binding_rejected", { source = "operator", action = action, action_target_status = "armed", reason = "already_armed", result = "aborted" })
+    return false, "already_armed"
+  end
+
+  self.trace:set_sample(sample_id)
+  local hotkey
+  local callback = function()
+    -- Delete and clear the adapter handle before reading focus or recording it.
+    self:_delete_target_binding_hotkey("one_shot_fired")
+    local bound, reason = self:begin_target_action(sample_id, action)
+    self.trace:emit("action_target_binding_hotkey_result", {
+      source = "operator", action = action,
+      action_target_status = bound and "bound" or "rejected",
+      reason = bound and "bound" or reason,
+      result = bound and "success" or "aborted",
+    })
+  end
+  local created, created_hotkey = protected(function()
+    return hs.hotkey.new({ "ctrl", "alt", "cmd" }, "f12", callback)
+  end)
+  if not created or not created_hotkey then
+    self.trace:emit("action_target_binding_rejected", { source = "operator", action = action, action_target_status = "unarmed", reason = "hotkey_create_failed", result = "aborted" })
+    return false, "hotkey_create_failed"
+  end
+  hotkey = created_hotkey
+  self.target_binding_hotkey = hotkey
+  local enabled, enabled_hotkey = protected(function() return hotkey:enable() end)
+  if not enabled or not enabled_hotkey then
+    self:_delete_target_binding_hotkey("hotkey_enable_failed")
+    self.trace:emit("action_target_binding_rejected", { source = "operator", action = action, action_target_status = "unarmed", reason = "hotkey_enable_failed", result = "aborted" })
+    return false, "hotkey_enable_failed"
+  end
+  self.trace:emit("action_target_binding_armed", { source = "operator", action = action, action_target_status = "armed", result = "armed" })
   return true
 end
 
@@ -509,8 +565,8 @@ function Observer:mark(sample_id, marker, action)
   return sequence
 end
 function Observer:status()
-  if not self.trace then return { lifecycle = "not_started" } end
-  local status = self.trace:status(); status.active_timers, status.window_effects, status.direct_application_watchers, status.direct_window_watchers, status.spaces_watcher_active = self.active_timers, self.window_effects, 0, 0, self.spaces_watcher ~= nil
+  if not self.trace then return { lifecycle = "not_started", target_binding_armed = false } end
+  local status = self.trace:status(); status.active_timers, status.window_effects, status.direct_application_watchers, status.direct_window_watchers, status.spaces_watcher_active, status.target_binding_armed = self.active_timers, self.window_effects, 0, 0, self.spaces_watcher ~= nil, self.target_binding_hotkey ~= nil
   for _ in pairs(self.app_watchers) do status.direct_application_watchers = status.direct_application_watchers + 1 end; for _ in pairs(self.window_watchers) do status.direct_window_watchers = status.direct_window_watchers + 1 end
   return status
 end

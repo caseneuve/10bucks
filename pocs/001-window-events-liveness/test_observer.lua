@@ -48,6 +48,26 @@ local function install_fake_hs(applications)
   }
   return state
 end
+local function install_fake_hotkey(state)
+  state.hotkeys = {}
+  _G.hs.hotkey = {
+    new = function(modifiers, key, callback)
+      local hotkey, hotkey_state = {}, { modifiers = modifiers, key = key, callback = callback }
+      hotkey.enable = function()
+        hotkey_state.enabled = true
+        return hotkey
+      end
+      hotkey.delete = function()
+        hotkey_state.deleted = true
+        return hotkey
+      end
+      local userdata_like = setmetatable(hotkey, { __newindex = function() error("userdata does not allow arbitrary fields") end })
+      hotkey_state.hotkey = userdata_like
+      state.hotkeys[#state.hotkeys + 1] = hotkey_state
+      return userdata_like
+    end,
+  }
+end
 local function install_fake_spaces(state, memberships)
   memberships = memberships or {}
   _G.hs.spaces = {
@@ -178,6 +198,61 @@ return {
     equal(#events(observer, "active_space_known_window_sweep_end"), 1); local coalesced = events(observer, "active_space_callback_coalesced")
     equal(#coalesced, 1); equal(coalesced[1].result, "duplicate_active_space"); equal(state.topology_calls, after_first)
     observer:stop()
+  end,
+  ["POC-001 one-shot target-binding hotkey deletes before binding the actual focused cached window"] = function()
+    local window, application = fake_window(8041, complete_metadata()), fake_application(641, {})
+    local state = install_fake_hs({ application }); install_fake_hotkey(state)
+    install_fake_spaces(state, { ["8041"] = { 10 }, reverse = { ["10"] = { 8041 } } })
+    hs.window.focusedWindow = function()
+      assert(state.hotkeys[1].deleted, "one-shot hotkey must delete before focus is read")
+      state.focused_calls = (state.focused_calls or 0) + 1
+      return window
+    end
+    package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start())
+    application.watcher.callback(window, "AXWindowCreated")
+    assert(observer:arm_target_action("move-sample", "manual_move_regular_space"))
+    equal(observer:status().target_binding_armed, true)
+    equal(state.hotkeys[1].key, "f12"); equal(table.concat(state.hotkeys[1].modifiers, ","), "ctrl,alt,cmd")
+    state.hotkeys[1].callback()
+    equal(state.focused_calls, 1); assert(state.hotkeys[1].deleted); equal(observer:status().target_binding_armed, false)
+    local action = events(observer, "action_begin")[1]
+    equal(action.window, "win-001"); equal(action.space, "space-001"); equal(action.expected_source, "space-001")
+    equal(events(observer, "action_target_binding_hotkey_result")[1].result, "success")
+    equal(observer:status().window_effects, 0)
+    observer:stop()
+  end,
+  ["POC-001 target-binding hotkey rejects a second arm and uncertain focused target without effects"] = function()
+    local known, unknown = fake_window(8042, complete_metadata()), fake_window(8043, complete_metadata())
+    local application = fake_application(642, {})
+    local state = install_fake_hs({ application }); install_fake_hotkey(state)
+    install_fake_spaces(state, { ["8042"] = { 10 }, reverse = { ["10"] = { 8042 } } })
+    hs.window.focusedWindow = function() return unknown end
+    package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start())
+    application.watcher.callback(known, "AXWindowCreated")
+    assert(observer:arm_target_action("move-sample", "manual_move_regular_space"))
+    local armed, reason = observer:arm_target_action("move-sample", "manual_move_regular_space")
+    equal(armed, false); equal(reason, "already_armed"); equal(#state.hotkeys, 1)
+    state.hotkeys[1].callback()
+    equal(observer:status().target_binding_armed, false); equal(#events(observer, "action_begin"), 0)
+    equal(events(observer, "action_target_binding_hotkey_result")[1].result, "aborted")
+    equal(observer:status().window_effects, 0)
+    observer:stop()
+  end,
+  ["POC-001 target-binding hotkey is deleted on stop and defensive failed-start cleanup"] = function()
+    local state = install_fake_hs({}); install_fake_hotkey(state); install_fake_spaces(state)
+    package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start())
+    assert(observer:arm_target_action("move-sample", "manual_move_regular_space"))
+    observer:stop(); assert(state.hotkeys[1].deleted); equal(observer:status().target_binding_armed, false)
+
+    local stale_state = {}
+    local stale = { delete = function() stale_state.deleted = true end }
+    observer.target_binding_hotkey = setmetatable(stale, { __newindex = function() error("userdata does not allow arbitrary fields") end })
+    observer._start_spaces_watcher = function() error("forced startup failure") end
+    local started = observer:start()
+    equal(started, false); assert(stale_state.deleted); equal(observer:status().target_binding_armed, false)
   end,
   ["FOCUS-003 POC target binding queries focused once, uses cached identity, and never admits or effects"] = function()
     local window, application = fake_window(804, complete_metadata()), fake_application(64, {})

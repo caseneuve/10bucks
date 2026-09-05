@@ -1,49 +1,59 @@
-# POC-001 observer — fullscreen-only calibration operator handoff
+# POC-001 observer — manual regular-Space move operator handoff
 
 This is a **human-gated, disposable, read-only comparison harness**, not
-10bucks runtime code. It authorizes one Terminal-only, fullscreen-only
-calibration. It does not authorize the full POC matrix, a production change,
-or a timing claim. Prior calibration history remains in
+10bucks runtime code. It authorizes one Terminal-only manual regular-Space move
+sample. It does not authorize the remaining POC matrix, a production change, or
+a timing claim. Prior calibration history remains in
 [`docs/pocs/001-window-events-liveness.md`](../../docs/pocs/001-window-events-liveness.md).
 
-## Scope and precondition
+## Scope and fixed run setup
 
-- Before the orchestrator starts, arrange **exactly two visible, blank Terminal
-  windows on the current regular Space**. The front window is A; the other
-  visible window is B.
-- Terminal is the only application acted on. Do not hide, minimize, restore,
-  move windows or Spaces, use Mission Control, open or operate another app,
-  reload Hammerspoon, or run another sample.
-- The observer performs no frame, focus, fullscreen, Space, or other window
-  effects. The human alone invokes the two fullscreen shortcuts.
-- This calibration records no prescribed wait duration and makes no timing,
-  source-authority, lifecycle-pass, or acceptance-threshold claim.
+**Observed run setup, not a portable fact:** the read-only topology observation
+on this machine found one display, three regular Spaces with the first active,
+and three fullscreen Spaces. This handoff relies only on the human-visible
+preconditions below; it does not infer future topology from that observation.
 
-If the precondition is not true, or any UI is unexpected, abort; do not
-improvise a substitute action or continue from a different state.
+Before the orchestrator starts:
+
+- Desktop 1/current regular Space has **two visible, blank Terminal windows**:
+  the session window and a separate blank target window.
+- Desktop 2 exists.
+- Terminal is the only application involved.
+
+The observer performs no frame, focus, fullscreen, Space, minimize, hide,
+close, admission, or other window effect. It has no timer or controlled action
+driver. The human alone uses Mission Control to move the target. Manual-action
+timing is explicitly **unmeasurable**: do not state or imply a two-second (or
+any other) action-to-detection result.
+
+If the UI differs, the blank target cannot be identified, or Desktop 2 cannot
+be identified, abort without improvising. Do not use fullscreen, hide,
+minimize, another app, another Space action, or a replacement gesture. In
+particular, do not use an operator `hs -c` or Hammerspoon Console command that
+reads/changes focus to bind the target; the one-shot chord is the binding
+boundary.
 
 ## Private export destination
 
-The orchestrator creates this new owner-private directory before loading the
-observer:
+Before loading the observer, the orchestrator creates this owner-private
+directory:
 
 ```sh
 umask 077
-mkdir -p /tmp/poc-001-fullscreen-003
-chmod 700 /tmp/poc-001-fullscreen-003
-test "$(stat -f '%Sp' /tmp/poc-001-fullscreen-003)" = "drwx------"
+mkdir -p /tmp/poc-001-regular-space-move-004
+chmod 700 /tmp/poc-001-regular-space-move-004
+test "$(stat -f '%Sp' /tmp/poc-001-regular-space-move-004)" = "drwx------"
 ```
 
-The private export path for this slice is:
+The private export path is:
 
 ```text
-/tmp/poc-001-fullscreen-003/terminal-fullscreen-calibration-003.json
+/tmp/poc-001-regular-space-move-004/terminal-regular-space-move-004.json
 ```
 
 The exporter writes only to an explicitly selected owner-private directory,
 enforces and verifies mode `0600` on a temporary file, atomically renames it,
-and fails closed. Review the export locally; do not share it before redaction
-review.
+and fails closed. Review locally and redact before sharing.
 
 ## Orchestrator: stop legacy and load the observer
 
@@ -65,86 +75,99 @@ assert(poc001:start())
 assert(poc001:status().lifecycle == "running", "POC observer did not start")
 assert(poc001:status().active_timers == 0, "POC observer unexpectedly has timers")
 assert(poc001:status().window_effects == 0, "POC observer issued a window effect")
+assert(poc001:status().target_binding_armed == false, "POC target binding unexpectedly armed")
 ```
 
 Do not continue if an assertion fails.
 
-## Guided fullscreen calibration
+## Exact move-only flow
 
-Use sample ID `terminal-fullscreen-003`. For each action, the orchestrator
-uses the read-only target-bound `begin_target_action` marker: it reads focus
-once, resolves only a known in-memory redacted identity, and rejects uncertain
-ownership without admission or effects. The human performs exactly the announced action, waits
-for the stated visible state, then replies. Only after that reply does the
-orchestrator emit `manual_visual_complete`.
+Sample ID: `terminal-regular-space-move-004`.
 
-1. The orchestrator announces `terminal_enter_native_fullscreen_A` and emits:
+1. The orchestrator arms the POC-only one-shot target binder; this is the only
+   permitted preparatory call:
 
    ```lua
-   assert(poc001:begin_target_action("terminal-fullscreen-003", "terminal_enter_native_fullscreen_A"))
+   assert(poc001:arm_target_action("terminal-regular-space-move-004", "manual_move_regular_space"))
+   assert(poc001:status().target_binding_armed == true, "target binder did not arm")
    ```
 
-   The human presses **Control-Command-F** once on front blank Terminal window
-   A. The human waits until its dedicated native-fullscreen Space visibly
-   settles, then replies. The orchestrator then emits:
+   The fixed uncommon chord is **Control-Option-Command-F12**. The binder uses
+   the verified local Hammerspoon 1.1.1 `hs.hotkey.new(...):enable()` API and
+   deletes itself before reading focus. A second arm rejects. It does not focus,
+   admit, or move a window.
+
+2. The human clicks the **blank target Terminal** (not the session window) and
+   presses **Control-Option-Command-F12 once**. The callback deletes/disarms
+   itself first, then calls the existing read-only `begin_target_action` against
+   that current focus. It records either a bound target with its expected source
+   or a rejection. The orchestrator checks:
 
    ```lua
-   poc001:mark("terminal-fullscreen-003", "manual_visual_complete", "terminal_enter_native_fullscreen_A")
+   assert(poc001:status().target_binding_armed == false, "one-shot target binder remained armed")
    ```
 
-2. The orchestrator announces `terminal_exit_native_fullscreen_A` and emits:
+   If the binding rejected, or the human is not certain the blank target was
+   clicked, abort; do not press the chord again or arm again.
+
+3. The human opens Mission Control with **Control-Up**, drags **ONLY the blank
+   target window thumbnail** to **Desktop 2**, then exits Mission Control.
+   Do not move the session window or any other thumbnail.
+
+4. The human switches to Desktop 2 and visually verifies the blank target
+   there. The observer-derived ownership observation remains the destination
+   evidence; the controlled action records only the target and expected source.
+   It does not drive or assert a destination.
+
+5. The human returns to Desktop 1/the session window and replies **only then**.
+   Only after that reply does the orchestrator mark completion:
 
    ```lua
-   assert(poc001:begin_target_action("terminal-fullscreen-003", "terminal_exit_native_fullscreen_A"))
+   poc001:mark("terminal-regular-space-move-004", "manual_visual_complete", "manual_move_regular_space")
    ```
 
-   The human presses **Control-Command-F** once to exit fullscreen on that same
-   window A. The human waits until the regular Space visibly settles, then
-   replies. The orchestrator then emits:
-
-   ```lua
-   poc001:mark("terminal-fullscreen-003", "manual_visual_complete", "terminal_exit_native_fullscreen_A")
-   ```
-
-B remains untouched. Do not perform any extra action between or after these
-steps.
+Do not perform a fullscreen, hide, minimize, restore, close, or any action in
+another application. If UI differs at any point, the target/destination cannot
+be identified, or Mission Control cannot complete this exact move, use the
+abort path below without improvisation.
 
 ## Stop, export, and restore
 
-After the second completion marker, the orchestrator stops the observer,
-exports only after it is stopped, then restores legacy 10bucks:
+After the human has returned to Desktop 1/session and the completion marker has
+been emitted, stop the observer, export only after it is stopped, then restore
+legacy 10bucks:
 
 ```lua
 print(hs.inspect(poc001:status()))
 assert(poc001:stop())
 assert(poc001:status().lifecycle == "stopped", "POC observer did not stop")
+assert(poc001:status().target_binding_armed == false, "armed target binder survived stop")
 local exported, export_error = pcall(function()
-  return poc001:export("/tmp/poc-001-fullscreen-003/terminal-fullscreen-calibration-003.json")
+  return poc001:export("/tmp/poc-001-regular-space-move-004/terminal-regular-space-move-004.json")
 end)
 spoon["10bucks"]:bindHotkeys():start()
 assert(spoon["10bucks"].started == true, "legacy 10bucks did not restart")
 assert(exported, "private POC export failed: " .. tostring(export_error))
 ```
 
-The status and export are diagnostic-only and authorize no additional action.
-
 ## Abort: no improvisation
 
-If the human cannot perform either action or sees unexpected UI, the
-orchestrator marks only the abort, stops, exports, and restores. It does not
-add a replacement action, restart the observer, emit another marker, or use
-`hs.reload`.
+If a precondition fails, binding rejects, or the human reports unexpected UI,
+mark only the abort, stop (which deletes any armed target hotkey), export, and
+restore. Do not add a replacement action, re-arm, press the chord again,
+restart the observer, or call `hs.reload`.
 
 ```lua
 if poc001 ~= nil and poc001:status().lifecycle == "running" then
-  poc001:mark("terminal-fullscreen-003", "sample_aborted", "operator_reported_unexpected_ui")
+  poc001:mark("terminal-regular-space-move-004", "sample_aborted", "operator_reported_unexpected_ui")
   pcall(function() poc001:stop() end)
 end
 assert(poc001 == nil or poc001:status().lifecycle == "stopped", "observer may still be running; do not restore legacy")
+assert(poc001 == nil or poc001:status().target_binding_armed == false, "armed target binder survived abort")
 local exported, export_error = true, nil
 if poc001 ~= nil then
   exported, export_error = pcall(function()
-    return poc001:export("/tmp/poc-001-fullscreen-003/terminal-fullscreen-calibration-003.json")
+    return poc001:export("/tmp/poc-001-regular-space-move-004/terminal-regular-space-move-004.json")
   end)
 end
 spoon["10bucks"]:bindHotkeys():start()
@@ -163,15 +186,4 @@ luac -p pocs/001-window-events-liveness/lifecycle.lua
 luac -p pocs/001-window-events-liveness/ownership.lua
 luac -p pocs/001-window-events-liveness/private_export.lua
 luac -p pocs/001-window-events-liveness/observer.lua
-
-## Before a separately approved manual regular-Space move
-
-The fullscreen calibration is diagnostic-only. A guided regular-Space move
-remains blocked pending an explicit human handoff that fixes its target,
-regular source/destination, controlled completion (or explicitly unmeasurable
-manual timing), and pending-work hotkey procedure. That handoff must use
-`begin_target_action`, retain generic `mark` only for completion/abort, and
-review the redacted sweep/coalescing, reciprocal-ownership, `no_regular_move`,
-and target/non-target destruction-candidate records. Do not treat this README
-as authorization to perform that move.
 ```

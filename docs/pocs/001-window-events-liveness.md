@@ -6,10 +6,11 @@ hypothesis
 This is a pre-run protocol. A disposable POC-only observer currently exists
 through step 2C (source comparison, targeted metadata/Space reads, and pure
 correlation); no production runtime changed. One short, orchestrator-guided
-Terminal-only calibration was run as diagnostic-only evidence. The next,
-human-gated Terminal lifecycle calibration is specified in
+Terminal-only calibration was run as diagnostic-only evidence. The next
+authorized action is exactly one human-gated Terminal manual regular-Space move
+specified in
 [`pocs/001-window-events-liveness/README.md`](../../pocs/001-window-events-liveness/README.md).
-Neither calibration is a result or authorizes the remaining live matrix.
+It is not a result and does not authorize the remaining live matrix.
 
 ## Decision enabled
 Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,
@@ -158,12 +159,14 @@ eligibility/admission marker; POC-001 issues zero frame effects.
 
 The full matrix below remains **pending**. The first Terminal-only calibration
 is diagnostic-only. The operator guide separately authorizes exactly one next
-human-gated **fullscreen-only** Terminal calibration using two blank visible
-windows on the current regular Space. Do not advance from that calibration to
-minimize/hide/restore, Space movement, cold bootstrap/reload, rapid repetitions,
-other apps, or the representative-app matrix without a new approved handoff. For Terminal and the Chromium representative first, then each
-remaining representative app where its UI supports the action, run the
-following and retain every event order, including failures and late callbacks:
+human-gated **manual regular-Space move** of a blank Terminal target from
+Desktop 1 to Desktop 2, using the one-shot target-binding chord and exact
+move-only flow. Do not advance from that move to minimize/hide/restore,
+fullscreen, cold bootstrap/reload, rapid repetitions, other apps, or the
+representative-app matrix without a new approved handoff. For Terminal and the
+Chromium representative first, then each remaining representative app where its
+UI supports the action, run the following and retain every event order,
+including failures and late callbacks:
 
 1. Mark `create_first`, then create a first and an additional standard window;
    exercise focus/unfocus and rapid create → focus → close. Run warm creation
@@ -300,9 +303,12 @@ All thresholds are fixed before the run:
    unavailable fact remains. Any unavailable condition prevents availability;
    membership/liveness is retained.
 4. **Manual regular-Space move:** an event-triggered targeted observation
-   confirms source removal/destination ownership within 2,000 ms of the
-   controlled `native_action_completed` marker. There is no permanent polling;
+   confirms source removal/destination ownership without permanent polling;
    after settling, targeted-check count remains unchanged until another trigger.
+   The authorized manual move has no controlled `native_action_completed`
+   marker, so its action-to-detection timing is unmeasurable and makes no
+   two-second claim. A later controlled-driver experiment must define its own
+   timing threshold before it runs.
 5. **Creation/readiness:** for each meaningful warm creation/readiness path,
    `readiness_trigger → metadata_ready` has p95 <= 100 ms when all agreed safe
    fields are available. `metadata_ready` remains non-effecting; Step 2C adds
@@ -475,6 +481,30 @@ exit. There was no false regular-Space move and no destruction confirmation.
 The raw trace remains private and is not committed. This small fullscreen-only
 sample does not select an event source, destruction authority, move algorithm,
 or broad POC pass/fail result.
+
+### Manual regular-Space move 004 — prepared, not run
+
+- **Observed run setup (not portable):** a read-only topology observation found
+  one display, three regular Spaces with the first active, and three fullscreen
+  Spaces. This identifies the intended run setup only; it is not a supported
+  topology contract or a claim about another run.
+- **Target:** to avoid an operator Console/`hs -c` focus query binding the
+  session window, the POC-only observer has a one-shot
+  Control-Option-Command-F12 binder. It deletes its `hs.hotkey` handle before
+  calling the existing read-only `begin_target_action` against the human's
+  current focus. It records binding success/rejection, permits no second arm,
+  reports armed state, and deletes the handle on stop and defensive failed
+  startup cleanup. It has no timer, effect, admission, or action driver.
+- **Verified source API:** installed Hammerspoon 1.1.1 `hs.hotkey` source
+  documents `hs.hotkey.new(...):enable()` and `hs.hotkey:delete()`; the POC
+  uses those APIs. Pure fakes include userdata-like hotkeys.
+- **Next authorized live action:** only the exact move-only guide in the POC
+  README: bind the blank Terminal target once with the chord, manually drag
+  only that thumbnail from Desktop 1 to Desktop 2 in Mission Control, visually
+  verify it on Desktop 2, return to the Desktop 1/session window, then report
+  completion. Manual action timing is unmeasurable; no two-second claim is
+  authorized. Any UI/identity/destination uncertainty aborts without
+  improvisation.
 
 ## Conclusion
 Pending. This protocol proves no macOS/Hammerspoon behavior yet.
