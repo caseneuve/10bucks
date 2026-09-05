@@ -109,10 +109,11 @@ pure tests, static checks, and build verification:
    The selected source alone may consume the generation. `window_filter` scopes
    its already-delivered `windowCreated` callback and constructs one AX element;
    `direct_ax` scopes only the exact fixture application's already-delivered
-   `AXWindowCreated` callback and reads that delivered AX window element directly
-   (no element construction). In either case the exact fixture bundle scopes the
-   callback but is not association evidence and is not exported. The selected
-   callback performs exactly one `AXIdentifier` read. It validates the exact raw-token
+   `AXWindowCreated` callback. Its delivered watcher wrapper is converted once
+   with `hs.axuielement.windowElement(callback_window)`, then that resulting AX
+   element receives exactly one `AXIdentifier` read. In either case the exact
+   fixture bundle scopes the callback but is not association evidence and is not
+   exported. The selected callback performs exactly one `AXIdentifier` read. It validates the exact raw-token
    grammar, computes `alias(T)` with `hs.hash.SHA256`, emits the alias, retains
    only `native-window-id -> correlation_alias` in memory, and immediately
    clears its raw Lua value/reference. It emits neither the raw token nor AX
@@ -228,7 +229,8 @@ correlation input without a new handoff.
 A **separate direct-AX one-sample smoke is Target only**: it requires a fresh,
 explicit human approval and a fresh frozen-source review. It must arm exactly
 `arm_fixture_correlation(1, "direct_ax")`, then permit only the fixture
-application's delivered `AXWindowCreated` callback to take the one direct
+application's delivered `AXWindowCreated` callback to make one targeted
+`hs.axuielement.windowElement` conversion followed by the one direct
 `AXIdentifier` read. The filter callback may still be observed for its existing
 candidate-only/destruction instrumentation, but must make zero correlation AX
 constructions and reads and must not consume the generation. Its acceptance is

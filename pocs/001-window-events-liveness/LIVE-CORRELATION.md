@@ -22,14 +22,18 @@ assert(POC001_OBSERVER:arm_fixture_correlation(1, "direct_ax"))
 ```
 
 Only the exact fixture application's already-delivered `AXWindowCreated`
-callback may consume that arm. It reads `AXIdentifier` once directly from that
-callback's AX window element. The bundle check scopes the application but is not
-identity evidence. The filter remains available for its existing lifecycle and
-destruction-candidate instrumentation, but it performs zero correlation AX
-element constructions/identifier reads and cannot consume the generation. Pass
-requires the same alias-only join, raw cleanup, and direct/filter destruction
-candidate alias retention; it does not select authority or authorize any live
-action.
+callback may consume that arm. Its delivered watcher wrapper receives one
+targeted `hs.axuielement.windowElement` conversion, and the resulting AX
+window element receives `AXIdentifier` once. The bundle check scopes the
+application but is not identity evidence. The filter remains available for its
+existing lifecycle and destruction-candidate instrumentation, but it performs
+zero correlation AX element constructions/identifier reads and cannot consume
+the generation. Its analyzer gate substitutes exactly one
+`correlation_direct_ax_window_element_construction` query and one
+`correlation_direct_ax_identifier_read` query for this guide's filter-selected
+construction/read checks. Pass requires the same alias-only join, raw cleanup,
+and direct/filter destruction candidate alias retention; it does not select
+authority or authorize any live action.
 
 ## Scope, hypothesis, and frozen boundary
 

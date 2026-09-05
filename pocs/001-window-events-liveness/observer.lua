@@ -429,20 +429,19 @@ function Observer:_fixture_bundle_matches(application, source)
   return matches
 end
 
--- The selected callback source gets exactly one chance.  direct_ax receives
--- the application watcher's delivered AX element directly; it must not create
--- a second element.  The raw key is only the existing destruction-tracking key.
+-- The selected callback source gets exactly one chance. Both callback wrappers
+-- require one targeted conversion to an AX element before the sole identifier
+-- read. The raw key is only the existing destruction-tracking key.
 function Observer:_observe_fixture_correlation(source, raw_id, application, callback_window)
   local state = self.correlation and self.correlation:state() or {}
   if state.armed_generation == nil or state.consumed or state.candidate_source ~= source then return end
   if not self:_fixture_bundle_matches(application, source) then return end
-  local element, constructed = callback_window, true
-  if source == "window_filter" then
-    local began = monotonic_ms()
-    self.trace:query("correlation_window_element_construction", "correlation.windowElement", "steady")
-    constructed, element = protected(function() return hs.axuielement.windowElement(callback_window) end)
-    self.trace:emit("correlation_window_element_constructed", { source = source, duration_ms = monotonic_ms() - began, result = constructed and element and "available" or "unavailable" })
-  end
+  local began = monotonic_ms()
+  local query = source == "direct_ax" and "correlation_direct_ax_window_element_construction" or "correlation_window_element_construction"
+  local marker = source == "direct_ax" and "correlation_direct_ax_window_element_constructed" or "correlation_window_element_constructed"
+  self.trace:query(query, "correlation.windowElement", "steady")
+  local constructed, element = protected(function() return hs.axuielement.windowElement(callback_window) end)
+  self.trace:emit(marker, { source = source, duration_ms = monotonic_ms() - began, result = constructed and element and "available" or "unavailable" })
   if not constructed or not element then
     local result = self.correlation:unresolved("window_element_unavailable")
     self.trace:emit("correlation_unresolved", { source = source, reason = result.reason, result = "unresolved" })

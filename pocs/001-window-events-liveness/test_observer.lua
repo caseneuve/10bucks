@@ -454,20 +454,22 @@ return {
     end
     observer:stop()
   end,
-  ["POC-001 direct-AX correlation selects only the delivered fixture create callback and never constructs a filter element"] = function()
+  ["POC-001 direct-AX correlation converts its delivered callback exactly once without filter reads"] = function()
     local window = fake_window(996, complete_metadata())
     local fixture = fake_application(96, {}, "local.poc001.fixture")
     local foreign = fake_application(97, {}, "not.the.fixture")
     local state = install_fake_hs({ fixture, foreign }); package.loaded.observer = nil
-    local reads, constructions = 0, 0
+    local reads, direct_constructions = 0, 0
     hs.hash = { SHA256 = function(raw) equal(raw, "corr-AAAAAAAAAAAAAAAA"); return "83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac" end }
-    hs.axuielement = { windowElement = function() constructions = constructions + 1; error("direct_ax must not construct an element") end }
-    window.attributeValue = function(_, name) equal(name, "AXIdentifier"); reads = reads + 1; return "corr-AAAAAAAAAAAAAAAA" end
+    hs.axuielement = { windowElement = function(delivered)
+      equal(delivered, window); direct_constructions = direct_constructions + 1
+      return { attributeValue = function(_, name) equal(name, "AXIdentifier"); reads = reads + 1; return "corr-AAAAAAAAAAAAAAAA" end }
+    end }
     window.application = function() return fixture end
     local observer = require("observer").new(); assert(observer:start()); assert(observer:arm_fixture_correlation(1, "direct_ax"))
-    -- The unselected filter callback neither reads nor consumes the generation.
+    -- The unselected filter callback neither converts, reads, nor consumes.
     state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
-    equal(reads, 0); equal(constructions, 0); equal(observer.correlation:state().consumed, false)
+    equal(reads, 0); equal(direct_constructions, 0); equal(observer.correlation:state().consumed, false)
     foreign.watcher.callback(window, "AXWindowCreated")
     equal(reads, 0); equal(observer.correlation:state().consumed, false)
     fixture.watcher.callback(window, "AXFocusedWindowChanged")
@@ -476,28 +478,29 @@ return {
     fixture.watcher.callback(window, "AXWindowCreated")
     -- Direct-first/filter-later is equally inert for the unselected filter.
     state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
-    equal(reads, 1); equal(constructions, 0)
+    equal(reads, 1); equal(direct_constructions, 1)
     equal(observer:status().correlation.candidate_source, "direct_ax")
     equal(observer:status().query_counters.steady.correlation_window_element_construction, nil)
     equal(observer:status().query_counters.steady.correlation_ax_identifier_read, nil)
+    equal(observer:status().query_counters.steady.correlation_direct_ax_window_element_construction, 1)
     equal(observer:status().query_counters.steady.correlation_direct_ax_identifier_read, 1)
-    local observed = events(observer, "correlation_observed"); equal(#observed, 1); equal(observed[1].source, "direct_ax")
+    local converted, observed = events(observer, "correlation_direct_ax_window_element_constructed"), events(observer, "correlation_observed")
+    equal(#converted, 1); equal(converted[1].result, "available"); equal(#observed, 1); equal(observed[1].source, "direct_ax")
     observer:stop()
   end,
   ["POC-001 filter-selected correlation ignores direct creation until its filter callback"] = function()
     local window = fake_window(1001, complete_metadata())
     local fixture = fake_application(100, {}, "local.poc001.fixture")
     local state = install_fake_hs({ fixture }); package.loaded.observer = nil
-    local direct_reads, filter_reads = 0, 0
+    local direct_constructions, filter_reads = 0, 0
     hs.hash = { SHA256 = function() return "83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac" end }
-    window.attributeValue = function() direct_reads = direct_reads + 1; return "corr-AAAAAAAAAAAAAAAA" end
     window.application = function() return fixture end
-    hs.axuielement = { windowElement = function() return { attributeValue = function() filter_reads = filter_reads + 1; return "corr-AAAAAAAAAAAAAAAA" end } end }
+    hs.axuielement = { windowElement = function() direct_constructions = direct_constructions + 1; return { attributeValue = function() filter_reads = filter_reads + 1; return "corr-AAAAAAAAAAAAAAAA" end } end }
     local observer = require("observer").new(); assert(observer:start()); assert(observer:arm_fixture_correlation(1, "window_filter"))
     fixture.watcher.callback(window, "AXWindowCreated")
-    equal(direct_reads, 0); equal(filter_reads, 0); equal(observer.correlation:state().consumed, false)
+    equal(direct_constructions, 0); equal(filter_reads, 0); equal(observer.correlation:state().consumed, false)
     state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
-    equal(direct_reads, 0); equal(filter_reads, 1); equal(observer.correlation:state().consumed, true)
+    equal(direct_constructions, 1); equal(filter_reads, 1); equal(observer.correlation:state().consumed, true)
     observer:stop()
   end,
   ["POC-001 direct-AX correlation fails closed for malformed or missing identifiers and clears raw values"] = function()
@@ -508,7 +511,7 @@ return {
       local state = install_fake_hs({ fixture }); package.loaded.observer = nil
       local reads = 0
       hs.hash = { SHA256 = function() error("malformed/missing identifier must not hash") end }
-      window.attributeValue = function(_, name) equal(name, "AXIdentifier"); reads = reads + 1; return value end
+      hs.axuielement = { windowElement = function() return { attributeValue = function(_, name) equal(name, "AXIdentifier"); reads = reads + 1; return value end } end }
       local observer = require("observer").new(); assert(observer:start()); assert(observer:arm_fixture_correlation(1, "direct_ax"))
       fixture.watcher.callback(window, "AXWindowCreated"); fixture.watcher.callback(window, "AXWindowCreated")
       equal(reads, 1); equal(events(observer, "correlation_unresolved")[1].reason, value and "malformed" or "missing")
@@ -517,13 +520,26 @@ return {
       observer:stop()
     end
   end,
+  ["POC-001 direct-AX conversion failure consumes once without an identifier read"] = function()
+    local window = fake_window(1002, complete_metadata())
+    local fixture = fake_application(101, {}, "local.poc001.fixture")
+    local state = install_fake_hs({ fixture }); package.loaded.observer = nil
+    local constructions = 0
+    hs.axuielement = { windowElement = function() constructions = constructions + 1; error("conversion fails") end }
+    local observer = require("observer").new(); assert(observer:start()); assert(observer:arm_fixture_correlation(1, "direct_ax"))
+    fixture.watcher.callback(window, "AXWindowCreated"); fixture.watcher.callback(window, "AXWindowCreated")
+    equal(constructions, 1); equal(events(observer, "correlation_unresolved")[1].reason, "window_element_unavailable")
+    equal(observer:status().query_counters.steady.correlation_direct_ax_window_element_construction, 1)
+    equal(observer:status().query_counters.steady.correlation_direct_ax_identifier_read, nil)
+    observer:stop()
+  end,
   ["POC-001 direct-AX aliases survive direct-first and filter-first destruction candidates"] = function()
     for _, first in ipairs({ "direct", "filter" }) do
       local window = fake_window(first == "direct" and 999 or 1000, complete_metadata())
       local fixture = fake_application(99, {}, "local.poc001.fixture")
       local state = install_fake_hs({ fixture }); package.loaded.observer = nil
       hs.hash = { SHA256 = function() return "83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac" end }
-      window.attributeValue = function() return "corr-AAAAAAAAAAAAAAAA" end
+      hs.axuielement = { windowElement = function() return { attributeValue = function() return "corr-AAAAAAAAAAAAAAAA" end } end }
       window.application = function() return fixture end
       local observer = require("observer").new(); assert(observer:start()); assert(observer:arm_fixture_correlation(1, "direct_ax"))
       fixture.watcher.callback(window, "AXWindowCreated")
