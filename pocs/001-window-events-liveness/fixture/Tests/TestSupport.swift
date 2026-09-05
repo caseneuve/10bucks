@@ -35,7 +35,7 @@ struct TestFailure: Error, CustomStringConvertible {
 }
 
 func temporaryDirectory() throws -> URL {
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent("poc001-fixture-tests-\(UUID().uuidString)", isDirectory: true)
+    let url = URL(fileURLWithPath: "/tmp", isDirectory: true).appendingPathComponent("poc001-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
     return url
 }

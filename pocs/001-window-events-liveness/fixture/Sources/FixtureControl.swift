@@ -10,7 +10,7 @@ public struct FixtureRequest: Equatable {
     }
 }
 
-public enum FixtureResponseStatus: Equatable { case accepted }
+public enum FixtureResponseStatus: Equatable { case accepted, rejected }
 
 public struct FixtureResponse: Equatable {
     public let status: FixtureResponseStatus

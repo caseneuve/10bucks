@@ -4,7 +4,7 @@ import Foundation
 @main
 enum PureTestRunner {
     static func main() {
-        let suites = clockTests + traceTests + fixtureControlTests + lifecycleHookTests + pendingWorkTests + tokenTests
+        let suites = clockTests + traceTests + fixtureControlTests + lifecycleHookTests + pendingWorkTests + tokenTests + ipcTests
         var failures = 0
         for (name, test) in suites {
             do {
