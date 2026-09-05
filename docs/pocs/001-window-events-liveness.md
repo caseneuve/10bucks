@@ -6,9 +6,10 @@ hypothesis
 This is a pre-run protocol. A disposable POC-only observer currently exists
 through step 2C (source comparison, targeted metadata/Space reads, and pure
 correlation); no production runtime changed. One short, orchestrator-guided
-Terminal-only calibration was run as diagnostic-only evidence; it is specified in
+Terminal-only calibration was run as diagnostic-only evidence. The next,
+human-gated Terminal lifecycle calibration is specified in
 [`pocs/001-window-events-liveness/README.md`](../../pocs/001-window-events-liveness/README.md).
-It is not a result and does not authorize the remaining live matrix.
+Neither calibration is a result or authorizes the remaining live matrix.
 
 ## Decision enabled
 Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,
@@ -40,16 +41,26 @@ by an undetected/tardy manual move; or by a stated latency/query threshold
 below being missed.
 
 ## Environment
-- macOS build: not observed for this pre-run document; record immediately before the first sample.
-- architecture/display: not observed for this pre-run document; record processor architecture, display count, and active display identity before the first sample.
-- Hammerspoon version: not observed for this pre-run document; record from the running POC host before the first sample.
-- 10bucks commit/branch: `8df7aad` / `dev-poc-001-window-events-liveness` at protocol creation.
-- relevant System Settings: not observed for this pre-run document; record Accessibility status and the settings relevant to the run without changing them. The target setup is documented in [`../macos-settings.md`](../macos-settings.md).
-- applications/versions: not observed for this pre-run document; record exact version/build for every participating app.
 
-No value above may be backfilled from assumption. Values observed while running
-must be timestamped in Results and identify whether they came from an OS UI,
-a command, or the Hammerspoon host.
+The following are **observed environment values**, not stable detection
+contracts. They identify the next human-gated sample only.
+
+- **Observed** (`sw_vers`): macOS 26.5, build `25F71`.
+- **Observed** (`uname`; `hs.screen`): `arm64`; one Built-in Retina Display.
+- **Observed** (`hs.processInfo`): Hammerspoon 1.1.1.
+- **Observed** (`git rev-parse --short HEAD`; `git branch --show-current`):
+  10bucks commit `5a03f04` on `dev-poc-001-window-events-liveness`.
+- **Observed** (`csrutil status`): SIP enabled.
+- **Observed** (`defaults`): menu auto-hide value `1`; `mru-spaces` value `0`;
+  separate Spaces `true`.
+- **Observed** (application version metadata): Chrome 152.0.7977.77; Slack
+  4.52.155; Signal 8.26.0; Thunderbird 153.1.1; Claude 1.44121.4; zoom.us
+  7.1.5 (84650).
+- **Pending**: Terminal version; do not record it until its source is inspected.
+
+Do not generalize these values into portable detection behavior. Values observed
+while running must be timestamped in Results and identify whether they came from
+an OS UI, a command, or the Hammerspoon host.
 
 ## Procedure
 
@@ -145,10 +156,12 @@ eligibility/admission marker; POC-001 issues zero frame effects.
 
 ### 3. Guided matrix
 
-The full matrix below remains **pending**. Before it begins, run only the
-short Terminal-only calibration in the operator guide and record its results
-separately. Do not advance from calibration to minimize/hide/fullscreen/Space
-move/cold-bootstrap or the representative-app matrix without a new approved
+The full matrix below remains **pending**. The first Terminal-only calibration
+is diagnostic-only. The operator guide separately authorizes exactly one next
+human-gated Terminal lifecycle calibration (minimize, hide/unhide, restore, and
+native fullscreen) using two blank windows on the current regular Space. Do not
+advance from that calibration to Space movement, cold bootstrap/reload, rapid
+repetitions, other apps, or the representative-app matrix without a new approved
 handoff. For Terminal and the Chromium representative first, then each
 remaining representative app where its UI supports the action, run the
 following and retain every event order, including failures and late callbacks:

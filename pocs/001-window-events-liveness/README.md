@@ -1,90 +1,82 @@
-# POC-001 observer — calibration operator guide
+# POC-001 observer — lifecycle calibration operator handoff
 
-This is a **disposable, read-only comparison harness**, not 10bucks runtime
-code. It never imports `10bucks.spoon`, requests frames or focus, mutates a
-window, creates timers, or polls. This handoff authorizes one short,
-orchestrator-guided **Terminal-only calibration**; it is not authorization to
-run the full POC matrix.
+This is a **human-gated, disposable, read-only comparison harness**, not
+10bucks runtime code. It authorizes exactly one Terminal-only lifecycle sample.
+It does not authorize the full POC matrix or any production change. The first
+Terminal calibration and its unplanned deviation remain recorded in
+[`docs/pocs/001-window-events-liveness.md`](../../docs/pocs/001-window-events-liveness.md#first-terminal-calibration--calibration-only-observations);
+this handoff does not replace that history.
 
-## Scope, safety, and isolation
+## Scope and non-negotiable boundaries
 
-- The orchestrator runs the commands below and pauses for each human action.
-  The only human test application is Terminal, using blank, non-sensitive
-  windows. Do not open a shell prompt, tab, document, URL, title, or content
-  that is sensitive: event exports are redacted, but the operator must not
-  rely on redaction as permission to expose private material.
-- Never run the observer and legacy 10bucks concurrently. The existing global
-  `spoon["10bucks"]` is **verified present**. Stop it first and explicitly
-  check `started == false` before loading the observer.
-- Do **not** call `hs.reload`, edit `~/.hammerspoon/init.lua`, or reload the
-  Hammerspoon configuration. Load the observer directly from the absolute
-  repository path below.
-- This calibration covers only creation, focus, destruction, and a covered
-  live window. Do **not** proceed to minimize, hide/unhide, native fullscreen,
-  moving a window between Spaces, quitting/relaunching, cold bootstrap/reload,
-  rapid sequences, or the full application matrix. Those remain pending POC
-  actions.
-- The observer creates no window effects. Its candidate event sources run in
-  parallel only to gather comparison evidence; this does not create a second
-  production runtime.
+- The orchestrator alone stops/loads the runtimes, emits all markers, stops and
+  exports the trace, and restores legacy 10bucks. The human performs only the
+  individually announced UI action, then waits.
+- Use **exactly two** blank, non-sensitive Terminal windows, named **A** and
+  **B** by their on-screen positions before the sample starts. Both are on the
+  current regular Space. A is frontmost and B is visible behind it. Terminal is
+  the only application acted on; do not open, switch, quit, or operate another
+  application.
+- Do not move a Space, use Mission Control, reload Hammerspoon, cold reload the
+  observer, run another sample, rapidly repeat an action, or make timing
+  claims. This calibration has no timing result.
+- Minimize, application hide, and native fullscreen are **independent
+  observations**. The expected visible states below deliberately preserve that
+  distinction; none implies another.
+- If the user cannot perform an action, cannot identify the required Dock item,
+  or sees unexpected UI/state, the user says so. The sample then stops. Do not
+  improvise a substitute action, add a marker/action, or continue from a
+  different state.
+- The observer makes no frame, focus, minimize, hide, fullscreen, Space, or
+  other window effects. Candidate sources are comparison instrumentation only.
 
-The examples use this checked-out repository path and a private export location.
-The directory setup is defense in depth: `umask 077` affects this shell, **not**
-the already-running Hammerspoon GUI process. The harness itself now requires an
-existing directory owned by the current user with no group/other permissions,
-writes only a temporary file in that directory, enforces and verifies mode
-`0600`, then atomically renames it into place. It fails closed and removes its
-temporary file if any step fails. Do not share the export before reviewing it.
+The applicable hypothesis, environment observations, and acceptance thresholds
+are in [`docs/pocs/001-window-events-liveness.md`](../../docs/pocs/001-window-events-liveness.md).
+
+## Exact setup
+
+Before stopping legacy or loading the observer, the human arranges the current
+regular Space into this precondition: exactly two blank Terminal windows are
+open; **A** is the front window; **B** remains visibly unminimized behind A;
+and A's minimized-window item is identifiable in the Dock when minimized. This
+setup is not a measured action and receives no marker. If that Dock item cannot
+be identified, do not start the sample.
+
+The orchestrator creates a new owner-private export directory and path:
 
 ```sh
 umask 077
-mkdir -p /tmp/poc-001-piotr
-chmod 700 /tmp/poc-001-piotr
+mkdir -p /tmp/poc-001-lifecycle-002
+chmod 700 /tmp/poc-001-lifecycle-002
+test "$(stat -f '%Sp' /tmp/poc-001-lifecycle-002)" = "drwx------"
 ```
 
-The private export path used below is:
+The export path is new for this slice:
 
 ```text
-/tmp/poc-001-piotr/terminal-calibration.json
+/tmp/poc-001-lifecycle-002/terminal-lifecycle-calibration-002.json
 ```
 
-## Orchestrator procedure
+The exporter is fail-closed: it accepts only an explicitly chosen absolute
+path in an already-existing directory owned by the current user with no
+group/other permissions; writes a temporary file in that directory; enforces
+and verifies temporary-file mode `0600`; atomically renames only that verified
+temporary file; and removes the temporary file if any step fails. Shell
+`umask` is defense in depth only and does not control the already-running
+Hammerspoon process. Do not share an export before local review.
 
-Run the **Console Lua** form in the Hammerspoon Console, or the equivalent
-safely single-quoted `hs -c` form in a shell. `hs -c` requires the IPC support
-already loaded by `~/.hammerspoon/init.lua`; it evaluates in the running
-Hammerspoon Lua environment. Do not run both forms of the same step.
+## Orchestrator setup
 
-### 1. Stop and verify legacy
+Use either the Hammerspoon Console Lua forms below or their safely
+single-quoted `hs -c` equivalents—not both for a step. Do not edit
+`~/.hammerspoon/init.lua` or call `hs.reload`.
 
-Console Lua:
+### Stop legacy and load the observer
 
 ```lua
 spoon["10bucks"]:stop()
 assert(spoon["10bucks"].started == false, "legacy 10bucks is still started; abort")
-print("POC-001 legacy stopped")
-```
 
-Shell:
-
-```sh
-hs -c 'spoon["10bucks"]:stop(); assert(spoon["10bucks"].started == false, "legacy 10bucks is still started; abort"); print("POC-001 legacy stopped")'
-```
-
-Do not continue if the assertion fails. `stop()` removes legacy hotkey
-bindings, which is why restoration below must call `bindHotkeys()` before
-`start()`.
-
-### 2. Clear a previous partial observer and manually load/start this POC
-
-This cleanup is safe only after step 1 has verified legacy is stopped. It stops
-an earlier `poc001` object if one exists, then discards only this POC module
-cache entry. The global names deliberately persist between Console evaluations;
-do not replace them with `local` variables.
-
-Console Lua:
-
-```lua
 if poc001 ~= nil then pcall(function() poc001:stop() end) end
 poc001 = nil
 package.loaded["observer"] = nil
@@ -93,198 +85,94 @@ package.path = poc001_root .. "/?.lua;" .. package.path
 poc001 = require("observer")
 assert(poc001:start())
 assert(poc001:status().lifecycle == "running", "POC observer did not start")
+assert(poc001:status().active_timers == 0, "POC observer unexpectedly has timers")
+assert(poc001:status().window_effects == 0, "POC observer issued a window effect")
 print(hs.inspect(poc001:status()))
 ```
 
-Shell:
+Do not continue if any assertion fails.
 
-```sh
-hs -c 'if poc001 ~= nil then pcall(function() poc001:stop() end) end; poc001 = nil; package.loaded["observer"] = nil; poc001_root = "/Users/piotr/Git/10bucks/pocs/001-window-events-liveness"; package.path = poc001_root .. "/?.lua;" .. package.path; poc001 = require("observer"); assert(poc001:start()); assert(poc001:status().lifecycle == "running", "POC observer did not start"); print(hs.inspect(poc001:status()))'
+## Guided lifecycle sample
+
+Use sample ID `terminal-lifecycle-002`. For each row, the orchestrator emits
+`action_begin`, the human performs **only** that one action, confirms the
+listed visible state, and the orchestrator emits `manual_visual_complete`.
+There is no prescribed wait or timing measurement.
+
+| Order | Marker action token | Human action | Expected visible state before completion marker |
+|---:|---|---|---|
+| 1 | `terminal_minimize_front_A` | Minimize front window **A** once using its yellow window control. | A is minimized. B is still visible, unminimized, and frontmost on the current regular Space. |
+| 2 | `terminal_hide_with_B_nonminimized` | With B visible and unminimized, choose **Terminal → Hide Terminal** once. | Terminal is hidden. A remains minimized; B is hidden but remains non-minimized. |
+| 3 | `terminal_unhide_via_Dock` | Click the Terminal application icon in the Dock once to unhide Terminal. | B is visible and frontmost on the current regular Space. A is still minimized. |
+| 4 | `terminal_restore_A_via_Dock` | Click **A's minimized-window item** in the Dock once. Do not click B or use a Terminal menu. | A is restored and visible on the current regular Space. B remains visible. |
+| 5 | `terminal_enter_native_fullscreen_A` | With A frontmost, press **Control-Command-F** once to enter Terminal's native fullscreen. | A is in its native fullscreen Space. B remains on the original regular Space. |
+| 6 | `terminal_exit_native_fullscreen_A` | In A's native fullscreen Space, press **Control-Command-F** once to exit native fullscreen. | A has exited native fullscreen and is visible again on the regular Space; B remains visible there. |
+
+For every row, the orchestrator uses exactly these marker calls, replacing only
+`ACTION` with that row's token:
+
+```lua
+poc001:mark("terminal-lifecycle-002", "action_begin", "ACTION")
+-- Human performs the one announced action and confirms the expected visible state.
+poc001:mark("terminal-lifecycle-002", "manual_visual_complete", "ACTION")
 ```
 
-The printed status is the initial inspection: it must show `lifecycle =
-"running"`, `active_timers = 0`, and `window_effects = 0`. The bootstrap scan
-and watcher counts are expected observer instrumentation, not legacy runtime
-activity.
+## Stop, export, and restore
 
-### 3. Run exactly these named markers and Terminal actions
-
-For every pause, the orchestrator issues the named marker first, the human
-performs only the named Terminal action, then the orchestrator issues the
-completion marker. All marker/action tokens are privacy-safe and must remain
-exactly as shown.
-
-1. **Create a blank Terminal window.** Leave it at an empty, non-sensitive
-   prompt; do not type or display sensitive material.
-
-   ```lua
-   poc001:mark("terminal-cal-001", "action_begin", "terminal_create_blank")
-   ```
-
-   ```sh
-   hs -c 'poc001:mark("terminal-cal-001", "action_begin", "terminal_create_blank")'
-   ```
-
-   Human action: in Terminal, use **File → New Window** (or `Cmd-N`) once.
-   Then issue:
-
-   ```lua
-   poc001:mark("terminal-cal-001", "manual_visual_complete", "terminal_create_blank")
-   ```
-
-   ```sh
-   hs -c 'poc001:mark("terminal-cal-001", "manual_visual_complete", "terminal_create_blank")'
-   ```
-
-2. **Focus the other blank Terminal window.** Keep both windows open. The
-   action is a focus comparison only, not a layout action.
-
-   ```lua
-   poc001:mark("terminal-cal-001", "action_begin", "terminal_focus_other_blank")
-   ```
-
-   ```sh
-   hs -c 'poc001:mark("terminal-cal-001", "action_begin", "terminal_focus_other_blank")'
-   ```
-
-   Human action: click the other blank Terminal window's title bar once. Then
-   issue:
-
-   ```lua
-   poc001:mark("terminal-cal-001", "manual_visual_complete", "terminal_focus_other_blank")
-   ```
-
-   ```sh
-   hs -c 'poc001:mark("terminal-cal-001", "manual_visual_complete", "terminal_focus_other_blank")'
-   ```
-
-3. **Cover, but do not close, one blank Terminal window.** Bring the focused
-   blank window fully over the other blank Terminal window and leave the
-   covered window open for five seconds. Do not minimize either window.
-
-   ```lua
-   poc001:mark("terminal-cal-001", "action_begin", "terminal_cover_live_window")
-   ```
-
-   ```sh
-   hs -c 'poc001:mark("terminal-cal-001", "action_begin", "terminal_cover_live_window")'
-   ```
-
-   Human action: arrange the two blank Terminal windows so one completely
-   covers the other; wait five seconds. Then issue:
-
-   ```lua
-   poc001:mark("terminal-cal-001", "manual_visual_complete", "terminal_cover_live_window")
-   ```
-
-   ```sh
-   hs -c 'poc001:mark("terminal-cal-001", "manual_visual_complete", "terminal_cover_live_window")'
-   ```
-
-4. **Destroy the front blank Terminal window.** This is the only destructive
-   action in this calibration. Close the front window with **File → Close
-   Window** (or `Cmd-W`); do not quit Terminal.
-
-   ```lua
-   poc001:mark("terminal-cal-001", "action_begin", "terminal_close_front_blank")
-   ```
-
-   ```sh
-   hs -c 'poc001:mark("terminal-cal-001", "action_begin", "terminal_close_front_blank")'
-   ```
-
-   Human action: close only the front blank Terminal window. Then issue:
-
-   ```lua
-   poc001:mark("terminal-cal-001", "manual_visual_complete", "terminal_close_front_blank")
-   ```
-
-   ```sh
-   hs -c 'poc001:mark("terminal-cal-001", "manual_visual_complete", "terminal_close_front_blank")'
-   ```
-
-Do not invent extra markers or actions in this calibration.
-
-### 4. Inspect, stop, export, and restore legacy
-
-Inspect before stopping:
+After row 6, the orchestrator inspects the status, stops the observer, exports
+only after it is stopped, then restores legacy bindings and runtime:
 
 ```lua
 print(hs.inspect(poc001:status()))
-```
-
-```sh
-hs -c 'print(hs.inspect(poc001:status()))'
-```
-
-Record the displayed status for the later result write-up. It is diagnostic
-only: do not interpret it as a pass/fail result during this handoff.
-
-Stop, verify the observer stopped, and export to the pre-created owner-private `/tmp` path. `export()` rejects a relative path, a missing/non-private directory, failed chmod, failed mode verification, or failed atomic rename:
-
-```lua
 assert(poc001:stop())
 assert(poc001:status().lifecycle == "stopped", "POC observer did not stop")
-poc001:export("/tmp/poc-001-piotr/terminal-calibration.json")
-```
-
-```sh
-hs -c 'assert(poc001:stop()); assert(poc001:status().lifecycle == "stopped", "POC observer did not stop"); poc001:export("/tmp/poc-001-piotr/terminal-calibration.json")'
-```
-
-Only after the stop assertion succeeds, restore the single legacy runtime.
-`bindHotkeys()` is mandatory because legacy `stop()` deletes the bindings.
-
-```lua
+local exported, export_error = pcall(function()
+  return poc001:export("/tmp/poc-001-lifecycle-002/terminal-lifecycle-calibration-002.json")
+end)
 spoon["10bucks"]:bindHotkeys():start()
 assert(spoon["10bucks"].started == true, "legacy 10bucks did not restart")
+assert(exported, "private POC export failed: " .. tostring(export_error))
 ```
 
-```sh
-hs -c 'spoon["10bucks"]:bindHotkeys():start(); assert(spoon["10bucks"].started == true, "legacy 10bucks did not restart")'
-```
+The status and local export are diagnostic-only. They are not a pass/fail
+result and do not authorize another POC action.
 
-## Abort and partial-load cleanup
+## Cancellation and abort
 
-If loading, starting, marking, or a human action goes wrong, **do not** reload
-Hammerspoon and do not start legacy while the observer might still be running.
-Run this cleanup, inspect its status, then restore legacy only if the observer
-reports `stopped`:
+On the user's statement that an action cannot be completed or UI is unexpected,
+the orchestrator marks the sample aborted (without a replacement action), then
+stops, exports, and restores only if the observer is confirmed stopped:
 
 ```lua
-if poc001 ~= nil then pcall(function() poc001:stop() end) end
+if poc001 ~= nil and poc001:status().lifecycle == "running" then
+  poc001:mark("terminal-lifecycle-002", "sample_aborted", "operator_reported_unexpected_ui")
+  pcall(function() poc001:stop() end)
+end
 if poc001 ~= nil then print(hs.inspect(poc001:status())) end
 assert(poc001 == nil or poc001:status().lifecycle == "stopped", "observer may still be running; do not restore legacy")
+local exported, export_error = true, nil
+if poc001 ~= nil then
+  exported, export_error = pcall(function()
+    return poc001:export("/tmp/poc-001-lifecycle-002/terminal-lifecycle-calibration-002.json")
+  end)
+end
 poc001 = nil
 package.loaded["observer"] = nil
 spoon["10bucks"]:bindHotkeys():start()
 assert(spoon["10bucks"].started == true, "legacy 10bucks did not restart")
+assert(exported, "private POC export failed: " .. tostring(export_error))
 ```
 
-```sh
-hs -c 'if poc001 ~= nil then pcall(function() poc001:stop() end) end; if poc001 ~= nil then print(hs.inspect(poc001:status())) end; assert(poc001 == nil or poc001:status().lifecycle == "stopped", "observer may still be running; do not restore legacy"); poc001 = nil; package.loaded["observer"] = nil; spoon["10bucks"]:bindHotkeys():start(); assert(spoon["10bucks"].started == true, "legacy 10bucks did not restart")'
-```
+If the stop assertion fails, leave legacy stopped and report the Console output.
+Do not use `hs.reload` as cleanup.
 
-If that assertion fails, leave legacy stopped and escalate with the Console
-output; do not use `hs.reload` as cleanup.
+## Trace contract and pure checks
 
-## Trace and observer contract
-
-The in-memory trace is structured and monotonically timestamped in
-milliseconds. Every event has `run_id`, `sample_id`, `sequence`, and
-`monotonic_ms`. Export redacts titles, URLs, paths, AX text, app names, bundle
-IDs, PIDs, and raw native window IDs. Application/window aliases are in-memory
-only and reset per run. Review the local export before sharing it.
-
-`poc001:status()` reports the run ID, event count, open callback depth, query
-counters, active watcher counts, active timers (expected `0`), and POC window
-effects (expected `0`). The observer's only deliberate broad work is the
-labeled startup bootstrap scan. It makes no frame/focus/window effects and no
-permanent poll. See [`EVIDENCE.md`](EVIDENCE.md) for source-inspection caveats
-and [`docs/pocs/001-window-events-liveness.md`](../../docs/pocs/001-window-events-liveness.md)
-for the hypothesis, thresholds, and deferred matrix.
-
-## Pure checks
+The in-memory trace has monotonic millisecond timestamps and redacts titles,
+URLs, paths, AX text, app names, bundle IDs, PIDs, and native IDs. Review the
+local export before sharing it. `poc001:status()` reports lifecycle, event and
+query counters, watcher counts, active timers (expected `0`), and POC window
+effects (expected `0`).
 
 ```sh
 lua pocs/001-window-events-liveness/run-tests.lua
