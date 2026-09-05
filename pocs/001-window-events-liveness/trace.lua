@@ -22,7 +22,9 @@ local allowed_keys = {
   candidate_native_fullscreen = true, candidate_available = true,
   ownership_kind = true, retained_regular_space = true, from_space = true,
   to_space = true, trigger = true, sweep_scope = true, query_count = true,
-  topology_status = true, active_space = true,
+  topology_status = true, active_space = true, membership_count = true,
+  reciprocal_confirmed_count = true, retained_prior_regular = true,
+  target_relation = true, action_target_status = true, active_generation = true,
 }
 
 local function safe_token(value)

@@ -53,8 +53,8 @@ local function install_fake_spaces(state, memberships)
   _G.hs.spaces = {
     windowSpaces = function(id) return memberships[tostring(id)] or {} end,
     windowsForSpace = function(space) return memberships.reverse and memberships.reverse[tostring(space)] or {} end,
-    data_managedDisplaySpaces = function() return { { Spaces = { { ManagedSpaceID = 10, type = 0 }, { ManagedSpaceID = 20, type = 0 }, { ManagedSpaceID = 30, type = 4 } } } } end,
-    activeSpaceOnScreen = function() return 10 end,
+    data_managedDisplaySpaces = function() state.topology_calls = (state.topology_calls or 0) + 1; return { { Spaces = { { ManagedSpaceID = 10, type = 0 }, { ManagedSpaceID = 20, type = 0 }, { ManagedSpaceID = 30, type = 4 } } } } end,
+    activeSpaceOnScreen = function() state.active_space_calls = (state.active_space_calls or 0) + 1; return memberships.active or 10 end,
     watcher = { new = function(callback) local watcher = fake_watcher(); watcher.callback = callback; state.spaces_watcher = watcher; return watcher end },
   }
 end
@@ -160,14 +160,46 @@ return {
     local attributed = false; for _, event in ipairs(checks) do if event.trigger == "direct_ax_window_move" and event.query == "spaces_window_spaces" then attributed = true end end; assert(attributed)
     observer:stop()
   end,
-  ["POC-001 active-Space callback performs one bounded known-window sweep and creates no timer"] = function()
-    local window, application = fake_window(801, complete_metadata()), fake_application(58, {})
-    local state = install_fake_hs({ application }); install_fake_spaces(state, { ["801"] = { 10 }, reverse = { ["10"] = { 801 } } }); package.loaded.observer = nil
-    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated")
-    state.spaces_watcher.callback()
+  ["POC-001 active-Space sweep reuses one topology snapshot across known windows and creates no timer"] = function()
+    local first, second = fake_window(801, complete_metadata()), fake_window(802, complete_metadata())
+    local application = fake_application(58, {})
+    local state = install_fake_hs({ application }); install_fake_spaces(state, { ["801"] = { 10 }, ["802"] = { 10 }, reverse = { ["10"] = { 801, 802 } } }); package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(first, "AXWindowCreated"); application.watcher.callback(second, "AXWindowCreated")
+    local topology_before = state.topology_calls; state.spaces_watcher.callback()
     local end_events = events(observer, "active_space_known_window_sweep_end")
-    equal(#end_events, 1); equal(end_events[1].sweep_scope, "known_windows_only"); assert(end_events[1].query_count > 0); equal(observer:status().active_timers, 0)
+    equal(#end_events, 1); equal(end_events[1].sweep_scope, "known_windows_only"); equal(end_events[1].count, 2); assert(end_events[1].query_count > 0); equal(state.topology_calls - topology_before, 1); equal(observer:status().active_timers, 0)
     observer:stop(); assert(state.spaces_watcher.stopped)
+  end,
+  ["POC-001 duplicate active-Space callback is coalesced without another sweep"] = function()
+    local window, application = fake_window(803, complete_metadata()), fake_application(63, {})
+    local state = install_fake_hs({ application }); install_fake_spaces(state, { ["803"] = { 10 }, reverse = { ["10"] = { 803 } } }); package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated")
+    state.spaces_watcher.callback(); local after_first = state.topology_calls; state.spaces_watcher.callback()
+    equal(#events(observer, "active_space_known_window_sweep_end"), 1); local coalesced = events(observer, "active_space_callback_coalesced")
+    equal(#coalesced, 1); equal(coalesced[1].result, "duplicate_active_space"); equal(state.topology_calls, after_first)
+    observer:stop()
+  end,
+  ["FOCUS-003 POC target binding queries focused once, uses cached identity, and never admits or effects"] = function()
+    local window, application = fake_window(804, complete_metadata()), fake_application(64, {})
+    local state = install_fake_hs({ application }); install_fake_spaces(state, { ["804"] = { 10 }, reverse = { ["10"] = { 804 } } }); hs.window.focusedWindow = function() state.focused_calls = (state.focused_calls or 0) + 1; return window end; package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated")
+    local facts_before = #events(observer, "window_ready_eligible"); assert(observer:begin_target_action("move-sample", "manual_move_regular_space"))
+    equal(state.focused_calls, 1); equal(#events(observer, "action_begin"), 1); equal(events(observer, "action_begin")[1].window, "win-001"); equal(events(observer, "action_begin")[1].space, "space-001"); equal(#events(observer, "window_ready_eligible"), facts_before); equal(observer:status().window_effects, 0)
+    observer:mark("move-sample", "sample_aborted", "operator_abort"); observer:stop()
+  end,
+  ["FOCUS-003 POC uncertain target binding rejects without admission or effects"] = function()
+    local window, application = fake_window(805, complete_metadata()), fake_application(65, {})
+    local state = install_fake_hs({ application }); install_fake_spaces(state); hs.window.focusedWindow = function() state.focused_calls = (state.focused_calls or 0) + 1; return window end; package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start())
+    local ok, reason = observer:begin_target_action("move-sample", "manual_move_regular_space")
+    equal(ok, false); equal(reason, "target_uncertain"); equal(state.focused_calls, 1); equal(#events(observer, "action_begin"), 0); equal(#events(observer, "action_target_binding_rejected"), 1); equal(#events(observer, "window_ready_eligible"), 0); equal(observer:status().window_effects, 0)
+    observer:stop()
+  end,
+  ["STATE-005 POC destruction candidates classify active target without confirmation"] = function()
+    local first, second = fake_window(806, complete_metadata()), fake_window(807, complete_metadata())
+    local application = fake_application(66, {}); local state = install_fake_hs({ application }); install_fake_spaces(state, { ["806"] = { 10 }, ["807"] = { 10 }, reverse = { ["10"] = { 806, 807 } } }); hs.window.focusedWindow = function() return first end; package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(first, "AXWindowCreated"); application.watcher.callback(second, "AXWindowCreated"); assert(observer:begin_target_action("move-sample", "manual_move_regular_space")); second.watcher.callback(second, "AXUIElementDestroyed")
+    local candidate = events(observer, "destruction_candidate")[1]; equal(candidate.target_relation, "non_target"); equal(#events(observer, "destruction_confirmed"), 0); observer:stop()
   end,
   ["DISC-002 POC metadata uses callback public methods without attributeValue and retains readiness across lifecycle-only reads"] = function()
     local metadata, window = complete_metadata(), fake_window(901, complete_metadata())

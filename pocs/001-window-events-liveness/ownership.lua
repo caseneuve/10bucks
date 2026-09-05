@@ -1,5 +1,5 @@
--- POC-001 pure Space-ownership correlation.  It has no Hammerspoon dependency,
--- accepts only redacted aliases, and never decides liveness or performs effects.
+-- POC-001 pure Space-ownership correlation. It accepts redacted reciprocal
+-- observations only; it never decides liveness or performs effects.
 local Ownership = {}
 Ownership.__index = Ownership
 
@@ -8,47 +8,52 @@ local function alias(value, kind)
 end
 
 local function classify(memberships)
-  local regular, fullscreen, unknown = {}, {}, false
+  local regular, fullscreen, unknown, reciprocal = {}, {}, false, 0
   for _, membership in ipairs(memberships or {}) do
     alias(membership.space, "space")
-    if membership.kind == "regular" then
-      regular[#regular + 1] = membership.space
-    elseif membership.kind == "fullscreen" then
-      fullscreen[#fullscreen + 1] = membership.space
-    else
-      unknown = true
-    end
+    if membership.reciprocal == true then reciprocal = reciprocal + 1 else unknown = true end
+    if membership.kind == "regular" then regular[#regular + 1] = membership.space
+    elseif membership.kind == "fullscreen" then fullscreen[#fullscreen + 1] = membership.space
+    else unknown = true end
   end
-  if not unknown and #regular == 1 and #fullscreen == 0 then return "regular", regular[1] end
-  if not unknown and #regular == 0 and #fullscreen == 1 then return "fullscreen", fullscreen[1] end
-  return "unknown", nil
+  local count = #(memberships or {})
+  if count == 0 then return "unknown", nil, "missing", reciprocal end
+  if unknown then return "unknown", nil, "query_error", reciprocal end
+  if #regular == 1 and #fullscreen == 0 and reciprocal == 1 then return "regular", regular[1], "unique_regular", reciprocal end
+  if #regular == 0 and #fullscreen == 1 and reciprocal == 1 then return "fullscreen", fullscreen[1], "fullscreen", reciprocal end
+  return "unknown", nil, "ambiguous", reciprocal
 end
 
 function Ownership.new()
   return setmetatable({ windows = {} }, Ownership)
 end
 
--- `memberships` is one bounded reciprocal observation. A uniquely regular
--- result is the only fact allowed to supersede confirmed regular ownership.
+-- Only a uniquely regular reciprocal observation may supersede confirmed
+-- regular ownership. Fullscreen, missing, failed, and ambiguous evidence keep
+-- the prior owner and are explicitly non-moving outcomes.
 function Ownership:observe(window, memberships)
   alias(window, "win")
   local record = self.windows[window] or { kind = "unknown" }
-  local kind, space = classify(memberships)
+  local kind, space, reason, reciprocal_count = classify(memberships)
   local prior_regular = record.confirmed_regular
   local changed = record.kind ~= kind or record.space ~= space
-  local result = { kind = kind, space = space, retained_regular = prior_regular, changed = changed }
+  local result = {
+    kind = kind, space = space, reason = reason,
+    membership_count = #(memberships or {}), reciprocal_confirmed_count = reciprocal_count,
+    retained_regular = prior_regular, changed = changed,
+  }
 
   if kind == "regular" then
-    record.kind, record.space = kind, space
-    record.confirmed_regular = space
+    record.kind, record.space, record.confirmed_regular = kind, space, space
     result.retained_regular = space
     if prior_regular and prior_regular ~= space then
       result.move = { from = prior_regular, to = space }
+    elseif prior_regular == space then
+      result.reason, result.no_regular_move = "same_regular", true
     end
   else
-    -- Fullscreen and uncertainty are observations, not evidence that the last
-    -- confirmed regular owner disappeared. Keep it for later comparison.
     record.kind, record.space = kind, space
+    result.no_regular_move = true
   end
   self.windows[window] = record
   return result

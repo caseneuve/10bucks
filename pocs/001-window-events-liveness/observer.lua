@@ -70,7 +70,8 @@ function Observer:_new_run()
   self.lifecycle, self.ownership = Lifecycle.new(), Ownership.new()
   self.app_watchers, self.window_watchers, self.window_identity_cache = {}, {}, {}
   self.window_raw_by_alias, self.ready_emitted, self.metadata_by_window = {}, {}, {}
-  self.destruction_candidates = {}
+  self.destruction_candidates, self.active_target_action = {}, nil
+  self.space_trigger_generation, self.last_active_space, self.last_active_generation = 0, nil, nil
   self.filter, self.application_watcher, self.spaces_watcher = nil, nil, nil
   self.active_timers, self.window_effects = 0, 0
 end
@@ -149,11 +150,12 @@ function Observer:_emit_ready_if_complete(app, window, event)
   end
 end
 
-function Observer:_read_space_ownership(app, window, raw_window, event, scope, trigger)
+function Observer:_read_space_ownership(app, window, raw_window, event, scope, trigger, topology)
+  if trigger ~= "active_space_callback_known_window_sweep" then self.space_trigger_generation = self.space_trigger_generation + 1 end
   self.trace:targeted_check_begin("spaces_window_spaces", "spaces.windowSpaces", scope, { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger })
   local ok, raw_spaces = protected(function() return hs.spaces.windowSpaces(tonumber(raw_window) or raw_window) end)
   self.trace:targeted_check_end("spaces_window_spaces", "spaces.windowSpaces", scope, { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger })
-  local types = self:_space_topology(event, scope)
+  local types = topology or self:_space_topology(event, scope)
   local memberships = {}
   if ok and type(raw_spaces) == "table" and types then
     for _, raw_space in ipairs(raw_spaces) do
@@ -161,15 +163,15 @@ function Observer:_read_space_ownership(app, window, raw_window, event, scope, t
       self.trace:targeted_check_begin("spaces_windows_for_space", "spaces.windowsForSpace", scope, { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger })
       local reciprocal_ok, windows = protected(function() return hs.spaces.windowsForSpace(raw_space) end)
       self.trace:targeted_check_end("spaces_windows_for_space", "spaces.windowsForSpace", scope, { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger })
-      memberships[#memberships + 1] = { space = self.trace:space_alias(raw_key), kind = reciprocal_ok and type(windows) == "table" and contains(windows, raw_window) and kind or "unknown" }
+      memberships[#memberships + 1] = { space = self.trace:space_alias(raw_key), kind = kind, reciprocal = reciprocal_ok and type(windows) == "table" and contains(windows, raw_window) or false }
     end
-  else
-    memberships[1] = { space = self.trace:space_alias("unknown-space-" .. window), kind = "unknown" }
   end
   local outcome = self.ownership:observe(window, memberships)
-  self.trace:emit("space_ownership_observed", { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger, space = outcome.space, ownership_kind = outcome.kind, retained_regular_space = outcome.retained_regular, result = outcome.changed and "changed" or "duplicate" })
+  self.trace:emit("space_ownership_observed", { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger, space = outcome.space, ownership_kind = outcome.kind, retained_regular_space = outcome.retained_regular, retained_prior_regular = outcome.retained_regular, membership_count = outcome.membership_count, reciprocal_confirmed_count = outcome.reciprocal_confirmed_count, reason = outcome.reason, result = outcome.changed and "changed" or "duplicate" })
   if outcome.move then
     self.trace:emit("space_move_confirmed", { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger, from_space = outcome.move.from, to_space = outcome.move.to, result = "non_effecting" })
+  elseif outcome.no_regular_move then
+    self.trace:emit("no_regular_move", { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger, retained_prior_regular = outcome.retained_regular, reason = outcome.reason, result = "non_effecting" })
   end
   self:_emit_ready_if_complete(app, window, event)
 end
@@ -251,7 +253,9 @@ function Observer:_destruction_candidate(app, window, source, event)
   local candidates = self.destruction_candidates[window] or {}
   if candidates[source] then return end
   candidates[source], self.destruction_candidates[window] = true, candidates
-  self.trace:emit("destruction_candidate", { source = source, app = app, window = window, raw_event = event, result = "candidate_only" })
+  local relation = "no_active_target"
+  if self.active_target_action then relation = self.active_target_action.window == window and "target" or "non_target" end
+  self.trace:emit("destruction_candidate", { source = source, app = app, window = window, raw_event = event, target_relation = relation, result = "candidate_only" })
   if candidates.direct_ax and candidates.filter and not candidates.paired then
     candidates.paired = true
     self.trace:emit("destruction_paired_candidate", { source = "poc001", app = app, window = window, raw_event = event, result = "paired_candidate_only" })
@@ -407,20 +411,27 @@ function Observer:_start_spaces_watcher()
       local callback_ok = pcall(function()
         self.trace:targeted_check_begin("spaces_active_space", "spaces.activeSpaceOnScreen", "steady", { source = "hs_spaces", trigger = "active_space_callback" })
         local active_ok, active = protected(function() return hs.spaces.activeSpaceOnScreen() end)
-        self.trace:targeted_check_end("spaces_active_space", "spaces.activeSpaceOnScreen", "steady", { source = "hs_spaces", trigger = "active_space_callback", active_space = active_ok and self.trace:space_alias(tostring(active)) or nil })
+        local active_alias = active_ok and active ~= nil and self.trace:space_alias(tostring(active)) or nil
+        self.trace:targeted_check_end("spaces_active_space", "spaces.activeSpaceOnScreen", "steady", { source = "hs_spaces", trigger = "active_space_callback", active_space = active_alias })
+        if active_alias and self.last_active_space == active_alias and self.last_active_generation == self.space_trigger_generation then
+          self.trace:emit("active_space_callback_coalesced", { source = "spaces_watcher", trigger = "active_space_callback", active_space = active_alias, active_generation = self.space_trigger_generation, result = "duplicate_active_space" })
+          return
+        end
+        self.last_active_space, self.last_active_generation = active_alias, self.space_trigger_generation
+        local before, after = self.trace:status().query_counters.steady, nil
+        local count_before = 0; for _, count in pairs(before) do count_before = count_before + count end
+        local topology = self:_space_topology("activeSpaceChanged", "steady")
         local known = {}
         for window, raw in pairs(self.window_raw_by_alias) do
           local cached = self:_cached_window_identity(raw)
           if cached then known[#known + 1] = { app = cached.app, window = window, raw = raw } end
         end
         table.sort(known, function(a, b) return a.window < b.window end)
-        local before, after = self.trace:status().query_counters.steady, nil
-        local count_before = 0; for _, count in pairs(before) do count_before = count_before + count end
-        self.trace:emit("active_space_known_window_sweep_begin", { source = "spaces_watcher", trigger = "active_space_callback", sweep_scope = "known_windows_only", query_count = 0, count = #known })
-        for _, known_window in ipairs(known) do self:_read_space_ownership(known_window.app, known_window.window, known_window.raw, "activeSpaceChanged", "steady", "active_space_callback_known_window_sweep") end
+        self.trace:emit("active_space_known_window_sweep_begin", { source = "spaces_watcher", trigger = "active_space_callback", sweep_scope = "known_windows_only", query_count = 0, count = #known, active_space = active_alias, active_generation = self.space_trigger_generation })
+        for _, known_window in ipairs(known) do self:_read_space_ownership(known_window.app, known_window.window, known_window.raw, "activeSpaceChanged", "steady", "active_space_callback_known_window_sweep", topology) end
         after = self.trace:status().query_counters.steady
         local count_after = 0; for _, count in pairs(after) do count_after = count_after + count end
-        self.trace:emit("active_space_known_window_sweep_end", { source = "spaces_watcher", trigger = "active_space_callback", sweep_scope = "known_windows_only", query_count = count_after - count_before, count = #known, result = "callback_complete_no_timer" })
+        self.trace:emit("active_space_known_window_sweep_end", { source = "spaces_watcher", trigger = "active_space_callback", sweep_scope = "known_windows_only", query_count = count_after - count_before, count = #known, active_space = active_alias, active_generation = self.space_trigger_generation, result = "callback_complete_no_timer" })
       end)
       if not callback_ok then self:_fact("callback_error", { source = "spaces_watcher", error_class = "runtime_error" }) end
       self.trace:callback_exit("spaces_watcher", "activeSpaceChanged")
@@ -470,7 +481,33 @@ function Observer:stop()
   self.filter, self.application_watcher, self.spaces_watcher, self.running = nil, nil, nil, false; self.trace:lifecycle("stop"); self.trace:mark("cleanup_complete", { source = "poc001", count = 0 }); return true
 end
 
-function Observer:mark(sample_id, marker, action) assert(self.trace, "start the POC before marking"); self.trace:set_sample(sample_id); return self.trace:mark(marker, { source = "operator", action = action }) end
+-- Read-only operator boundary for a manual action. It queries focus exactly once,
+-- resolves only an already-known identity, and never probes, admits, or effects.
+function Observer:begin_target_action(sample_id, action)
+  assert(self.trace, "start the POC before marking")
+  self.trace:set_sample(sample_id)
+  self.trace:query("targeted_focused_window", "operator.begin_target_action.focused_window", "steady", { source = "operator" })
+  local ok, focused = protected(function() return hs.window.focusedWindow() end)
+  local raw = ok and safe_id(focused) or nil
+  local cached = self:_cached_window_identity(raw)
+  local ownership = cached and self.ownership:window(cached.window) or nil
+  local regular = ownership and (ownership.confirmed_regular or (ownership.kind == "regular" and ownership.space)) or nil
+  if not cached or not regular then
+    self.trace:emit("action_target_binding_rejected", { source = "operator", action = action, action_target_status = "uncertain", reason = not cached and "target_missing" or "ownership_uncertain", result = "aborted" })
+    return false, "target_uncertain"
+  end
+  self.active_target_action = { app = cached.app, window = cached.window, space = regular, action = action }
+  self.trace:mark("action_begin", { source = "operator", action = action, app = cached.app, window = cached.window, space = regular, retained_prior_regular = regular, action_target_status = "bound" })
+  return true
+end
+
+function Observer:mark(sample_id, marker, action)
+  assert(self.trace, "start the POC before marking")
+  self.trace:set_sample(sample_id)
+  local sequence = self.trace:mark(marker, { source = "operator", action = action })
+  if marker == "manual_visual_complete" or marker == "native_action_completed" or marker == "sample_aborted" then self.active_target_action = nil end
+  return sequence
+end
 function Observer:status()
   if not self.trace then return { lifecycle = "not_started" } end
   local status = self.trace:status(); status.active_timers, status.window_effects, status.direct_application_watchers, status.direct_window_watchers, status.spaces_watcher_active = self.active_timers, self.window_effects, 0, 0, self.spaces_watcher ~= nil

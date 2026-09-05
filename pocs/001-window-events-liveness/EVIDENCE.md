@@ -135,9 +135,24 @@ reload, live POC load, or live action was performed for this checkpoint.
 - **Target:** the pure `ownership.lua` accepts redacted aliases only, retains
   prior confirmed regular membership across fullscreen/unknown/ambiguous
   observations, and emits a move only when both prior and new regular owners
-  are unique reciprocal confirmations and differ. Its output is non-effecting.
+  are unique reciprocal confirmations and differ. It records membership count,
+  reciprocal-confirmed count, `unique_regular`/`fullscreen`/`ambiguous`/
+  `query_error`/`missing` reason, and retained prior owner; fullscreen,
+  unknown, and same-regular outcomes emit non-effecting `no_regular_move`.
   Safe metadata readiness from 2B plus current unique regular ownership emits
   one idempotent `window_ready_eligible`; focus itself does not admit.
+- **Target (instrumentation correction before manual move):** one active-Space
+  callback reads active Space once and, when not a same-generation/value
+  duplicate, obtains one topology snapshot for its complete known-window sweep.
+  Every ownership probe reuses that snapshot. A duplicate emits an explicit
+  coalesced outcome and performs no sweep; there is no timer. Sweep traces
+  record exact POC-issued query attempts and unique known-window count.
+- **Target (operator correlation):** `begin_target_action` performs one
+  read-only focused-window query, resolves only the existing in-memory identity
+  cache, and records redacted target/regular-owner evidence in `action_begin`.
+  Missing or uncertain target/ownership rejects the binding. It cannot admit or
+  effect a window. While bound, destruction candidates are classified as target
+  or non-target and remain candidates only.
 
 ## Implication
 

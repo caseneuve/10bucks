@@ -439,6 +439,43 @@ shape/partial cached merge/readiness/uncertainty, paired destruction candidates
 in both orders, watcher attach/detach diagnostics, and fail-closed export.
 Pure coverage is not live evidence.
 
+### Fullscreen calibration 003 — redacted diagnostic results
+
+**Observed (private trace analysis; not a broad POC decision):** Terminal native
+fullscreen entry ordered direct resize/property observation, fullscreen
+ownership, then filter fullscreen; exit ordered a Space callback still showing
+fullscreen, direct resize/property false, regular ownership, then filter
+unfullscreen. The same prior confirmed regular owner was observed again after
+exit. There was no false regular-Space move and no destruction confirmation.
+
+- The ownership trace now records membership count, reciprocal-confirmed count,
+  reason (`unique_regular`, `fullscreen`, `ambiguous`, `query_error`, or
+  `missing`), and retained prior regular owner. It emits `no_regular_move` for
+  fullscreen, unknown, and same-regular results; only reciprocal unique regular
+  A→B evidence can emit `space_move_confirmed`.
+- The trace contained 40 callbacks: median/p95/maximum processing duration was
+  **5.66/71.14/85.84 ms**. The four Space callbacks caused the maximums. This
+  calibration therefore **fails the callback p95 ≤ 50 ms threshold**; the
+  threshold is unchanged. It has no pending-work next-key measurement.
+- It recorded **4 Space callbacks and 53 ownership queries**. The former sweep
+  took a topology snapshot per known alias, so this diagnostic exposed callback
+  amplification rather than a move result.
+- Before a manual regular-Space move, the POC-only harness was corrected and
+  pure-tested to take one topology snapshot and one active-Space read per
+  non-coalesced sweep, reuse that topology for every known-window reciprocal
+  probe, count unique known windows and exact sweep query attempts, and emit an
+  explicit coalesced duplicate outcome for the same active Space/generation.
+  It retains no timer.
+- A read-only target-bound action marker now queries focused window once,
+  resolves only its existing in-memory redacted identity, records its confirmed
+  or currently observed regular owner when available, and otherwise rejects the
+  binding. Focus does not admit. Destruction candidates during a bound action
+  are labelled target/non-target only; none is confirmation.
+
+The raw trace remains private and is not committed. This small fullscreen-only
+sample does not select an event source, destruction authority, move algorithm,
+or broad POC pass/fail result.
+
 ## Conclusion
 Pending. This protocol proves no macOS/Hammerspoon behavior yet.
 

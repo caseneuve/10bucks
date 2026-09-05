@@ -72,14 +72,16 @@ Do not continue if an assertion fails.
 ## Guided fullscreen calibration
 
 Use sample ID `terminal-fullscreen-003`. For each action, the orchestrator
-emits `action_begin`; the human performs exactly the announced action, waits
+uses the read-only target-bound `begin_target_action` marker: it reads focus
+once, resolves only a known in-memory redacted identity, and rejects uncertain
+ownership without admission or effects. The human performs exactly the announced action, waits
 for the stated visible state, then replies. Only after that reply does the
 orchestrator emit `manual_visual_complete`.
 
 1. The orchestrator announces `terminal_enter_native_fullscreen_A` and emits:
 
    ```lua
-   poc001:mark("terminal-fullscreen-003", "action_begin", "terminal_enter_native_fullscreen_A")
+   assert(poc001:begin_target_action("terminal-fullscreen-003", "terminal_enter_native_fullscreen_A"))
    ```
 
    The human presses **Control-Command-F** once on front blank Terminal window
@@ -93,7 +95,7 @@ orchestrator emit `manual_visual_complete`.
 2. The orchestrator announces `terminal_exit_native_fullscreen_A` and emits:
 
    ```lua
-   poc001:mark("terminal-fullscreen-003", "action_begin", "terminal_exit_native_fullscreen_A")
+   assert(poc001:begin_target_action("terminal-fullscreen-003", "terminal_exit_native_fullscreen_A"))
    ```
 
    The human presses **Control-Command-F** once to exit fullscreen on that same
@@ -161,4 +163,15 @@ luac -p pocs/001-window-events-liveness/lifecycle.lua
 luac -p pocs/001-window-events-liveness/ownership.lua
 luac -p pocs/001-window-events-liveness/private_export.lua
 luac -p pocs/001-window-events-liveness/observer.lua
+
+## Before a separately approved manual regular-Space move
+
+The fullscreen calibration is diagnostic-only. A guided regular-Space move
+remains blocked pending an explicit human handoff that fixes its target,
+regular source/destination, controlled completion (or explicitly unmeasurable
+manual timing), and pending-work hotkey procedure. That handoff must use
+`begin_target_action`, retain generic `mark` only for completion/abort, and
+review the redacted sweep/coalescing, reciprocal-ownership, `no_regular_move`,
+and target/non-target destruction-candidate records. Do not treat this README
+as authorization to perform that move.
 ```
