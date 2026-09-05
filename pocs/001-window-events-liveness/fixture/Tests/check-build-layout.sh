@@ -22,8 +22,12 @@ cmp "$fixture/Resources/Info.plist" "$app/Contents/Info.plist"
 file "$app/Contents/MacOS/POC001Fixture" | grep -F 'arm64' >/dev/null
 file "$app/Contents/MacOS/poc001-fixturectl" | grep -F 'arm64' >/dev/null
 
-# The unavailable visible hook is never disguised as completion evidence.
-grep -F 'fixture_key_became_candidate' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null
+# The public occlusion callback measures only AppKit-reported partial visibility.
+grep -F 'windowDidChangeOcclusionState' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null
+grep -F 'occlusionState.contains(.visible)' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null
+grep -F 'fixture_create_visible_completed' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null
+! grep -F 'windowDidBecomeKey' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null
+! grep -F 'makeKeyAndOrderFront' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null
 ! grep -F 'native_create_completed' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null
 # Coordinator cleanup makes state terminal before asking AppKit to close.
 grep -F 'guard let active = lifecycle.discardForShutdown()' "$fixture/Sources/FixtureCoordinator.swift" >/dev/null

@@ -11,10 +11,11 @@ only. POC-001 remains `hypothesis`: neither sample selects a source or
 destruction authority, establishes an action-to-detection latency result, or
 advances the remaining live matrix. The companion
 [`pocs/001-window-events-liveness/README.md`](../../pocs/001-window-events-liveness/README.md)
-now freezes the separately gated AppKit fixture **implementation handoff**. It
-authorizes only a future fixture source/test checkpoint; **POC-001 remains
-`hypothesis`, and neither a fixture build/launch nor a live action is
-authorized**.
+now freezes the separately gated AppKit fixture **implementation handoff**.
+Its approved narrow source/test revision measures
+`fixture_create_visible_completed` from `create_requested` using the public
+AppKit occlusion callback and visible bit. **POC-001 remains `hypothesis`, and
+neither a fixture build/launch nor a live action is authorized**.
 
 ## Decision enabled
 Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,
@@ -27,6 +28,18 @@ The decision must preserve LIFE-001/LIFE-002, FS-002, WIN-004 through WIN-006,
 STATE-004/STATE-005/STATE-008, DISC-001/DISC-002, and PERF-001/PERF-002. It
 must not authorize `_orderedwinids()`, visibility, z-order, or an eligible
 snapshot as liveness evidence.
+
+The fixture's `fixture_create_visible_completed` fact is narrower still:
+AppKit reported at least partial visibility for its exact fixture window. It
+MUST NOT imply liveness, unobscured pixels, AX readiness, Space ownership,
+admission, or Hammerspoon observation, and it MUST NOT be used for
+destruction. Therefore STATE-004 remains intact: neither this visibility fact
+nor its absence removes membership. STATE-005 remains intact: a missing,
+delayed, non-visible, wrong-object, or duplicate callback is uncertainty, not
+destructive evidence. The frozen fixture procedure and its 30-warm/5-cold
+`fixture_create_visible_completed - create_requested` thresholds live in the
+fixture handoff; they are fixture-local and do not satisfy this POC's readiness
+or destruction gates.
 
 ## Hypothesis
 A POC-only Hammerspoon observer can, without permanent polling or a global AX
@@ -179,9 +192,9 @@ sample 006 is the completed narrow create/focus/covered/two-temporary-close
 sample recorded in Results. Do not infer authorization for minimize/hide/
 restore, fullscreen, Space movement, cold bootstrap/reload, rapid repetitions,
 another app, true Chromium last-window behavior, or the representative-app
-matrix. The next possible fixture work is the source/test-only implementation checkpoint
-frozen in the POC README; it requires separate approval before any build,
-launch, observer integration, or live run.
+matrix. The fixture's source/test-only occlusion revision is frozen in the POC
+README; it requires separate approval before any build, launch, observer
+integration, or live run.
 For Terminal and the Chromium representative first, then each remaining
 representative app where its UI supports the action, run the following and
 retain every event order, including failures and late callbacks:
@@ -606,6 +619,7 @@ stop the observer, export locally, and restore legacy bindings before legacy
 starts. Its isolated traces and any temporary timers/watchers used by later
 runs are deleted before a production replacement unless a named reusable
 diagnostic has an ongoing owner, a documented use, and measured negligible idle
-cost. The standalone fixture implementation handoff in the POC README has no fixture
-source or build artifact in this checkpoint. Any later fixture and its POC-only
-artifacts must be removed unless separately retained under the same gate.
+cost. The standalone fixture implementation handoff in the POC README is POC-only;
+its source/test checkpoint and generated build artifact are not production
+runtime evidence. Any later fixture and its POC-only artifacts must be removed
+unless separately retained under the same gate.

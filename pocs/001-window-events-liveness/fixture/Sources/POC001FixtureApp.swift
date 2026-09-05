@@ -23,7 +23,7 @@ private final class AppKitWindowPort: NSObject, FixtureWindowPort, NSWindowDeleg
 
     func orderFront(objectID: String) {
         precondition(Thread.isMainThread)
-        windows[objectID]?.makeKeyAndOrderFront(nil)
+        windows[objectID]?.orderFrontRegardless()
     }
 
     func performClose(objectID: String) {
@@ -31,13 +31,16 @@ private final class AppKitWindowPort: NSObject, FixtureWindowPort, NSWindowDeleg
         windows[objectID]?.performClose(nil)
     }
 
-    // See the explicitly labelled handoff correction: the macOS 26 CLT SDK
-    // exposes no did-become-visible notification. This remains identity- and
-    // generation-guarded in the pure lifecycle coordinator.
-    func windowDidBecomeKey(_ notification: Notification) {
+    // Fixture-local visibility measurement only. The exact registered window
+    // must report at least partial visibility; focus/key status is irrelevant.
+    func windowDidChangeOcclusionState(_ notification: Notification) {
         precondition(Thread.isMainThread)
-        guard let window = notification.object as? NSWindow, let objectID = objectID(for: window) else { return }
-        _ = coordinator?.didBecomeKeyCandidate(objectID: objectID)
+        guard let window = notification.object as? NSWindow,
+              let objectID = objectID(for: window) else { return }
+        _ = coordinator?.didChangeOcclusionState(
+            objectID: objectID,
+            isVisible: window.occlusionState.contains(.visible)
+        )
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -71,8 +74,8 @@ private final class AppTraceSink: FixtureTraceSink {
             let clock = try Clock.nowTicks()
             let mapped: (String, String, [String: TraceScalar], String?, Bool)
             switch event {
-            case let .createRequested(token, generation, sample): mapped = ("create_requested", sample, ["fixture_token": .string(token)], key(token, generation, "create_candidate"), false)
-            case let .createKeyCandidate(token, generation, sample): mapped = ("fixture_key_became_candidate", sample, ["fixture_token": .string(token)], key(token, generation, "create_candidate"), true)
+            case let .createRequested(token, generation, sample): mapped = ("create_requested", sample, ["fixture_token": .string(token)], key(token, generation, "create_visible"), false)
+            case let .createVisibleCompleted(token, generation, sample): mapped = ("fixture_create_visible_completed", sample, ["fixture_token": .string(token)], key(token, generation, "create_visible"), true)
             case let .closeRequested(token, generation, sample): mapped = ("close_requested", sample, ["fixture_token": .string(token)], key(token, generation, "close"), false)
             case let .closeCompleted(token, generation, sample, origin): mapped = ("native_close_completed", sample, ["fixture_token": .string(token), "origin": .string(origin == .ipc ? "ipc" : "user")], key(token, generation, "close"), true)
             case let .pendingWorkRequested(token, generation, sample): mapped = ("pending_work_requested", sample, ["fixture_token": .string(token)], key(token, generation, "pending"), false)

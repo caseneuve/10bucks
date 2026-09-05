@@ -30,7 +30,7 @@ func testCoordinatorCloseTracesThenPerformsOnlyMatchingFixtureClose() throws {
     let control = FixtureControl(tokenGenerator: DeterministicTokenGenerator(values: ["AAAA", "BBBB"]))
     let coordinator = FixtureCoordinator(control: control, lifecycle: FixtureLifecycleHooks(trace: trace), windows: window, trace: trace, pending: PendingWorkModel(trace: trace, enqueue: { $0() }))
     let created = try coordinator.handle(FixtureRequest(command: "create", fields: ["request_id": "req-001", "sample_id": "create-001"]))
-    _ = coordinator.didBecomeKeyCandidate(objectID: "window-1")
+    _ = coordinator.didChangeOcclusionState(objectID: "window-1", isVisible: true)
     let beforeClose = coordinator.operations.count
 
     _ = try coordinator.handle(FixtureRequest(command: "close", fields: ["request_id": "req-002", "sample_id": "close-001", "fixture_token": created.fixtureToken!]))
@@ -47,7 +47,7 @@ func testCoordinatorRejectsCloseBeforeCompletionWithoutPoisoningGeneration() thr
     try expectThrows(FixtureControlError.commandRejected(.unknownFixtureToken)) {
         _ = try coordinator.handle(FixtureRequest(command: "close", fields: ["request_id": "req-002", "sample_id": "close-001", "fixture_token": created.fixtureToken!]))
     }
-    _ = coordinator.didBecomeKeyCandidate(objectID: "window-1")
+    _ = coordinator.didChangeOcclusionState(objectID: "window-1", isVisible: true)
     _ = try coordinator.handle(FixtureRequest(command: "close", fields: ["request_id": "req-003", "sample_id": "close-002", "fixture_token": created.fixtureToken!]))
     try expect(window.operations.last == "performClose:window-1", "rejected premature close leaves the completed generation closable")
 }
@@ -73,7 +73,7 @@ func testCoordinatorShutdownClearsActiveGenerationAndPendingWorkBeforeClosingFix
     let control = FixtureControl(tokenGenerator: DeterministicTokenGenerator(values: ["AAAA", "BBBB"]))
     let coordinator = FixtureCoordinator(control: control, lifecycle: FixtureLifecycleHooks(trace: trace), windows: window, trace: trace, pending: pending)
     _ = try coordinator.handle(FixtureRequest(command: "create", fields: ["request_id": "req-001", "sample_id": "create-001"]))
-    _ = coordinator.didBecomeKeyCandidate(objectID: "window-1")
+    _ = coordinator.didChangeOcclusionState(objectID: "window-1", isVisible: true)
     _ = try coordinator.handle(FixtureRequest(command: "probe_pending_work", fields: ["request_id": "req-002", "sample_id": "probe-001"]))
     coordinator.shutdown()
     try expect(!coordinator.hasActiveGeneration && pending.state == .shutDown, "shutdown leaves no active generation or pending work")
@@ -91,7 +91,7 @@ func testCoordinatorRejectsPendingProbeWithoutCompletedMatchingGeneration() thro
     try expectThrows(FixtureControlError.commandRejected(.unknownFixtureToken)) {
         _ = try coordinator.handle(FixtureRequest(command: "probe_pending_work", fields: ["request_id": "req-002", "sample_id": "probe-001"]))
     }
-    _ = coordinator.didBecomeKeyCandidate(objectID: "window-1")
+    _ = coordinator.didChangeOcclusionState(objectID: "window-1", isVisible: true)
     _ = try coordinator.handle(FixtureRequest(command: "probe_pending_work", fields: ["request_id": "req-003", "sample_id": "probe-002"]))
     try expect(queued.count == 1, "probe queues exactly one pending main-work closure")
 }
@@ -102,5 +102,5 @@ let fixtureCoordinatorTests: [(String, () throws -> Void)] = [
     ("coordinator rejects premature close without poisoning its generation", testCoordinatorRejectsCloseBeforeCompletionWithoutPoisoningGeneration),
     ("coordinator clears control for reordered will-close without a false completion", testCoordinatorClearsControlForReorderedWillCloseWithoutFalseCloseRecord),
     ("coordinator shutdown clears state before closing the fixture", testCoordinatorShutdownClearsActiveGenerationAndPendingWorkBeforeClosingFixture),
-    ("coordinator queues pending work only for a recorded key candidate", testCoordinatorRejectsPendingProbeWithoutCompletedMatchingGeneration),
+    ("coordinator queues pending work only for a recorded visible completion", testCoordinatorRejectsPendingProbeWithoutCompletedMatchingGeneration),
 ]

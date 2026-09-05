@@ -41,9 +41,9 @@ public final class FixtureCoordinator {
 
     public var hasActiveGeneration: Bool { control.activeGeneration != nil || lifecycle.active != nil }
 
-    public func didBecomeKeyCandidate(objectID: String) -> LifecycleHookResult {
+    public func didChangeOcclusionState(objectID: String, isVisible: Bool) -> LifecycleHookResult {
         precondition(Thread.isMainThread, "FixtureCoordinator must run on the main thread")
-        return lifecycle.didBecomeKeyCandidate(objectID: objectID)
+        return lifecycle.didChangeOcclusionState(objectID: objectID, isVisible: isVisible)
     }
 
     public func windowWillClose(objectID: String) -> LifecycleHookResult {
@@ -54,7 +54,7 @@ public final class FixtureCoordinator {
             switch result {
             case .completedClose, .discardedReordered:
                 _ = control.completeClose(token: expected.token, generation: expected.generation)
-            case .rejectedWrongObject, .rejectedDuplicate, .recordedCreateCandidate:
+            case .rejectedWrongObject, .rejectedDuplicate, .ignoredNotVisible, .recordedCreateVisibleCompletion:
                 break
             }
         }
@@ -86,7 +86,7 @@ public final class FixtureCoordinator {
     }
 
     private func probe(_ request: FixtureRequest) throws -> FixtureResponse {
-        guard let active = lifecycle.active, active.isKeyCandidateRecorded else {
+        guard let active = lifecycle.active, active.isCreateVisibleCompleted else {
             throw FixtureControlError.commandRejected(.unknownFixtureToken)
         }
         let response = try control.handle(request)
@@ -97,7 +97,7 @@ public final class FixtureCoordinator {
     }
 
     private func close(_ request: FixtureRequest) throws -> FixtureResponse {
-        guard let active = lifecycle.active, active.isKeyCandidateRecorded,
+        guard let active = lifecycle.active, active.isCreateVisibleCompleted,
               request.fields["fixture_token"] == active.token else {
             throw FixtureControlError.commandRejected(.unknownFixtureToken)
         }

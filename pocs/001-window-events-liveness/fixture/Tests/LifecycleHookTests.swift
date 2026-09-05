@@ -1,14 +1,15 @@
 import Foundation
 
-func testLifecycleHooksRecordOneExplicitKeyCandidateForTheRegisteredObjectAndGeneration() throws {
+func testLifecycleHooksRecordOneVisibleCompletionForTheExactRegisteredObjectAndGeneration() throws {
     let trace = RecordingTraceSink()
     var model = FixtureLifecycleHooks(trace: trace)
     try model.register(token: "fixture-win-AAAA", generation: 1, objectID: "object-1", createSampleID: "fixture-create-warm-001")
 
-    try expect(model.didBecomeKeyCandidate(objectID: "other") == .rejectedWrongObject, "wrong key candidate is rejected")
-    try expect(model.didBecomeKeyCandidate(objectID: "object-1") == .recordedCreateCandidate, "registered key hook records a candidate, not completion")
-    try expect(model.didBecomeKeyCandidate(objectID: "object-1") == .rejectedDuplicate, "duplicate key candidate is rejected")
-    try expect(trace.events == [.createKeyCandidate(token: "fixture-win-AAAA", generation: 1, sampleID: "fixture-create-warm-001")], "only one explicit candidate carries its create sample")
+    try expect(model.didChangeOcclusionState(objectID: "other", isVisible: true) == .rejectedWrongObject, "visible callback for another window is rejected")
+    try expect(model.didChangeOcclusionState(objectID: "object-1", isVisible: false) == .ignoredNotVisible, "non-visible occlusion callback cannot complete creation")
+    try expect(model.didChangeOcclusionState(objectID: "object-1", isVisible: true) == .recordedCreateVisibleCompletion, "first visible callback for the registered fixture completes the fixture-local visibility measurement")
+    try expect(model.didChangeOcclusionState(objectID: "object-1", isVisible: true) == .rejectedDuplicate, "duplicate visible callback is rejected")
+    try expect(trace.events == [.createVisibleCompleted(token: "fixture-win-AAAA", generation: 1, sampleID: "fixture-create-warm-001")], "only the first exact visible callback carries the create sample")
 }
 
 func testLifecycleHooksDiscardReorderedCloseAtItsRemovalBoundary() throws {
@@ -17,7 +18,7 @@ func testLifecycleHooksDiscardReorderedCloseAtItsRemovalBoundary() throws {
     var model = FixtureLifecycleHooks(trace: trace, cancelGeneration: { token, generation in cancelled.append((token, generation)) })
     try model.register(token: "fixture-win-AAAA", generation: 7, objectID: "object-1", createSampleID: "fixture-create-warm-007")
 
-    try expect(model.windowWillClose(objectID: "object-1") == .discardedReordered, "close before create completion is discarded")
+    try expect(model.windowWillClose(objectID: "object-1") == .discardedReordered, "close before fixture visibility completion is discarded")
     try expect(model.active == nil, "the actual will-close hook removes an anomalous generation for cleanup")
     try expect(cancelled.count == 1 && cancelled[0].0 == "fixture-win-AAAA" && cancelled[0].1 == 7, "will-close cancels the anomalous generation's pending work")
     try expect(trace.events.isEmpty, "reordered close emits no false native close completion")
@@ -27,7 +28,7 @@ func testLifecycleHooksAttributeCloseSamplesAndRetainRegistryUntilWillClose() th
     let trace = RecordingTraceSink()
     var model = FixtureLifecycleHooks(trace: trace)
     try model.register(token: "fixture-win-AAAA", generation: 7, objectID: "object-1", createSampleID: "fixture-create-warm-007")
-    _ = model.didBecomeKeyCandidate(objectID: "object-1")
+    _ = model.didChangeOcclusionState(objectID: "object-1", isVisible: true)
     try expect(model.requestClose(token: "fixture-win-AAAA", generation: 7, closeSampleID: "fixture-close-warm-007"), "IPC close records expected attribution and sample")
     try expect(model.active != nil, "requesting close does not remove registry")
     try expect(model.windowWillClose(objectID: "wrong") == .rejectedWrongObject, "wrong close object is rejected")
@@ -41,7 +42,7 @@ func testLifecycleHooksAttributeUnrequestedUserCloseAndRejectDuplicateGeneration
     let trace = RecordingTraceSink()
     var model = FixtureLifecycleHooks(trace: trace)
     try model.register(token: "fixture-win-AAAA", generation: 2, objectID: "object-1", createSampleID: "fixture-create-warm-002")
-    _ = model.didBecomeKeyCandidate(objectID: "object-1")
+    _ = model.didChangeOcclusionState(objectID: "object-1", isVisible: true)
     try expect(model.windowWillClose(objectID: "object-1") == .completedClose(.user), "unrequested close is attributed to user")
     try expect(trace.events.last == .closeCompleted(token: "fixture-win-AAAA", generation: 2, sampleID: "fixture-create-warm-002", origin: .user), "user close retains the create sample when no close request exists")
     try expectThrows(FixtureLifecycleError.duplicateGeneration) {
@@ -50,7 +51,7 @@ func testLifecycleHooksAttributeUnrequestedUserCloseAndRejectDuplicateGeneration
 }
 
 let lifecycleHookTests: [(String, () throws -> Void)] = [
-    ("lifecycle hooks record one explicit key candidate with its sample", testLifecycleHooksRecordOneExplicitKeyCandidateForTheRegisteredObjectAndGeneration),
+    ("lifecycle hooks complete fixture-local visibility once for the exact object", testLifecycleHooksRecordOneVisibleCompletionForTheExactRegisteredObjectAndGeneration),
     ("lifecycle hooks discard reordered close at will-close removal boundary", testLifecycleHooksDiscardReorderedCloseAtItsRemovalBoundary),
     ("lifecycle hooks attribute close samples and remove only at will-close", testLifecycleHooksAttributeCloseSamplesAndRetainRegistryUntilWillClose),
     ("lifecycle hooks attribute user close and reject duplicate generation", testLifecycleHooksAttributeUnrequestedUserCloseAndRejectDuplicateGeneration),

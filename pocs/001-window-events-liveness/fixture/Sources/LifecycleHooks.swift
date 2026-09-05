@@ -4,7 +4,9 @@ public enum CloseOrigin: Equatable { case ipc, user }
 
 public enum FixtureTraceEvent: Equatable {
     case createRequested(token: String, generation: UInt64, sampleID: String)
-    case createKeyCandidate(token: String, generation: UInt64, sampleID: String)
+    // Fixture-local AppKit observation only: this reports the first callback
+    // for the exact registered NSWindow whose occlusion state contains .visible.
+    case createVisibleCompleted(token: String, generation: UInt64, sampleID: String)
     case closeRequested(token: String, generation: UInt64, sampleID: String)
     case closeCompleted(token: String, generation: UInt64, sampleID: String, origin: CloseOrigin)
     case pendingWorkRequested(token: String, generation: UInt64, sampleID: String)
@@ -27,7 +29,8 @@ public enum FixtureLifecycleError: Error, Equatable {
 }
 
 public enum LifecycleHookResult: Equatable {
-    case recordedCreateCandidate
+    case recordedCreateVisibleCompletion
+    case ignoredNotVisible
     case completedClose(CloseOrigin)
     case rejectedWrongObject
     case rejectedDuplicate
@@ -39,11 +42,11 @@ public struct LifecycleActiveGeneration: Equatable {
     public let generation: UInt64
     public let objectID: String
     public let createSampleID: String
-    fileprivate var keyCandidateRecorded: Bool
+    fileprivate var createVisibleCompleted: Bool
     fileprivate var closeRequested: Bool
     fileprivate var closeSampleID: String?
 
-    public var isKeyCandidateRecorded: Bool { keyCandidateRecorded }
+    public var isCreateVisibleCompleted: Bool { createVisibleCompleted }
 }
 
 public struct FixtureLifecycleHooks {
@@ -60,22 +63,25 @@ public struct FixtureLifecycleHooks {
     public mutating func register(token: String, generation: UInt64, objectID: String, createSampleID: String) throws {
         guard active == nil else { throw FixtureLifecycleError.activeGenerationExists }
         guard usedGenerations.insert(generation).inserted else { throw FixtureLifecycleError.duplicateGeneration }
-        active = LifecycleActiveGeneration(token: token, generation: generation, objectID: objectID, createSampleID: createSampleID, keyCandidateRecorded: false, closeRequested: false, closeSampleID: nil)
+        active = LifecycleActiveGeneration(token: token, generation: generation, objectID: objectID, createSampleID: createSampleID, createVisibleCompleted: false, closeRequested: false, closeSampleID: nil)
     }
 
-    public mutating func didBecomeKeyCandidate(objectID: String) -> LifecycleHookResult {
+    // This completion is deliberately narrower than liveness: AppKit has
+    // reported that this fixture window is at least partially visible.
+    public mutating func didChangeOcclusionState(objectID: String, isVisible: Bool) -> LifecycleHookResult {
         guard var active else { return .rejectedDuplicate }
         guard active.objectID == objectID else { return .rejectedWrongObject }
-        guard !active.keyCandidateRecorded else { return .rejectedDuplicate }
-        active.keyCandidateRecorded = true
+        guard isVisible else { return .ignoredNotVisible }
+        guard !active.createVisibleCompleted else { return .rejectedDuplicate }
+        active.createVisibleCompleted = true
         self.active = active
-        trace.record(.createKeyCandidate(token: active.token, generation: active.generation, sampleID: active.createSampleID))
-        return .recordedCreateCandidate
+        trace.record(.createVisibleCompleted(token: active.token, generation: active.generation, sampleID: active.createSampleID))
+        return .recordedCreateVisibleCompletion
     }
 
     @discardableResult
     public mutating func requestClose(token: String, generation: UInt64, closeSampleID: String) -> Bool {
-        guard var active, active.token == token, active.generation == generation, active.keyCandidateRecorded, !active.closeRequested else { return false }
+        guard var active, active.token == token, active.generation == generation, active.createVisibleCompleted, !active.closeRequested else { return false }
         active.closeRequested = true
         active.closeSampleID = closeSampleID
         self.active = active
@@ -87,7 +93,7 @@ public struct FixtureLifecycleHooks {
         guard active.objectID == objectID else { return .rejectedWrongObject }
         self.active = nil
         cancelGeneration(active.token, active.generation)
-        guard active.keyCandidateRecorded else { return .discardedReordered }
+        guard active.createVisibleCompleted else { return .discardedReordered }
         let origin: CloseOrigin = active.closeRequested ? .ipc : .user
         let sampleID = active.closeSampleID ?? active.createSampleID
         trace.record(.closeCompleted(token: active.token, generation: active.generation, sampleID: sampleID, origin: origin))

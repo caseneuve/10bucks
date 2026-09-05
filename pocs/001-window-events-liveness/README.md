@@ -31,13 +31,11 @@ The existing Chromium result remains candidate-only evidence.
   during sleep. [Apple's `mach_continuous_time` documentation](https://developer.apple.com/documentation/kernel/1646199-mach_continuous_time)
   describes a monotonic, arbitrary-origin tick clock.
 - **Verified (installed SDK `AppKit/NSWindow.h` and Apple AppKit
-  documentation):** [`NSWindowDelegate.windowWillClose(_:)`](https://developer.apple.com/documentation/appkit/nswindowdelegate/windowwillclose(_:))
-  and [`NSWindow.willCloseNotification`](https://developer.apple.com/documentation/appkit/nswindow/willclosenotification)
-  are public AppKit lifecycle hooks.
-  [`NSWindow.didBecomeVisibleNotification`](https://developer.apple.com/documentation/appkit/nswindow/didbecomevisiblenotification)
-  is public; [AppKit's `isVisible` documentation](https://developer.apple.com/documentation/appkit/nswindow/isvisible)
-  says visible onscreen even when obscured. These are fixture-local observation
-  hooks, not Accessibility or liveness authorities.
+  documentation):** [`NSWindowDelegate.windowWillClose(_:)`](https://developer.apple.com/documentation/appkit/nswindowdelegate/windowwillclose(_:)),
+  [`NSWindowDelegate.windowDidChangeOcclusionState(_:)`](https://developer.apple.com/documentation/appkit/nswindowdelegate/windowdidchangeocclusionstate(_:)),
+  and `NSWindow.occlusionState` with its public `.visible` bit are public
+  AppKit APIs. They are fixture-local observation hooks, not Accessibility or
+  liveness authorities.
 - **Hypothesis:** the specified hooks will arrive consistently enough on this
   host to meet the thresholds below. That requires the later live gate; source
   declarations and documentation do not establish delivery, ordering, or
@@ -96,17 +94,16 @@ non-fixture window operation is permitted.
 
 ### Build-only integration corrections (2026-09-05)
 
-- **Verified integration mismatch:** the macOS 26 Command Line Tools SDK used by
-  the frozen `swiftc` command has no `NSWindow.didBecomeVisibleNotification`
-  declaration (and the frozen spelling does not compile). The build-only
-  adapter therefore uses the public `NSWindowDelegate.windowDidBecomeKey(_:)`
-  callback while retaining the pure identity/generation duplicate guards. Its
-  `fixture_key_became_candidate` marker is explicitly a candidate, not a
-  completion-looking event or a claim that the window became visible,
-  unobscured, painted, or observable by another process. A later live gate
-  must either prove an equivalent public visible hook or deliberately revise
-  the measurement contract; the original did-become-visible threshold remains
-  unresolved.
+- **Verified narrow revision:** the public macOS SDK exposes
+  `NSWindowDelegate.windowDidChangeOcclusionState(_:)` and
+  `NSWindow.occlusionState`, including its `.visible` bit. The fixture uses
+  that delegate callback—not focus/key state—to emit
+  `fixture_create_visible_completed` only for the first callback whose exact
+  registered fixture window has `occlusionState.contains(.visible)`. This
+  fact means only that AppKit reports at least partial visibility. It does
+  **not** mean liveness, unobscured pixels, AX readiness, regular-Space
+  ownership, admission, or Hammerspoon observation, and it is never used for
+  destruction.
 - **Verified integration mismatch:** the frozen build command named only five
   sources, but the checked-in pure implementation intentionally factors the
   lifecycle, pending-work, token, and coordinator seams into additional source
@@ -121,19 +118,20 @@ non-fixture window operation is permitted.
 All AppKit object creation, window mutation, delegate calls, and notification
 handling run on the main thread.
 
-1. **Superseded by the labelled build-only integration correction above.** On
-   `create`, the fixture allocates one `NSWindow`, assigns itself as that
+1. On `create`, the fixture allocates one `NSWindow`, assigns itself as that
    window's delegate, emits `create_requested`, and calls
-   `makeKeyAndOrderFront(nil)`. The original requested
-   `NSWindow.didBecomeVisibleNotification` is unavailable in the verified CLT
-   SDK; the build-only adapter currently uses `windowDidBecomeKey(_:)` for the
-   guarded completion candidate.
-2. That callback emits at most one explicitly named
-   `fixture_key_became_candidate` record for that generation. It does **not**
-   establish the original did-become-visible measurement, whose completion
-   threshold remains unresolved, nor that the window is unobscured, AX-visible,
-   painted in a captured frame, owned by a regular Space, observed by
-   Hammerspoon, or live by a production definition.
+   `orderFrontRegardless()`, which does not make key/focus status part of the
+   measurement.
+2. `windowDidChangeOcclusionState(_:)` checks the callback object's identity
+   against the exact registered fixture window and checks
+   `occlusionState.contains(.visible)`. Only the first matching visible
+   callback for that active generation emits
+   `fixture_create_visible_completed`. A non-visible callback, another window,
+   or a duplicate callback is ignored/rejected by the identity/generation
+   guards. The trace fact is narrowly **AppKit reporting at least partial
+   visibility**. It MUST NOT imply liveness, unobscured pixels, AX readiness,
+   Space ownership, admission, or Hammerspoon observation; it MUST NOT be used
+   for destruction.
 3. On `close`, it emits `close_requested` and invokes only that fixture
    window's `performClose(nil)`. It does not close a window if the registry has
    no matching fixture token.
@@ -151,8 +149,8 @@ handling run on the main thread.
 
 No lifecycle hook is used as a production authority. Duplicate notifications,
 wrong object, and duplicate generation are safe rejected/duplicate outcomes.
-If the registered window's `windowWillClose(_:)` arrives before its key
-candidate, that hook clears both lifecycle/control generation state and cancels
+If the registered window's `windowWillClose(_:)` arrives before its visible
+completion, that hook clears both lifecycle/control generation state and cancels
 work for cleanup but emits no `native_close_completed`; it is an anomalous
  discarded ordering, never a completion.
 
@@ -211,8 +209,8 @@ fixture token prefix above. The response repeats only request/sample IDs,
 accepted/rejected status, and the generated fixture/correlation tokens. The
 operator sequence for the later run is fixed: validate private output
 location → launch one fixture instance → wait for `run_started`/socket-ready →
-`create` → await its response and the diagnostic `fixture_key_became_candidate`
-(or timeout; this is not create completion) → `probe_pending_work` → await `pending_work_serviced` or timeout → `close` using
+`create` → await its response and `fixture_create_visible_completed` (or the
+fixed create timeout) → `probe_pending_work` → await `pending_work_serviced` or timeout → `close` using
 that response token → await `native_close_completed` or timeout → repeat only
 the declared class → `shutdown` → verify cleanup. No command is automatic, and
 no command in this handoff is authorized now.
@@ -241,13 +239,16 @@ destruction, and next-key service gates:
 
 | Class | Samples | Fixed measure and threshold |
 | --- | ---: | --- |
-| Warm create | 30 | **Unresolved:** original `native_create_completed - create_requested` cannot be measured by this build-only candidate hook |
-| Cold create (first create after fresh fixture launch) | 5 | **Unresolved:** original completion or explicit timeout remains a later live-gate measure |
+| Warm create | 30 | `fixture_create_visible_completed - create_requested`: p95 <= 100 ms |
+| Cold create (first create after fresh fixture launch) | 5 | `fixture_create_visible_completed - create_requested`: every successful sample <= 3,000 ms; timeout is recorded, not inferred complete |
 | Warm close | 10 | `native_close_completed - close_requested`: every successful sample <= 1,000 ms |
 | Pending-work (first after create, no other fixture work pending) | 30 warm + 5 cold | `pending_work_serviced - pending_work_requested`: p95 <= 50 ms and max <= 100 ms |
 
-A close is counted as the inherited reduced destructive class even though it
-only destroys a disposable fixture window. Cold close is not a separate class:
+The create measure is only the fixture-local time until AppKit reports at
+least partial visibility for its exact window. It does not satisfy POC-001
+readiness, liveness, ownership, admission, Hammerspoon-observation, or
+destruction gates. A close is counted as the inherited reduced destructive
+class even though it only destroys a disposable fixture window. Cold close is not a separate class:
 the cold creation sample's resulting window is closed under the warm-close
 class. Report every raw sample, count, median, nearest-rank p95, maximum,
 timeouts, duplicates, late completions, clock kind/timebase, and zero active
