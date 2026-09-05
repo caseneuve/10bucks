@@ -11,8 +11,10 @@ only. POC-001 remains `hypothesis`: neither sample selects a source or
 destruction authority, establishes an action-to-detection latency result, or
 advances the remaining live matrix. The companion
 [`pocs/001-window-events-liveness/README.md`](../../pocs/001-window-events-liveness/README.md)
-now records a separately gated fixture proposal; **this documentation checkpoint
-authorizes no fixture implementation or live action**.
+now freezes the separately gated AppKit fixture **implementation handoff**. It
+authorizes only a future fixture source/test checkpoint; **POC-001 remains
+`hypothesis`, and neither a fixture build/launch nor a live action is
+authorized**.
 
 ## Decision enabled
 Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,
@@ -177,8 +179,9 @@ sample 006 is the completed narrow create/focus/covered/two-temporary-close
 sample recorded in Results. Do not infer authorization for minimize/hide/
 restore, fullscreen, Space movement, cold bootstrap/reload, rapid repetitions,
 another app, true Chromium last-window behavior, or the representative-app
-matrix. The next possible fixture experiment is only a proposal in the POC
-README and requires a separate approval before implementation or any live run.
+matrix. The next possible fixture work is the source/test-only implementation checkpoint
+frozen in the POC README; it requires separate approval before any build,
+launch, observer integration, or live run.
 For Terminal and the Chromium representative first, then each remaining
 representative app where its UI supports the action, run the following and
 retain every event order, including failures and late callbacks:
@@ -603,6 +606,6 @@ stop the observer, export locally, and restore legacy bindings before legacy
 starts. Its isolated traces and any temporary timers/watchers used by later
 runs are deleted before a production replacement unless a named reusable
 diagnostic has an ongoing owner, a documented use, and measured negligible idle
-cost. The proposed standalone fixture in the POC README has no implementation
-in this checkpoint and, if later approved, must be removed with its POC-only
-artifacts unless separately retained under the same gate.
+cost. The standalone fixture implementation handoff in the POC README has no fixture
+source or build artifact in this checkpoint. Any later fixture and its POC-only
+artifacts must be removed unless separately retained under the same gate.
