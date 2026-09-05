@@ -65,6 +65,7 @@ FIXTURE="$ROOT/pocs/001-window-events-liveness/fixture/build/POC001Fixture.app/C
 FIXTURECTL="$ROOT/pocs/001-window-events-liveness/fixture/build/POC001Fixture.app/Contents/MacOS/poc001-fixturectl"
 
 test "$(git rev-parse --is-inside-work-tree)" = true
+test -z "$(git status --porcelain)"
 git diff --quiet "$FIXTURE_COMMIT" -- pocs/001-window-events-liveness/fixture/{Sources,Resources,scripts,Tests}
 test -x "$FIXTURE" && test -x "$FIXTURECTL"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/poc001-fixture.XXXXXX")"
@@ -76,6 +77,29 @@ chmod 600 "$RUN_DIR/environment.txt"
 
 POC001_FIXTURE_RUN_DIR="$RUN_DIR" "$FIXTURE" &
 FIXTURE_PID=$!
+RUN_COMPLETED=0
+SHUTDOWN_SENT=0
+cleanup_fixture() {
+  exit_status=$?
+  trap - EXIT INT TERM
+  set +e
+  if [ "$RUN_COMPLETED" -ne 1 ] && kill -0 "$FIXTURE_PID" 2>/dev/null; then
+    if [ "$SHUTDOWN_SENT" -ne 1 ]; then
+      if [ -S "$RUN_DIR/poc001-fixture.sock" ]; then
+        "$FIXTURECTL" "$RUN_DIR" shutdown req-abort fixture-abort-001 >/dev/null 2>&1 || kill "$FIXTURE_PID" 2>/dev/null || true
+      else
+        kill "$FIXTURE_PID" 2>/dev/null || true
+      fi
+    fi
+    wait "$FIXTURE_PID" 2>/dev/null || true
+  fi
+  if [ "$RUN_COMPLETED" -ne 1 ]; then
+    printf '%s\n' 'fixture cleanup attempted; private run directory retained for review' >&2
+  fi
+  exit "$exit_status"
+}
+trap 'exit 130' INT TERM
+trap cleanup_fixture EXIT
 ```
 
 The operator now waits for `run_started` and `socket_ready` without displaying
@@ -91,11 +115,22 @@ deadline = time.monotonic() + 10
 while time.monotonic() < deadline:
     try:
         with open(path, encoding="utf-8") as trace:
-            for line in trace:
+            lines = list(trace)
+        for index, line in enumerate(lines):
+            final_incomplete = index == len(lines) - 1 and not line.endswith("\n")
+            if final_incomplete:
+                break
+            try:
                 row = json.loads(line)
-                if row.get("event") == wanted and row.get("sample_id") == sample:
-                    print("marker observed: " + wanted)
-                    raise SystemExit(0)
+            except json.JSONDecodeError:
+                print("malformed complete trace line", file=sys.stderr)
+                raise SystemExit(1)
+            if not isinstance(row, dict):
+                print("malformed complete trace line", file=sys.stderr)
+                raise SystemExit(1)
+            if row.get("event") == wanted and row.get("sample_id") == sample:
+                print("marker observed: " + wanted)
+                raise SystemExit(0)
     except FileNotFoundError:
         pass
     time.sleep(0.05)
@@ -126,7 +161,8 @@ await_marker pending_work_serviced fixture-probe-warm-001
 
 FIXTURE_TOKEN="$(python3 - "$RUN_DIR/create-response.json" <<'PY'
 import json, sys
-row = json.load(open(sys.argv[1], encoding="utf-8"))
+with open(sys.argv[1], encoding="utf-8") as response:
+    row = json.load(response)
 token = row.get("fixture_token", "")
 if row.get("status") != "accepted" or not token.startswith("fixture-win-"):
     raise SystemExit(1)
@@ -139,8 +175,13 @@ unset FIXTURE_TOKEN
 await_marker native_close_completed fixture-close-warm-001
 
 "$FIXTURECTL" "$RUN_DIR" shutdown req-004 fixture-cleanup-001 > "$RUN_DIR/shutdown-response.json"
+SHUTDOWN_SENT=1
 chmod 600 "$RUN_DIR/shutdown-response.json"
 wait "$FIXTURE_PID"
+! kill -0 "$FIXTURE_PID" 2>/dev/null
+! test -e "$RUN_DIR/poc001-fixture.sock"
+RUN_COMPLETED=1
+trap - EXIT INT TERM
 ```
 
 The human action expected is ideally **none** beyond observing that one
@@ -172,22 +213,19 @@ threshold.
 Abort immediately on a timeout, rejected command, unsafe owner/mode check,
 trace/JSON failure, unexpected window interaction, privacy concern, more than
 one fixture window, or any Hammerspoon/observer activity. Do not inspect or
-print raw trace/response data to diagnose it. If the socket still exists, send
-only the normal shutdown request (discarding its response); otherwise terminate
-only the recorded fixture PID. Then wait for it:
+print raw trace/response data to diagnose it. The EXIT/INT/TERM trap installed
+immediately after launch acts only on the recorded fixture PID, its recorded
+socket, and `fixturectl`: it sends at most one abort shutdown if normal shutdown
+was not already accepted, waits for that PID, and retains the `0700` directory
+for private review. Do not send a second shutdown manually. If the trap cannot
+complete cleanup, retain the directory and report the cleanup failure; never
+remove evidence during an abort.
 
-```sh
-if kill -0 "$FIXTURE_PID" 2>/dev/null; then
-  "$FIXTURECTL" "$RUN_DIR" shutdown req-abort fixture-abort-001 >/dev/null 2>&1 || kill "$FIXTURE_PID"
-fi
-wait "$FIXTURE_PID" 2>/dev/null || true
-```
-
-After either normal completion or abort, verify all of the following without
-querying any unrelated window: the fixture PID is gone (`! kill -0
+After **normal completion only**, verify the fixture PID is gone (`! kill -0
 "$FIXTURE_PID" 2>/dev/null`), `poc001-fixture.sock` is absent, the private
 trace remains owner `0600`, and the operator saw the sole disposable fixture
-window disappear. Delete private response files (which can contain tokens) and
+window disappear. The normal sequence disables the trap only after the PID and
+socket checks pass. Then delete response files (which can contain tokens) and
 the private run directory after the human has recorded a redacted result:
 
 ```sh
