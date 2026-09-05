@@ -1,70 +1,47 @@
-# POC-001 observer — manual regular-Space move operator handoff
+# POC-001 observer — Chromium create/focus/destruction handoff
 
 This is a **human-gated, disposable, read-only comparison harness**, not
-10bucks runtime code. It authorizes one Terminal-only manual regular-Space move
-sample. It does not authorize the remaining POC matrix, a production change, or
-a timing claim. Prior calibration history remains in
-[`docs/pocs/001-window-events-liveness.md`](../../docs/pocs/001-window-events-liveness.md).
+10bucks runtime code. It authorizes only sample
+`chromium-create-focus-destroy-006`; it does not authorize the remaining
+POC-001 matrix, source selection, true last-window testing, or a latency claim.
 
-## Scope and fixed run setup
+## Safety and setup — unmeasured
 
-**Observed run setup, not a portable fact:** the read-only topology observation
-on this machine found one display, three regular Spaces with the first active,
-and three fullscreen Spaces. This handoff relies only on the human-visible
-preconditions below; it does not infer future topology from that observation.
+**Do not touch existing Chrome windows or tabs.** Before the observer starts,
+the human—not the harness—must create two new, visibly distinguishable blank
+Incognito windows. If Incognito is unavailable, create two new, visibly
+distinguishable blank temporary Chrome windows instead. Keep at least one
+pre-existing Chrome window open and untouched, so neither temporary close is a
+true Chromium last-window case. Abort if existing Chrome state cannot remain
+untouched or the two temporary windows cannot be distinguished.
 
-Before the orchestrator starts:
+No setup action is measured. Do not quit Chrome; close an existing Chrome
+window; test a true last-app-window; minimize, hide, fullscreen, or move a
+window between Spaces; or use app hide. The observer issues no window effects.
 
-- Desktop 1/current regular Space has **two visible, blank Terminal windows**:
-  the session window and a separate blank target window.
-- Desktop 2 exists.
-- Terminal is the only application involved.
-
-The observer performs no frame, focus, fullscreen, Space, minimize, hide,
-close, admission, or other window effect. It has no timer or controlled action
-driver. The human alone uses Mission Control to move the target. Manual-action
-timing is explicitly **unmeasurable**: do not state or imply a two-second (or
-any other) action-to-detection result.
-
-If the UI differs, the blank target cannot be identified, or Desktop 2 cannot
-be identified, abort without improvising. Do not use fullscreen, hide,
-minimize, another app, another Space action, or a replacement gesture. In
-particular, do not use an operator `hs -c` or Hammerspoon Console command that
-reads/changes focus to bind the target; the one-shot chord is the binding
-boundary.
-
-## Private export destination
-
-Before loading the observer, the orchestrator creates this owner-private
-directory:
+Create the private destination before loading the observer:
 
 ```sh
 umask 077
-mkdir -p /tmp/poc-001-regular-space-move-005
-chmod 700 /tmp/poc-001-regular-space-move-005
-test "$(stat -f '%Sp' /tmp/poc-001-regular-space-move-005)" = "drwx------"
+mkdir -p /tmp/poc-001-chromium-create-focus-destroy-006
+chmod 700 /tmp/poc-001-chromium-create-focus-destroy-006
+test "$(stat -f '%Sp' /tmp/poc-001-chromium-create-focus-destroy-006)" = "drwx------"
 ```
 
-The private export path is:
+Export path:
 
 ```text
-/tmp/poc-001-regular-space-move-005/terminal-regular-space-move-005.json
+/tmp/poc-001-chromium-create-focus-destroy-006/chromium-create-focus-destroy-006.json
 ```
 
-The exporter writes only to an explicitly selected owner-private directory,
-enforces and verifies mode `0600` on a temporary file, atomically renames it,
-and fails closed. Review locally and redact before sharing.
+## Orchestrator start
 
-## Orchestrator: stop legacy and load the observer
-
-Use the Hammerspoon Console Lua forms below (or safely single-quoted `hs -c`
-equivalents), not both. Do not edit `~/.hammerspoon/init.lua` or call
+Use Hammerspoon Console Lua. Do not edit `~/.hammerspoon/init.lua` or call
 `hs.reload`.
 
 ```lua
 spoon["10bucks"]:stop()
 assert(spoon["10bucks"].started == false, "legacy 10bucks is still started; abort")
-
 if poc001 ~= nil then pcall(function() poc001:stop() end) end
 poc001 = nil
 package.loaded["observer"] = nil
@@ -72,122 +49,122 @@ poc001_root = "/Users/piotr/Git/10bucks/pocs/001-window-events-liveness"
 package.path = poc001_root .. "/?.lua;" .. package.path
 poc001 = require("observer")
 assert(poc001:start())
-assert(poc001:status().lifecycle == "running", "POC observer did not start")
-assert(poc001:status().active_timers == 0, "POC observer unexpectedly has timers")
-assert(poc001:status().window_effects == 0, "POC observer issued a window effect")
-assert(poc001:status().target_binding_armed == false, "POC target binding unexpectedly armed")
+assert(poc001:status().lifecycle == "running", "observer did not start")
+assert(poc001:status().active_timers == 0, "observer unexpectedly has timers")
+assert(poc001:status().window_effects == 0, "observer issued a window effect")
+assert(poc001:status().target_binding_armed == false, "binder unexpectedly armed")
 ```
 
-Do not continue if an assertion fails.
+`⌃⌥⌘B` means hold physical Control, Option/Alt, and Command, then tap **B**
+once. The one-shot binder deletes itself before its one focus read. It can be
+armed again only after the prior bound action is marked complete; it rejects
+while armed or while a target action remains active.
 
-## Keyboard chord notation
+## Exact measured actions — return to chat after each action
 
-Before starting the sample, read this notation:
+Sample ID: `chromium-create-focus-destroy-006`. The user returns to chat after
+each numbered action. Do not improvise or combine steps.
 
-- `⌃` means the physical **Control** key.
-- `⌥` means the physical **Option** key (also labelled **Alt** on some keyboards).
-- `⌘` means the physical **Command** key.
-- `⌃⌥⌘B` means: hold physical **Control**, **Option/Alt**, and **Command** together, then tap the letter **B** once. Do not press a function key.
-
-## Exact move-only flow
-
-Sample ID: `terminal-regular-space-move-005`.
-
-1. The orchestrator arms the POC-only one-shot target binder; this is the only
-   permitted preparatory call:
+1. **Bind front temporary blank (non-destructive).** The orchestrator runs:
 
    ```lua
-   assert(poc001:arm_target_action("terminal-regular-space-move-005", "manual_move_regular_space"))
-   assert(poc001:status().target_binding_armed == true, "target binder did not arm")
+   assert(poc001:arm_target_action("chromium-create-focus-destroy-006", "bind_front_temporary_blank"))
    ```
 
-   The fixed POC-only chord is **Control-Option-Command-B** (`⌃⌥⌘B`): hold
-   physical Control, Option/Alt, and Command, then tap **B** once. Source
-   inspection verified that no project legacy binding uses this exact chord;
-   legacy is stopped throughout this POC in any event. The binder uses the
-   verified local Hammerspoon 1.1.1 `hs.hotkey.new(...):enable()` API and
-   deletes itself before reading focus. A second arm rejects. It does not focus,
-   admit, or move a window.
-
-2. The human clicks the **blank target Terminal** (not the session window) and
-   presses **Control-Option-Command-B once**. The callback deletes/disarms
-   itself first, then calls the existing read-only `begin_target_action` against
-   that current focus. It records either a bound target with its expected source
-   or a rejection. The orchestrator checks:
+   The human clicks the front temporary blank Chrome window and presses
+   `⌃⌥⌘B` once, then returns to chat. The orchestrator verifies disarm and marks
+   that completed binding:
 
    ```lua
-   assert(poc001:status().target_binding_armed == false, "one-shot target binder remained armed")
+   assert(poc001:status().target_binding_armed == false, "binder remained armed")
+   poc001:mark("chromium-create-focus-destroy-006", "manual_visual_complete", "bind_front_temporary_blank")
    ```
 
-   If the binding rejected, or the human is not certain the blank target was
-   clicked, abort; do not press the chord again or arm again.
-
-3. The human opens Mission Control with **Control-Up**, drags **ONLY the blank
-   target window thumbnail** to **Desktop 2**, then exits Mission Control.
-   Do not move the session window or any other thumbnail.
-
-4. The human switches to Desktop 2 and visually verifies the blank target
-   there. The observer-derived ownership observation remains the destination
-   evidence; the controlled action records only the target and expected source.
-   It does not drive or assert a destination.
-
-5. The human returns to Desktop 1/the session window and replies **only then**.
-   Only after that reply does the orchestrator mark completion:
+2. **Focus the other temporary blank.** The human focuses only the other
+   temporary blank Chrome window, then returns to chat. The orchestrator marks:
 
    ```lua
-   poc001:mark("terminal-regular-space-move-005", "manual_visual_complete", "manual_move_regular_space")
+   poc001:mark("chromium-create-focus-destroy-006", "manual_visual_complete", "focus_other_temporary_blank")
    ```
 
-Do not perform a fullscreen, hide, minimize, restore, close, or any action in
-another application. If UI differs at any point, the target/destination cannot
-be identified, or Mission Control cannot complete this exact move, use the
-abort path below without improvisation.
+3. **Cover for five seconds.** Using only the two temporary blank windows,
+   completely cover one with the other for five seconds. Do not minimize,
+   hide, fullscreen, or move Spaces. Then return to chat. The orchestrator
+   marks:
+
+   ```lua
+   poc001:mark("chromium-create-focus-destroy-006", "manual_visual_complete", "cover_temporary_blank_5s")
+   ```
+
+4. **Bind and close the front temporary blank.** This is destructive, so it
+   requires a new target binding. The orchestrator arms:
+
+   ```lua
+   assert(poc001:arm_target_action("chromium-create-focus-destroy-006", "close_front_temporary_blank"))
+   ```
+
+   The human exposes/clicks only the front temporary blank, presses `⌃⌥⌘B`
+   once, and returns to chat. After the orchestrator confirms the binder is
+   disarmed, the human closes **that bound front temporary blank only**, then
+   returns to chat. The orchestrator marks completion:
+
+   ```lua
+   assert(poc001:status().target_binding_armed == false, "binder remained armed")
+   poc001:mark("chromium-create-focus-destroy-006", "manual_visual_complete", "close_front_temporary_blank")
+   ```
+
+5. **Bind and close the remaining temporary blank.** The pre-existing Chrome
+   window remains untouched. The orchestrator arms:
+
+   ```lua
+   assert(poc001:arm_target_action("chromium-create-focus-destroy-006", "close_remaining_temporary_blank"))
+   ```
+
+   The human clicks only the remaining temporary blank, presses `⌃⌥⌘B` once,
+   returns to chat, then closes that bound temporary blank and returns to chat.
+   The orchestrator verifies disarm and marks:
+
+   ```lua
+   assert(poc001:status().target_binding_armed == false, "binder remained armed")
+   poc001:mark("chromium-create-focus-destroy-006", "manual_visual_complete", "close_remaining_temporary_blank")
+   ```
+
+There is no controlled `native_action_completed` marker. This sample makes **no
+latency or action-to-detection timing claim**. True Chromium last-window
+behavior remains pending.
+
+## Abort — no improvisation
+
+Abort immediately for uncertain identity, unexpected Chrome UI, an existing
+window/tab that cannot remain untouched, a binding rejection, or any accidental
+forbidden action. Do not re-arm while armed/active, replace an action, hide an
+app, call `hs.reload`, or continue with another POC action.
+
+```lua
+if poc001 ~= nil and poc001:status().lifecycle == "running" then
+  poc001:mark("chromium-create-focus-destroy-006", "sample_aborted", "operator_reported_unexpected_ui")
+  pcall(function() poc001:stop() end)
+end
+assert(poc001 == nil or poc001:status().lifecycle == "stopped", "observer may still be running")
+assert(poc001 == nil or poc001:status().target_binding_armed == false, "binder survived abort")
+```
 
 ## Stop, export, and restore
 
-After the human has returned to Desktop 1/session and the completion marker has
-been emitted, stop the observer, export only after it is stopped, then restore
-legacy 10bucks:
+After action 5 (or abort), stop, export, then restart legacy:
 
 ```lua
-print(hs.inspect(poc001:status()))
 assert(poc001:stop())
-assert(poc001:status().lifecycle == "stopped", "POC observer did not stop")
-assert(poc001:status().target_binding_armed == false, "armed target binder survived stop")
+assert(poc001:status().lifecycle == "stopped", "observer did not stop")
 local exported, export_error = pcall(function()
-  return poc001:export("/tmp/poc-001-regular-space-move-005/terminal-regular-space-move-005.json")
+  return poc001:export("/tmp/poc-001-chromium-create-focus-destroy-006/chromium-create-focus-destroy-006.json")
 end)
 spoon["10bucks"]:bindHotkeys():start()
 assert(spoon["10bucks"].started == true, "legacy 10bucks did not restart")
 assert(exported, "private POC export failed: " .. tostring(export_error))
 ```
 
-## Abort: no improvisation
-
-If a precondition fails, binding rejects, or the human reports unexpected UI,
-mark only the abort, stop (which deletes any armed target hotkey), export, and
-restore. Do not add a replacement action, re-arm, press the chord again,
-restart the observer, or call `hs.reload`.
-
-```lua
-if poc001 ~= nil and poc001:status().lifecycle == "running" then
-  poc001:mark("terminal-regular-space-move-005", "sample_aborted", "operator_reported_unexpected_ui")
-  pcall(function() poc001:stop() end)
-end
-assert(poc001 == nil or poc001:status().lifecycle == "stopped", "observer may still be running; do not restore legacy")
-assert(poc001 == nil or poc001:status().target_binding_armed == false, "armed target binder survived abort")
-local exported, export_error = true, nil
-if poc001 ~= nil then
-  exported, export_error = pcall(function()
-    return poc001:export("/tmp/poc-001-regular-space-move-005/terminal-regular-space-move-005.json")
-  end)
-end
-spoon["10bucks"]:bindHotkeys():start()
-assert(spoon["10bucks"].started == true, "legacy 10bucks did not restart")
-assert(exported, "private POC export failed: " .. tostring(export_error))
-```
-
-If stop fails, leave legacy stopped and report the Console output.
+Review the private export locally; do not commit raw traces.
 
 ## Pure checks
 

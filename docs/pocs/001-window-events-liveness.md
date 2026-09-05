@@ -3,14 +3,13 @@
 ## Status
 hypothesis
 
-This is a pre-run protocol. A disposable POC-only observer currently exists
-through step 2C (source comparison, targeted metadata/Space reads, and pure
-correlation); no production runtime changed. One short, orchestrator-guided
-Terminal-only calibration was run as diagnostic-only evidence. The next
-authorized action is exactly one human-gated Terminal manual regular-Space move retry 005 specified in
+This remains a pre-run protocol. A disposable POC-only observer currently
+exists through step 2C (source comparison, targeted metadata/Space reads, and
+pure correlation); no production runtime changed. Terminal manual regular-Space
+move retry 005 is recorded below as narrow evidence only. The next authorized
+action is the human-gated Chromium creation/focus/destruction sample 006 in
 [`pocs/001-window-events-liveness/README.md`](../../pocs/001-window-events-liveness/README.md).
-Aborted sample 004 remains recorded in Results; retry 005 is not a result and
-does not authorize the remaining live matrix.
+It does not authorize the remaining live matrix.
 
 ## Decision enabled
 Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,
@@ -108,8 +107,9 @@ Use these markers exactly:
   the POC-only one-shot binder's armed state and its bound/rejected outcome.
   The result records no raw focused-window identity. The retry guide uses
   `⌃⌥⌘B` (physical Control, Option/Alt, and Command held while B is tapped
-  once); the binder deletes/disarms before it reads focus, never re-arms, and
-  does not issue an effect.
+  once); the binder deletes/disarms before it reads focus and does not issue an
+  effect. A later arm is allowed only after the prior bound action's completion
+  marker clears its active target; it rejects while armed or active.
 - `action_begin`: the guide announces a manual action immediately before
   performing it, or explicitly directs the separate controlled action driver
   to issue the named native action.
@@ -164,15 +164,17 @@ eligibility/admission marker; POC-001 issues zero frame effects.
 ### 3. Guided matrix
 
 The full matrix below remains **pending**. The first Terminal-only calibration
-is diagnostic-only. The operator guide separately authorizes exactly one next
-human-gated **manual regular-Space move retry 005** of a blank Terminal target from
-Desktop 1 to Desktop 2, using the one-shot `⌃⌥⌘B` target-binding chord and
-exact move-only flow. Do not advance from that move to minimize/hide/restore,
-fullscreen, cold bootstrap/reload, rapid repetitions, other apps, or the
-representative-app matrix without a new approved handoff. For Terminal and the
-Chromium representative first, then each remaining representative app where its
-UI supports the action, run the following and retain every event order,
-including failures and late callbacks:
+was diagnostic-only and retry 005 is narrow move evidence only. The operator
+guide separately authorizes exactly one next human-gated Chromium-only sample
+006: create two new blank temporary windows as unmeasured setup, bind/focus/
+cover them, and close only the bound temporary windows. Do not advance to
+minimize/hide/restore, fullscreen, Space movement, cold bootstrap/reload, rapid
+repetitions, another app, or the representative-app matrix without a new
+approved handoff. Existing Chrome windows/tabs remain untouched and true
+Chromium last-window behavior is not authorized. For Terminal and the Chromium
+representative first, then each remaining representative app where its UI
+supports the action, run the following and retain every event order, including
+failures and late callbacks:
 
 1. Mark `create_first`, then create a first and an additional standard window;
    exercise focus/unfocus and rapid create → focus → close. Run warm creation
@@ -500,32 +502,27 @@ or broad POC pass/fail result.
 - **Conclusion:** 004 is aborted history, not a result for event ordering,
   ownership, latency, source selection, or manual-move detection.
 
-### Manual regular-Space move retry 005 — prepared, not run
+### Manual regular-Space move retry 005 — narrow observed result
 
-- **Observed run setup (not portable):** a read-only topology observation found
-  one display, three regular Spaces with the first active, and three fullscreen
-  Spaces. This identifies the intended run setup only; it is not a supported
-  topology contract or a claim about another run.
-- **Target:** to avoid an operator Console/`hs -c` focus query binding the
-  session window, the POC-only observer has a one-shot
-  Control-Option-Command-B (`⌃⌥⌘B`) binder. Hold physical Control, Option/Alt,
-  and Command, then tap B once. It deletes its `hs.hotkey` handle before
-  calling the existing read-only `begin_target_action` against the human’s
-  current focus. It records binding success/rejection, permits no second arm
-  or re-arm, reports armed state, and deletes the handle on stop and defensive
-  failed startup cleanup. It has no timer, effect, admission, or action driver.
-- **Verified:** source inspection found no project legacy binding using the
-  exact Control-Option-Command-B chord. Legacy is stopped for this POC anyway.
-  Installed Hammerspoon 1.1.1 `hs.hotkey` source documents
-  `hs.hotkey.new(...):enable()` and `hs.hotkey:delete()`; the POC uses those
-  APIs. Pure fakes include userdata-like hotkeys.
-- **Next authorized live action:** only the exact move-only guide in the POC
-  README: bind the blank Terminal target once with `⌃⌥⌘B`, manually drag only
-  that thumbnail from Desktop 1 to Desktop 2 in Mission Control, visually
-  verify it on Desktop 2, return to the Desktop 1/session window, then report
-  completion. Manual action timing is unmeasurable; no two-second claim is
-  authorized. Any UI/identity/destination uncertainty aborts without
-  improvisation.
+- **Verified:** the bound target had unique reciprocal regular ownership
+  `space-001→space-002`. No direct `AXWindowMoved` or filter
+  `windowMoved` event occurred. Detection came only after destination
+  activation: `activeSpaceChanged` ran one bounded sweep of six known windows
+  and confirmed the target's reciprocal destination ownership.
+- Each non-coalesced active-Space sweep used one topology snapshot and reused
+  it across the known-window sweep. There was no timer, poll, window effect,
+  global steady-state query, or false target death. The target did not produce
+  a false move; non-target destruction observations remained candidate-only.
+- Callback processing is calibration only: n=13, median/p95/maximum
+  **8.920/37.160/37.160 ms**. There is no source-action timestamp or
+  pending-work key-service measurement, so retry 005 makes no timing claim.
+- This does not establish direct/filter move delivery, a destruction authority,
+  duplicate-callback coalescing, a production algorithm, or detection for a
+  move where neither source nor destination activates. That inactive/no-
+  activation case remains unknown.
+- The next authorized live action is Chromium-only sample 006 in the POC
+  README. It uses new blank temporary windows only; existing Chrome state is
+  untouched, and true Chromium last-window behavior remains pending.
 
 ## Conclusion
 Pending. This protocol proves no macOS/Hammerspoon behavior yet.

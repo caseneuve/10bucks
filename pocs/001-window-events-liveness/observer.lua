@@ -258,7 +258,7 @@ function Observer:_destruction_candidate(app, window, source, event)
   self.trace:emit("destruction_candidate", { source = source, app = app, window = window, raw_event = event, target_relation = relation, result = "candidate_only" })
   if candidates.direct_ax and candidates.filter and not candidates.paired then
     candidates.paired = true
-    self.trace:emit("destruction_paired_candidate", { source = "poc001", app = app, window = window, raw_event = event, result = "paired_candidate_only" })
+    self.trace:emit("destruction_paired_candidate", { source = "poc001", app = app, window = window, raw_event = event, target_relation = relation, result = "paired_candidate_only" })
   end
 end
 
@@ -523,6 +523,10 @@ function Observer:arm_target_action(sample_id, action)
   if self.target_binding_hotkey then
     self.trace:emit("action_target_binding_rejected", { source = "operator", action = action, action_target_status = "armed", reason = "already_armed", result = "aborted" })
     return false, "already_armed"
+  end
+  if self.active_target_action then
+    self.trace:emit("action_target_binding_rejected", { source = "operator", action = action, action_target_status = "active", reason = "prior_action_active", result = "aborted" })
+    return false, "prior_action_active"
   end
 
   self.trace:set_sample(sample_id)

@@ -222,21 +222,28 @@ return {
     equal(observer:status().window_effects, 0)
     observer:stop()
   end,
-  ["POC-001 target-binding hotkey rejects a second arm and uncertain focused target without effects"] = function()
+  ["POC-001 target binding rejects while armed or active and rearms only after completion"] = function()
     local known, unknown = fake_window(8042, complete_metadata()), fake_window(8043, complete_metadata())
     local application = fake_application(642, {})
     local state = install_fake_hs({ application }); install_fake_hotkey(state)
     install_fake_spaces(state, { ["8042"] = { 10 }, reverse = { ["10"] = { 8042 } } })
-    hs.window.focusedWindow = function() return unknown end
+    hs.window.focusedWindow = function() return known end
     package.loaded.observer = nil
     local observer = require("observer").new(); assert(observer:start())
     application.watcher.callback(known, "AXWindowCreated")
-    assert(observer:arm_target_action("move-sample", "manual_move_regular_space"))
-    local armed, reason = observer:arm_target_action("move-sample", "manual_move_regular_space")
+    assert(observer:arm_target_action("move-sample", "close_temporary"))
+    local armed, reason = observer:arm_target_action("move-sample", "close_temporary")
     equal(armed, false); equal(reason, "already_armed"); equal(#state.hotkeys, 1)
     state.hotkeys[1].callback()
-    equal(observer:status().target_binding_armed, false); equal(#events(observer, "action_begin"), 0)
-    equal(events(observer, "action_target_binding_hotkey_result")[1].result, "aborted")
+    equal(observer:status().target_binding_armed, false); equal(#events(observer, "action_begin"), 1)
+    local active, active_reason = observer:arm_target_action("move-sample", "close_temporary")
+    equal(active, false); equal(active_reason, "prior_action_active"); equal(#state.hotkeys, 1)
+    observer:mark("move-sample", "manual_visual_complete", "close_temporary")
+    assert(observer:arm_target_action("move-sample", "close_temporary")); equal(#state.hotkeys, 2)
+    hs.window.focusedWindow = function() return unknown end
+    state.hotkeys[2].callback()
+    equal(#events(observer, "action_begin"), 1)
+    equal(events(observer, "action_target_binding_hotkey_result")[2].result, "aborted")
     equal(observer:status().window_effects, 0)
     observer:stop()
   end,
@@ -270,11 +277,14 @@ return {
     equal(ok, false); equal(reason, "target_uncertain"); equal(state.focused_calls, 1); equal(#events(observer, "action_begin"), 0); equal(#events(observer, "action_target_binding_rejected"), 1); equal(#events(observer, "window_ready_eligible"), 0); equal(observer:status().window_effects, 0)
     observer:stop()
   end,
-  ["STATE-005 POC destruction candidates classify active target without confirmation"] = function()
+  ["STATE-005 POC destruction candidates and paired diagnostic classify target versus non-target without confirmation"] = function()
     local first, second = fake_window(806, complete_metadata()), fake_window(807, complete_metadata())
     local application = fake_application(66, {}); local state = install_fake_hs({ application }); install_fake_spaces(state, { ["806"] = { 10 }, ["807"] = { 10 }, reverse = { ["10"] = { 806, 807 } } }); hs.window.focusedWindow = function() return first end; package.loaded.observer = nil
-    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(first, "AXWindowCreated"); application.watcher.callback(second, "AXWindowCreated"); assert(observer:begin_target_action("move-sample", "manual_move_regular_space")); second.watcher.callback(second, "AXUIElementDestroyed")
-    local candidate = events(observer, "destruction_candidate")[1]; equal(candidate.target_relation, "non_target"); equal(#events(observer, "destruction_confirmed"), 0); observer:stop()
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(first, "AXWindowCreated"); application.watcher.callback(second, "AXWindowCreated"); first.application = function() return application end; second.application = function() return application end
+    assert(observer:begin_target_action("move-sample", "manual_move_regular_space")); second.watcher.callback(second, "AXUIElementDestroyed")
+    first.watcher.callback(first, "AXUIElementDestroyed"); state.filter.subscriptions.windowDestroyed(first, nil, "windowDestroyed")
+    local candidates, paired = events(observer, "destruction_candidate"), events(observer, "destruction_paired_candidate")
+    equal(candidates[1].target_relation, "non_target"); equal(candidates[2].target_relation, "target"); equal(paired[1].target_relation, "target"); equal(#events(observer, "destruction_confirmed"), 0); observer:stop()
   end,
   ["DISC-002 POC metadata uses callback public methods without attributeValue and retains readiness across lifecycle-only reads"] = function()
     local metadata, window = complete_metadata(), fake_window(901, complete_metadata())
@@ -302,7 +312,8 @@ return {
     local state = install_fake_hs({ application }); package.loaded.observer = nil
     local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated"); window.application = function() return application end
     window.watcher.callback(window, "AXUIElementDestroyed"); state.filter.subscriptions.windowDestroyed(window, nil, "windowDestroyed")
-    equal(#events(observer, "destruction_paired_candidate"), 1); equal(#events(observer, "destruction_confirmed"), 0)
+    local paired = events(observer, "destruction_paired_candidate")
+    equal(#paired, 1); equal(paired[1].target_relation, "no_active_target"); equal(#events(observer, "destruction_confirmed"), 0)
     local attached, detached = events(observer, "observation_fact"), false
     for _, event in ipairs(attached) do if event.fact == "window_watcher_detached" and event.reason == "element_destroyed" then detached = true end end
     assert(detached); observer:stop()
