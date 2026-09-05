@@ -1,223 +1,201 @@
 # POC-001 fixture--observer correlation gate
 
-**Status: separately gated research/implementation handoff; no implementation or
-live action is authorized.** POC-001 remains a **Hypothesis**. This document
-freezes the only candidate for associating one fixture correlation token with
-exactly the `hs.window`/AX window object delivered by that fixture's own create
-callback. It is linked from the [canonical POC result](../../docs/pocs/001-window-events-liveness.md)
-and the [fixture handoff](README.md).
-
-This is not an authorization to build, launch, call IPC, load/reload
-Hammerspoon, call an Hammerspoon API, or run a live experiment. It is a
-research/documentation gate only.
+**Status: draft research handoff — not approved.** POC-001 remains a
+**Hypothesis**. This correction freezes a proposed common, privacy-safe alias
+join, but authorizes **no** source change, build, launch, IPC request,
+Hammerspoon call/load, or live action. It is linked from the
+[canonical POC result](../../docs/pocs/001-window-events-liveness.md) and the
+[fixture handoff](README.md).
 
 ## Decision boundary
 
-**Target:** before a later, separately approved experiment, the fixture may
-expose its random `correlation_token` **only** as public, fixture-local
-Accessibility metadata. It is not included in fixture IPC responses or fixture
-trace records for this experiment. On the observer's *own fixture create
-callback*, it may perform exactly one targeted read of that callback's AX
-window element. A well-formed token returned by that exact read is associated
-with that callback's window. The observer retains the native mapping in memory
-only and emits a redacted token alias.
+The prior draft was insufficient: a fixture that omitted its raw token from
+IPC/trace while the observer accepted any `corr-…` AX value had no common join
+between fixture and observer records. It merely recognized a token-shaped
+value. That design is rejected.
 
-This association is POC instrumentation only. It does not establish liveness,
-readiness, ownership, admission, destruction, callback delivery, or a
-production window identity mechanism. It causes no window effect and makes no
-production behavior change.
+**Target, pending approval:** generate one random 80-bit raw correlation token
+in fixture memory; assign it to the fixture `NSWindow`'s public
+`accessibilityIdentifier`; calculate the full SHA-256 alias below; and emit or
+return only that alias from the fixture. The observer makes one targeted
+`AXIdentifier` read on its delivered fixture create callback, calculates the
+same alias from the raw AX value, emits only the alias, and clears its raw value
+immediately. Later analysis joins fixture and observer records by **exact alias
+equality only**, never timing, callback order, or another identity field.
 
-## Evidence and proposed public interface
+The alias association is POC instrumentation only. It proves neither liveness,
+readiness, ownership, admission, destruction, callback delivery, nor a
+production identity mechanism. It causes no window effect.
+
+## Verified API basis
 
 | Item | Status | Evidence and conclusion |
 | --- | --- | --- |
-| `NSWindow` can receive an AppKit accessibility identifier | **Verified** | The installed macOS SDK's `AppKit/NSWindow.h` declares `NSWindow` conformant to `NSAccessibilityElement` and `NSAccessibility`. `NSAccessibilityProtocols.h` declares the nullable, copyable `accessibilityIdentifier` property, documented there as serving `NSAccessibilityIdentifierAttribute`; it is available from macOS 10.10. `NSAccessibilityConstants.h` declares `NSAccessibilityIdentifierAttribute` as an `NSString` attribute. Therefore `window.accessibilityIdentifier = correlationToken` is a public fixture-local setter candidate. |
-| AX name for that attribute | **Verified** | The installed SDK's `ApplicationServices/.../AXAttributeConstants.h` declares `kAXIdentifierAttribute` as `CFSTR("AXIdentifier")`. The candidate reader asks for exactly `"AXIdentifier"`; it does not invent a private name. |
-| `NSWindow.identifier` can be set | **Verified, but rejected as the experiment interface** | `NSWindow` also conforms to `NSUserInterfaceItemIdentification`; that public protocol declares `identifier`, and its header explicitly says a programmatically created window may be assigned one. But the inspected headers do not document that this property is exported as `AXIdentifier`. It is not a substitute for `accessibilityIdentifier` and will not be tested as a fallback. |
-| A remote client sees the setter as the callback window's `AXIdentifier` | **Hypothesis** | The declarations show a setter and the AX attribute name, but do not prove cross-process propagation, availability timing, or that AppKit's AX window is the same object Hammerspoon exposes. This must pass the frozen experiment below. |
-| Hammerspoon can get an AX object for an existing `hs.window` | **Verified** | Installed Hammerspoon 1.1.1 `hs/axuielement.lua` wraps `hs.axuielement.windowElement(obj)` and passes an `hs.window` object through to its native constructor. Its module documentation says AX objects only support data application developers make available. |
-| Hammerspoon can perform a targeted formal AX attribute read | **Verified** | The same installed module documents `object:attributeValue(attribute)` and says to use this formal method when AX errors matter. It also documents that dynamic attributes depend on the element. The candidate uses only `element:attributeValue("AXIdentifier")`; it does not enumerate `attributeNames`, `allAttributeValues`, children, applications, or windows. |
-| The existing observer callback object is suitable for `attributeValue` | **Rejected for this experiment** | The canonical POC's first calibration observed that its direct callback/window objects did not support the assumed `attributeValue` method. The current observer correctly relies on its narrow public methods for existing metadata. This gate therefore does **not** reuse that object for the identifier read: it obtains the AX object from the already-delivered `hs.window` with `hs.axuielement.windowElement(window)`. |
+| `NSWindow.accessibilityIdentifier` is a public setter candidate | **Verified** | The installed macOS SDK `AppKit/NSWindow.h` declares `NSWindow` conformant to `NSAccessibilityElement` and `NSAccessibility`. `NSAccessibilityProtocols.h` declares nullable/copy `accessibilityIdentifier`, serving `NSAccessibilityIdentifierAttribute`, available from macOS 10.10. |
+| AX attribute spelling | **Verified** | Installed SDK `ApplicationServices/.../AXAttributeConstants.h` declares `kAXIdentifierAttribute` as `CFSTR("AXIdentifier")`. |
+| `NSWindow.identifier` | **Verified but rejected** | `NSWindow` also conforms to public `NSUserInterfaceItemIdentification`, whose `identifier` property may identify a programmatically created window. The inspected headers do not state it propagates to `AXIdentifier`; it is not a fallback. |
+| AppKit setter propagates to the remote callback AX object | **Hypothesis** | Headers prove neither cross-process propagation nor availability timing nor equivalence to Hammerspoon's AX object. The later smoke gate must establish this. |
+| Hammerspoon can obtain/read an AX object for a delivered `hs.window` | **Verified** | Installed Hammerspoon 1.1.1 `hs/axuielement.lua` wraps `hs.axuielement.windowElement(obj)` and passes an `hs.window` through to its native constructor. Its docs specify formal `object:attributeValue(attribute)` for error-aware reads and warn that AX attributes depend on what an application exposes. |
+| Hammerspoon SHA-256 | **Verified** | Installed Hammerspoon 1.1.1 `hs/hash.lua` documents `hs.hash.SHA256(data)` as returning the hexadecimal SHA-256 digest and says it is equivalent to `hs.hash.new("SHA256"):append(data):finish():value()`. `hs.hash.types` lists `SHA256` as a 256-bit cryptographic hash. The future observer uses the non-HMAC SHA-256 operation; there is no shared secret. |
+| Public Swift SHA-256 | **Verified** | The installed macOS SDK has public `usr/include/CommonCrypto/module.modulemap` defining system module `CommonCrypto`, whose umbrella includes `CommonDigest.h`. That header declares `CC_SHA256_DIGEST_LENGTH` (32), `CC_SHA256_Init`/`Update`/`Final`, and one-shot `CC_SHA256`, available on macOS 10.4+. A future Swift fixture may `import CommonCrypto` and use this public API; CryptoKit was not relied on because it was not found in this Command Line Tools SDK. |
+| Identical runtime output | **Hypothesis until tests run** | Both APIs document SHA-256/hex output, but the fixture and observer implementations must pass the same fixed vectors before any live gate. |
 
-The chosen candidate is consequently:
+## Frozen alias format and security scope
 
-```swift
-// Fixture, before the window is ordered front; future gated implementation only.
-window.accessibilityIdentifier = correlationToken
+For raw ASCII token `T` with the existing grammar `corr-` followed by exactly
+16 uppercase RFC 4648 base32 characters, define:
+
+```text
+alias(T) = "poc001-corr-sha256-" + lowercase-hex(SHA-256(UTF-8 bytes of T))
 ```
 
-```lua
--- Observer, in the delivered fixture create callback; future gated implementation only.
-local ax = hs.axuielement.windowElement(callback_window)
-local value, err = ax:attributeValue("AXIdentifier")
-```
+The digest is the **full** 32-byte/64-lowercase-hex-character SHA-256 output;
+it is never truncated. The explicit `poc001-corr-sha256-` prefix is part of the
+emitted alias, not part of the hash input. No newline, NUL, JSON quoting, token
+prefix normalization, or other bytes are included in the input.
 
-The snippets specify the public API boundary only; they are not approved code.
-No fallback reads a title, content child, or another window.
+Fixed cross-language vectors:
 
-## Explicitly rejected association inputs
+| Raw test token (test-only) | Required alias |
+| --- | --- |
+| `corr-AAAAAAAAAAAAAAAA` | `poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac` |
+| `corr-7777777777777777` | `poc001-corr-sha256-5e5f2182c2728604b072539a13264b2ed227582defd4deaa220f8ed8cb7e178b` |
 
-The following are prohibited both for an accepted association and for a
-fallback after an unavailable or malformed identifier:
+SHA-256 is a public, unkeyed hash: **the alias is not a secret, MAC, or proof
+that an untrusted app is the fixture.** The raw token is generated from 80 bits
+of `SecRandomCopyBytes` output and is disposable POC data. Given a full alias,
+that random 80-bit input makes practical reversal by brute force infeasible for
+this scope; it does not prevent an accessibility client that reads the live
+window's `AXIdentifier` from computing the alias. The gate relies on the
+fixture-specific controlled experiment and exact alias equality, not on
+adversarial authentication.
 
-- title, `AXTitle`, subtitle, document name, URL, or other user content;
-- focus/key state, visibility/occlusion, z-order, Space, frame, or event order;
-- PID or bundle identity **alone** (they may scope a fixture watcher but never
-  prove which fixture window/token is involved);
-- a native window ID/number in committed output, fixture IPC/trace output, or
-  exported observer trace;
-- `NSWindow.identifier` as an assumed `AXIdentifier` bridge;
+## Explicitly prohibited correlation inputs
+
+An accepted join, fallback, or failure diagnosis must not use:
+
+- title, `AXTitle`, subtitle, document name, URL, or user content;
+- focus/key state, visibility/occlusion, z-order, Space, frame, PID or bundle
+  identity alone, or callback/timing proximity;
+- native window ID/number in fixture IPC/trace, observer export, logs, or git;
+- `NSWindow.identifier` as an assumed AX bridge;
 - global application/window/AX enumeration, `hs.window.find`, all-window
-  snapshots, or scanning elements for a token; and
-- timing proximity between create response, callback arrival, or any other
-  marker.
+  snapshots, element scans, child traversal, `attributeNames`, or
+  `allAttributeValues`; or
+- retries, deferred reads, timers, polling, or production state/effects.
 
-A missing, malformed, unavailable, erroring, or non-equal `AXIdentifier` is a
-failed/unresolved sample, not permission to use one of these inputs.
+Missing/unavailable/malformed AX data, an alias calculation error, or an alias
+mismatch is unresolved/failed evidence, never permission to use a prohibited
+input.
 
-## Frozen minimal implementation experiment
+## Frozen minimal future source slice
 
-A later approval may authorize this *separate POC-only source slice*, and no
-more:
+This source slice requires a new approval and is not authorized now:
 
-1. **Fixture:** after `createWindow()` constructs the sole registered
-   `NSWindow`, assign its generated `corr-…` token to
-   `accessibilityIdentifier` on the main thread **before** `create_requested`
-   and `orderFrontRegardless()`. In this experiment, remove
-   `correlation_token` from the fixture IPC response and trace schema: public
-   Accessibility metadata is the token's only exposure. (The separate
-   `fixture_token` remains the private close-control capability.) It must not
-   put the correlation token in the title, a view, user-defaults, a native ID,
-   or any new IPC command.
-2. **Observer:** arm one fixture-specific create subscription before the
-   controlled fixture create. When that subscription delivers its `hs.window`,
-   call `hs.axuielement.windowElement(callback_window)` once and make one
-   formal `attributeValue("AXIdentifier")` call on the result. Do not first
-   call `attributeNames`; do not retry, defer, schedule a timer, or search.
-3. **Association:** accept only a returned string matching the frozen
-   `corr-<base32>` grammar, allocate a per-run redacted alias (for example
-   `fixture-token-001`), retain `native-window-id -> fixture-token-alias` only
-   in the observer's in-memory map, and emit `fixture_correlation_matched`
-   containing the alias, sample/generation alias, source, and targeted-read
-   count. The raw token, PID, native ID, and AX value never leave memory.
-4. **Unresolved:** emit one redacted `fixture_correlation_unresolved` reason
-   (`ax_object_unavailable`, `attribute_error`, `missing`, `malformed`, or
-   `duplicate_callback`), retain no association, and perform no additional
-   query. A duplicate callback after a match is a redacted duplicate with zero
-   reads; a callback after an unresolved result does not retry that generation.
-5. **Cleanup:** clear the armed generation, the alias/native map entry,
-   and the callback subscription at fixture close, observer stop, any timeout,
-   and startup failure. The experiment owns no timer, poll, global watcher
-   beyond its bounded create subscription, or production state.
+1. **Fixture:** generate `T` only in memory, calculate `alias(T)` with public
+   CommonCrypto, assign `window.accessibilityIdentifier = T` on the main thread
+   before `create_requested` and `orderFrontRegardless()`, then clear the
+   fixture-held raw token on close/shutdown. Fixture trace and IPC records emit
+   only `correlation_alias`; they must omit `correlation_token`, raw AX values,
+   PID, and native ID. The existing `fixture_token` remains the separate
+   private close-control capability.
+2. **Observer:** on one armed fixture create callback that already supplies its
+   `hs.window`, call `hs.axuielement.windowElement(callback_window)` once and
+   `:attributeValue("AXIdentifier")` once. Validate the exact raw-token
+   grammar, compute `alias(T)` with `hs.hash.SHA256`, emit the alias, retain
+   only `native-window-id -> correlation_alias` in memory, and immediately
+   clear its raw Lua value/reference. It must not emit the raw token or AX
+   value.
+3. **Join:** later local analysis accepts exactly one fixture record and one
+   observer record only when their full aliases are byte-for-byte equal and
+   have the frozen prefix/length. A missing peer, duplicate alias, malformed
+   alias, or unequal aliases is a failure. Timing is reported only as a
+   separate performance observation and cannot form or repair a join.
+4. **Cleanup:** fixture close/shutdown and observer stop/startup failure/sample
+   timeout clear raw token/value references, alias/native mappings, armed
+   generation, and the callback subscription. There is no timer, poll, global
+   scan, or production state.
 
-**Hypothesis:** AppKit will expose the token as the exact `AXIdentifier` of the
-same AX object constructed from that callback's `hs.window`, early enough for
-this single read. No source/header/doc result upgrades this hypothesis.
+**Hypothesis:** the public AppKit identifier appears as the same callback
+window's `AXIdentifier`, allowing the two independently calculated aliases to
+match. Source/header/doc evidence does not prove it.
 
-## Fixed pass/fail and privacy/query limits
+## Fixed pass/fail, privacy, and query limits
 
-A future authorization must use these limits unchanged:
-
-- **Pass per sample:** exactly one fixture window; one public identifier
-  assignment before ordering; one delivered fixture create callback; exactly
-  one `windowElement` construction and one `AXIdentifier` read; returned value
-  matches the frozen `corr-<base32>` grammar; exactly one token alias is
-  emitted; one
-  in-memory-only native mapping is present until cleanup; and cleanup removes
-  it. No prohibited input is read or logged for correlation.
-- **Fail per sample:** no callback by the fixed sample timeout; unavailable AX
-  object; AX error; absent/non-string/malformed value; duplicate
-  match; more than one targeted identifier read; a retry; any timer/poll;
-  global enumeration/snapshot; leaked raw token/native ID/PID/AX value; or
-  cleanup failure. A failed sample is not retried ad hoc.
-- **Timing:** association is equality-based, never timing-based. Record
-  callback processing duration and the one targeted-read duration separately;
-  do not calculate or claim create-to-callback correlation latency from them.
-  Existing POC-001 callback processing limits remain p95 <= 50 ms and maximum
-  <= 100 ms. The one identifier read is included in that callback duration.
-- **Query limit:** one targeted AX attribute read for one fixture create
-  callback/generation; zero reads for duplicate/unresolved callbacks; zero
-  global AX/app/window enumerations and zero all-window snapshots in every
-  experiment callback; zero permanent or bounded polling.
-- **Privacy:** raw correlation tokens, native IDs, PIDs, titles, AX values,
-  responses, and raw traces stay owner-private (`0700` directory/`0600`
-  files). Commit only redacted aliases, counts, durations, OS/Hammerspoon
-  versions, and aggregate pass/fail. The public AX identifier is intentionally
-  readable by accessibility clients while the disposable fixture window lives;
-  it is a random 80-bit token, never user data, and is cleared with fixture
-  teardown.
+- **Pass for the separately approved smoke sample:** exactly one fixture window
+  and one create callback; one identifier assignment before ordering; one
+  `windowElement` construction and one `AXIdentifier` read; valid raw grammar;
+  one complete alias on each side; exact alias equality; no raw value export;
+  one in-memory mapping only; and verified cleanup.
+- **Fail:** no callback by the fixed timeout; AX object/read/hash error;
+  missing/non-string/malformed raw value; malformed/unequal/duplicate alias;
+  more than one targeted read; retry/timer/poll; enumeration/snapshot;
+  prohibited input; raw token/native ID/PID/AX value leak; or cleanup failure.
+  Do not retry a failed smoke sample ad hoc.
+- **Timing/query:** correlation is equality-based, not timing-based. Record
+  callback processing and the one read/hash duration separately; retain the
+  POC-001 p95 <= 50 ms and maximum <= 100 ms callback limits. The strict query
+  budget is one `AXIdentifier` read per armed generation, zero reads for a
+  duplicate/unresolved generation, zero global AX/app/window enumerations and
+  snapshots, and zero polling.
+- **Privacy:** raw values exist only in fixture memory and transiently in the
+  observer callback. Owner-private diagnostics remain `0700`/`0600`; committed
+  evidence includes aliases, counts, durations, environment, and outcomes only.
+  The live AX identifier remains readable by accessibility clients while the
+  disposable window exists; its random input is not user data.
 
 ## Required tests before any live gate
 
-These are future pure/source tests, not evidence of macOS propagation:
+These future tests are pure/source tests; they do not prove propagation:
 
-1. **Fixture ordering test:** a fake window port receives the correlation token
-   and records `accessibilityIdentifier` assignment before
-   `create_requested`/`orderFront`; no title or `identifier` setter is used.
-2. **Fixture lifecycle/privacy tests:** only the active generation's random
-   `corr-` token is assigned; close/shutdown clears the fixture-held token;
-   the experiment's trace/IPC schemas omit `correlation_token` and contain no
-   native ID/PID or exported AX value.
-3. **Observer exact-match test:** one fake create callback produces one
-   `windowElement` call, one `attributeValue("AXIdentifier")` call, one alias,
-   and an in-memory native mapping only.
-4. **Observer rejection tests:** unavailable AX object, AX error, nil,
-   malformed, duplicate callback, startup failure, observer stop,
-   and fixture close each produce no mapping/retry/effect and clear state.
-5. **Observer discipline test:** fakes/spies prove no `attributeNames`,
-   `allAttributeValues`, child traversal, `hs.window.find`, global enumeration,
-   title/focus/visibility/PID/native-ID correlation input, timer, or poll.
-   Exported event fixtures must contain aliases only.
-6. **Static handoff test:** assert this document remains linked by the
-   canonical result and fixture handoff, and that its pass/fail/query limits
-   remain present.
+1. Fixture tests verify raw 80-bit token generation, the two vectors using
+   CommonCrypto, full lowercase-hex/prefix format, assignment before
+   trace/order, alias-only IPC/trace schema, and raw-token clearing on
+   close/shutdown.
+2. Observer tests verify the same two vectors through `hs.hash.SHA256`, exact
+   one-read behavior, raw grammar rejection, immediate raw-reference clearing,
+   alias-only export, in-memory-only native mapping, and cleanup on every exit.
+3. Cross-language fixture/observer fixtures exchange each fixed vector's
+   **alias only** and require byte-for-byte equality. An intentionally altered
+   one-hex-character observer alias must fail the join (`alias_mismatch`), with
+   no title/focus/PID/timing fallback.
+4. Discipline fakes/spies prove no `attributeNames`, `allAttributeValues`,
+   child traversal, `hs.window.find`, global enumeration, title/focus/
+   visibility/PID/native-ID correlation input, timer, poll, or effect.
+5. Static documentation tests keep this draft linked from the canonical result
+   and fixture handoff, retain both vectors, alias mismatch failure, the smoke
+   gate before volume, and the no-authorization statement.
 
-## Later live procedure (not authorized now)
+If either runtime cannot pass the fixed vectors with the frozen bytes and
+format, stop and record the unresolved compatibility result. Do not substitute
+a private hashing API, a different encoding, a raw-token export, or a rejected
+correlation input without a new handoff.
 
-After the source tests are green, a new explicit human approval must freeze the
-exact commit and permit one fixture--observer experiment. Its procedure is:
+## Later live sequencing (not authorized now)
 
-1. Start from a clean tree and fresh owner-private `0700` run directory; record
-   OS, Hammerspoon 1.1.1, commit, and supported display/settings facts locally.
-2. Stop legacy 10bucks, load only the POC observer, and arm one fixture create
-   generation before a single controlled fixture create. Do not bootstrap scan,
-   enumerate, focus, or manually select a window.
-3. Create the sole fixture window. Capture only redacted observer counters and
-   aliases. The observer makes the frozen single targeted read in its own
-   delivered fixture create callback.
-4. Evaluate the fixed per-sample criteria. Do not use callback order or elapsed
-   time to repair an unresolved sample.
-5. Close and shut down the fixture using the existing controlled cleanup,
-   stop the observer, clear maps/subscriptions, verify zero active timers and
-   no fixture process/socket, and retain raw material privately.
+After source tests are green, a new explicit human approval may authorize **one
+correlation smoke sample only**: clean tree; fresh owner-private run directory;
+legacy runtime stopped; POC observer armed; one fixture create; one targeted
+read; exact alias-equality evaluation; controlled fixture/observer cleanup.
+No bootstrap scan, focus selection, global enumeration, or retry is allowed.
 
-The volume is 30 warm and 5 cold fresh-fixture-create samples, with every
-sample retained (including failures/timeouts). Stop the entire path on the
-first privacy, query, prohibited-input, or cleanup violation. A result must
-report each sample's one-read count, callback/read durations, outcome reason,
-map cleanup, and aggregate median/p95/maximum; it must not commit raw
-correlation data. Passing this correlation gate still does not pass POC-001's
-liveness, destruction, readiness, or source-selection gates.
+Only if that smoke sample passes may a separate approval authorize the 30 warm
+and 5 cold fresh-fixture-create volume. The volume is not authorized by this
+draft or by a smoke pass alone. Retain every failure/timeout and stop the path
+on the first privacy, query, prohibited-input, or cleanup violation. Neither
+stage passes POC-001's liveness, readiness, destruction, or source-selection
+gates.
 
-## Alternatives and stop rule
+## Alternatives, stop rule, and authorization
 
-`NSWindow.identifier` remains a documented AppKit identifier but is not an AX
-propagation guarantee, so it is rejected rather than used as a fallback. A
-custom AX child/view would require a different object-to-window relation and
-would not prove that the observer callback's `hs.window` is that child; it is
-outside this minimal gate. Titles and all discovery scans are prohibited.
-
-If the public `accessibilityIdentifier` setter cannot be compiled/applied to
-`NSWindow`, or the live gate fails to return the exact token from the callback
-window's `AXIdentifier`, record the failure and **stop**. Do not invent a
-private AX attribute, bridge `NSWindow.identifier`, add IPC identity export,
-or substitute any rejected correlation input. Any different public alternative
-requires new SDK research and a new separately approved handoff.
-
-## Authorization and cleanup
+`NSWindow.identifier` is not an AX propagation guarantee; custom AX children
+would not prove the callback's `hs.window` is that child; and all title/scan
+alternatives are prohibited. If `accessibilityIdentifier` cannot be applied to
+`NSWindow`, AX propagation fails, hashing compatibility fails, or aliases do
+not exactly match, record failure and **stop**. Do not invent a private AX
+attribute, bridge `NSWindow.identifier`, expose raw correlation data through
+IPC/trace, or add a fallback.
 
 **Current authorized action: documentation review only.** No code change,
 build, app launch, IPC request, Hammerspoon call, observer load, or live action
-is authorized by this handoff. Any future source slice remains POC-only and is
-removed with its artifacts after the result unless a later result names a
-retained diagnostic owner, use, and negligible idle cost.
+is authorized by this draft.
