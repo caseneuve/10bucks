@@ -1,3 +1,4 @@
 .pi/
 .reviews/
 dist/
+pocs/001-window-events-liveness/fixture/build/
