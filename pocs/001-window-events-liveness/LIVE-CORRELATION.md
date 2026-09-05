@@ -1,12 +1,13 @@
 # POC-001 fixture--observer correlation — one human-gated smoke
 
-**Status: proposed; explicit human approval required. Do not run yet.** This is
-the only proposed live correlation smoke following the implemented source and
+**Status: completed once; no further run is authorized.** This was the
+one-sample live correlation smoke following the implemented source and
 absolute-clock prerequisite in [CORRELATION-HANDOFF.md](CORRELATION-HANDOFF.md).
-It is not an authorization for a retry, volume run, POC-001 pass, destruction
-authority selection, or a pending/next-key service claim. The earlier
-[fixture-only calibration](fixture/LIVE-CALIBRATION.md) remains completed once
-and is not repeated here.
+Its result is recorded in the canonical POC document. It is not authorization
+for a retry, volume run, POC-001 pass, destruction authority selection, or a
+pending/next-key service claim. The earlier [fixture-only
+calibration](fixture/LIVE-CALIBRATION.md) remains completed once and is not
+repeated here.
 
 ## Scope, hypothesis, and frozen boundary
 

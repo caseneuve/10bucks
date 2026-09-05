@@ -1,11 +1,11 @@
 # POC-001 fixture--observer correlation gate
 
-**Status: fixture and observer source/test slices implemented, pending review;
-live correlation remains unapproved.** POC-001 remains a **Hypothesis**. The
-source slices below are implemented for pure/source-test verification only.
-They do **not** authorize an app launch, IPC request against the app,
-Hammerspoon call/load, observer live action, or any other live action. It is
-linked from the [canonical POC result](../../docs/pocs/001-window-events-liveness.md) and the
+**Status: fixture and observer source/test slices implemented; one live
+correlation smoke completed.** POC-001 remains a **Hypothesis**. The design
+below records the pre-run boundary; the observed result and its narrow
+conclusion are in the [canonical POC
+result](../../docs/pocs/001-window-events-liveness.md). No further fixture or
+observer live action is authorized. This document is also linked from the
 [fixture handoff](README.md).
 
 ## Decision boundary
@@ -221,20 +221,13 @@ correlation input without a new handoff.
 
 ## Later live sequencing (not authorized now)
 
-After source tests are green, a new explicit human approval may authorize **one
-correlation smoke sample only** under the exact
-[proposed live-correlation guide](LIVE-CORRELATION.md): clean tree; fresh
-owner-private run directory;
-legacy runtime stopped; POC observer armed; one fixture create; one targeted
-read; exact alias-equality evaluation; controlled fixture/observer cleanup.
-No bootstrap scan, focus selection, global enumeration, or retry is allowed.
-
-Only if that smoke sample passes may a separate approval authorize the 30 warm
-and 5 cold fresh-fixture-create volume. The volume is not authorized by this
-draft or by a smoke pass alone. Retain every failure/timeout and stop the path
-on the first privacy, query, prohibited-input, or cleanup violation. Neither
-stage passes POC-001's liveness, readiness, destruction, or source-selection
-gates.
+The one-sample correlation smoke completed under the
+[live-correlation guide](LIVE-CORRELATION.md). A separate approval is required
+before the 30 warm and 5 cold fresh-fixture-create volume. Retain every
+failure/timeout and stop the path on the first privacy, query,
+prohibited-input, or cleanup violation. Neither the completed smoke nor any
+future volume alone passes POC-001's liveness, readiness, destruction, or
+source-selection gates.
 
 ## Alternatives, stop rule, and authorization
 
@@ -246,7 +239,6 @@ not exactly match, record failure and **stop**. Do not invent a private AX
 attribute, bridge `NSWindow.identifier`, expose raw correlation data through
 IPC/trace, or add a fallback.
 
-**Current authorized action: source and pure-test review only.** The
-[proposed live-correlation guide](LIVE-CORRELATION.md) does not change that
-boundary: it requires explicit human approval. No app launch, IPC request,
-Hammerspoon call, observer load, or live action is authorized by this handoff.
+**Current authorized action: source, pure-test, and recorded-result review
+only.** No app launch, IPC request, Hammerspoon observer load, or further live
+action is authorized by this handoff.

@@ -19,9 +19,9 @@ AppKit occlusion callback and visible bit. The unapproved draft
 defines the public-AX/SHA-256-alias candidate and explicitly authorizes no
 implementation or live action. One approved
 [fixture-only one-sample live-calibration](../../pocs/001-window-events-liveness/fixture/LIVE-CALIBRATION.md)
-has now been recorded below. The [proposed one-sample fixture--observer
+has now been recorded below. The [one-sample fixture--observer
 live-correlation guide](../../pocs/001-window-events-liveness/LIVE-CORRELATION.md)
-requires its own explicit human approval. **POC-001 remains `hypothesis`; these
+has now completed once, as recorded below. **POC-001 remains `hypothesis`; these
 documents authorize neither another fixture action nor a POC-001 live action.**
 
 ## Decision enabled
@@ -606,6 +606,28 @@ is POC instrumentation only, not a production adapter decision. Pure-fake
 coverage verifies repeated same-fullscreen resize skips, both fullscreen
 transitions probe, moved always probes, and unavailable resize is
 non-destructive.
+
+### Fixture--observer one-sample correlation smoke — recorded result
+
+**Observed, one controlled fixture only:** after isolating the POC module load
+from stale Hammerspoon `package.loaded` entries, the fixture and observer
+produced exactly equal full correlation aliases. The observer performed one
+window-element construction and one `AXIdentifier` read. Its correlation map
+contained one entry before close and zero after explicit finish.
+
+Both candidate destruction paths retained the alias. Relative to the fixture's
+native close completion, the direct AX candidate arrived after **1.961 ms** and
+the filter candidate after **5.639 ms**. Maximum callback processing duration
+was **28.413 ms**. The stopped export reported zero steady global queries, zero
+open callbacks, zero timers, and zero window effects. The fixture process and
+socket were absent afterward, and legacy 10bucks was restored and verified
+running.
+
+The operator used bounded external status checks while awaiting callback
+delivery; the observer itself used no timer or poll. This one sample proves only
+the privacy-safe fixture--observer join and candidate alias retention. It does
+not establish p95, liveness, destruction authority, readiness, representative-
+app behavior, or POC-001 completion. No volume run is authorized.
 
 ### Fixture-only one-sample smoke/calibration — recorded result
 
