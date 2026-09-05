@@ -226,20 +226,15 @@ correlation input without a new handoff.
 
 ## Later live sequencing (not authorized now)
 
-A **separate direct-AX one-sample smoke is Target only**: it requires a fresh,
-explicit human approval and a fresh frozen-source review. It must arm exactly
-`arm_fixture_correlation(1, "direct_ax")`, then permit only the fixture
-application's delivered `AXWindowCreated` callback to make one targeted
-`hs.axuielement.windowElement` conversion followed by the one direct
-`AXIdentifier` read. The filter callback may still be observed for its existing
-candidate-only/destruction instrumentation, but must make zero correlation AX
-constructions and reads and must not consume the generation. Its acceptance is
-otherwise the same alias-only, cleanup, and both-destruction-candidate-retention
-boundary above. This definition authorizes no fixture launch, observer load,
-IPC, or live action.
+The separately approved direct-AX one-sample smoke completed with exactly one
+targeted `hs.axuielement.windowElement` conversion and one `AXIdentifier` read
+from the fixture application's delivered `AXWindowCreated` callback. The
+filter made zero correlation constructions/reads; exact alias equality, both
+destruction candidates, and cleanup passed. The canonical result records its
+measurements. No further direct-AX fixture run is authorized.
 
-The one-sample correlation smoke completed under the
-[live-correlation guide](LIVE-CORRELATION.md). The separately approved volume
+The filter-selected and direct-AX one-sample correlation smokes completed under
+the [live-correlation guide](LIVE-CORRELATION.md). The separately approved volume
 attempt is recorded in the canonical POC result: the warm class stopped during
 sample 2 and the five cold samples completed but missed the readiness bound.
 No further correlation volume is authorized. Neither the completed smoke nor

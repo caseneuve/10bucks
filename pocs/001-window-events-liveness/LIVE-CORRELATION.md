@@ -10,30 +10,21 @@ pending/next-key service claim. The earlier [fixture-only
 calibration](fixture/LIVE-CALIBRATION.md) remains completed once and is not
 repeated here.
 
-## Separately gated direct-AX smoke (Target; not authorized)
+## Direct-AX smoke (completed once)
 
-A future direct-AX smoke is a separate one-sample procedure, not a retry or
-continuation of this completed filter-selected run. It requires new explicit
-human approval, a newly recorded frozen source checkpoint, and the same private
-evidence/cleanup gates below. Its only procedural change is:
+The separately approved direct-AX smoke completed once using:
 
 ```lua
 assert(POC001_OBSERVER:arm_fixture_correlation(1, "direct_ax"))
 ```
 
-Only the exact fixture application's already-delivered `AXWindowCreated`
-callback may consume that arm. Its delivered watcher wrapper receives one
-targeted `hs.axuielement.windowElement` conversion, and the resulting AX
-window element receives `AXIdentifier` once. The bundle check scopes the
-application but is not identity evidence. The filter remains available for its
-existing lifecycle and destruction-candidate instrumentation, but it performs
-zero correlation AX element constructions/identifier reads and cannot consume
-the generation. Its analyzer gate substitutes exactly one
-`correlation_direct_ax_window_element_construction` query and one
-`correlation_direct_ax_identifier_read` query for this guide's filter-selected
-construction/read checks. Pass requires the same alias-only join, raw cleanup,
-and direct/filter destruction candidate alias retention; it does not select
-authority or authorize any live action.
+Only the exact fixture application's delivered `AXWindowCreated` callback
+consumed the arm. Its Hammerspoon window wrapper received one targeted
+`hs.axuielement.windowElement` conversion, followed by one `AXIdentifier` read.
+The filter performed zero filter-correlation constructions and reads. Exact
+alias equality, both alias-bearing destruction candidates, and full cleanup
+passed; measurements are in the canonical POC result. This does not select
+authority or authorize another live action.
 
 ## Scope, hypothesis, and frozen boundary
 

@@ -630,6 +630,35 @@ not establish p95, liveness, destruction authority, readiness, representative-
 app behavior, or POC-001 completion. The separately approved volume attempt is
 recorded below.
 
+### Direct-AX fixture correlation smoke — recorded result
+
+**Observed, one corrected controlled fixture:** selecting the direct application
+`AXWindowCreated` callback produced exact fixture/observer alias equality after
+one targeted conversion of the delivered Hammerspoon window wrapper to an AX
+element and one `AXIdentifier` read. The unselected filter correlation path
+performed zero element constructions and zero identifier reads.
+
+- direct targeted AX-element conversions: **1**;
+- direct `AXIdentifier` reads: **1**;
+- exact full alias equality: **true**;
+- correlation map before close/after finish: **1/0**;
+- alias-bearing destruction candidates: **2** (direct AX and filter);
+- direct/filter candidate latency after native close: **3.173/7.177 ms**;
+- maximum callback processing duration: **22.012 ms**;
+- POC-issued steady global queries, timers, window effects, and open callbacks
+  after cleanup: **0**.
+
+A prior attempt called `attributeValue` directly on the delivered Hammerspoon
+window wrapper and returned `attribute_read_error`. The orchestrator verified
+that as a harness API-shape mistake against retained evidence and installed
+Hammerspoon source; it is not classified as a platform failure and was corrected
+before this recorded smoke. The corrected run removed its fixture process and
+socket and restored legacy 10bucks.
+
+This single sample proves only the privacy-safe early direct-callback
+correlation and alias retention. It does not establish p95, representative-app
+behavior, readiness/admission, liveness, or destruction authority.
+
 ### Fixture--observer correlation volume — stopped warm class; five cold samples
 
 **Observed, approved volume attempt:** the warm class stopped during sample 2,
