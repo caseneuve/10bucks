@@ -12,7 +12,9 @@ fixture-only source/test/build slice; it does **not** authorize a fixture
 launch, IPC request against the app, Hammerspoon action, observer
 implementation, or any live correlation action. The
 [correlation handoff](CORRELATION-HANDOFF.md) records the public-AX/SHA-256-
-alias fixture seam and the remaining unapproved observer/live gates.
+alias fixture seam and the remaining unapproved observer/live gates. The
+[proposed one-sample live-correlation guide](LIVE-CORRELATION.md) requires a
+separate explicit human approval and authorizes nothing by itself.
 
 ## Decision boundary
 
@@ -310,4 +312,6 @@ negligible idle cost.
 **Current authorized action: none.** The [live-calibration guide](fixture/LIVE-CALIBRATION.md)
 records the completed one-sample observation and does not authorize a repeat
 or any other live action. It did not authorize a Hammerspoon action, observer,
-or fixture--observer correlation experiment.
+or fixture--observer correlation experiment. The proposed
+[live-correlation guide](LIVE-CORRELATION.md) likewise requires separate
+explicit human approval before any live action.

@@ -19,8 +19,10 @@ AppKit occlusion callback and visible bit. The unapproved draft
 defines the public-AX/SHA-256-alias candidate and explicitly authorizes no
 implementation or live action. One approved
 [fixture-only one-sample live-calibration](../../pocs/001-window-events-liveness/fixture/LIVE-CALIBRATION.md)
-has now been recorded below. **POC-001 remains `hypothesis`; this observation
-authorizes neither another fixture action nor a POC-001 live action.**
+has now been recorded below. The [proposed one-sample fixture--observer
+live-correlation guide](../../pocs/001-window-events-liveness/LIVE-CORRELATION.md)
+requires its own explicit human approval. **POC-001 remains `hypothesis`; these
+documents authorize neither another fixture action nor a POC-001 live action.**
 
 ## Decision enabled
 Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,

@@ -7,6 +7,9 @@ and [fixture evidence](../EVIDENCE.md#fixture-only-one-sample-smokecalibration--
 This guide does not authorize another build, launch, IPC action, Hammerspoon
 change, or POC run. The observation remains intentionally outside the
 30-warm/5-cold volume run and the fixture--observer correlation experiment.
+The separately [proposed live-correlation guide](../LIVE-CORRELATION.md)
+requires its own explicit human approval; this completed calibration does not
+supply it.
 
 ## Scope and frozen boundary
 

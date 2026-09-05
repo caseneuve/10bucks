@@ -222,7 +222,9 @@ correlation input without a new handoff.
 ## Later live sequencing (not authorized now)
 
 After source tests are green, a new explicit human approval may authorize **one
-correlation smoke sample only**: clean tree; fresh owner-private run directory;
+correlation smoke sample only** under the exact
+[proposed live-correlation guide](LIVE-CORRELATION.md): clean tree; fresh
+owner-private run directory;
 legacy runtime stopped; POC observer armed; one fixture create; one targeted
 read; exact alias-equality evaluation; controlled fixture/observer cleanup.
 No bootstrap scan, focus selection, global enumeration, or retry is allowed.
@@ -244,6 +246,7 @@ not exactly match, record failure and **stop**. Do not invent a private AX
 attribute, bridge `NSWindow.identifier`, expose raw correlation data through
 IPC/trace, or add a fallback.
 
-**Current authorized action: source and pure-test review only.** No app launch,
-IPC request, Hammerspoon call, observer load, or live action is authorized by
-this handoff.
+**Current authorized action: source and pure-test review only.** The
+[proposed live-correlation guide](LIVE-CORRELATION.md) does not change that
+boundary: it requires explicit human approval. No app launch, IPC request,
+Hammerspoon call, observer load, or live action is authorized by this handoff.
