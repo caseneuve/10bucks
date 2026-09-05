@@ -115,6 +115,30 @@ func testIPCClientServerOneRequestAndDeterministicCleanup() throws {
     try expect(!FileManager.default.fileExists(atPath: socket.path), "shutdown removes only the server-created socket")
 }
 
+func testIPCAfterResponseFailureDoesNotAppendARejectedResponse() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try setFileMode(root, mode: 0o700)
+    let socket = root.appendingPathComponent("poc001-fixture.sock")
+    var executions = 0
+    var afterResponseCalls = 0
+    let server = try FixtureSocketServer(socketPath: socket, dispatch: { request in
+        FixtureResponse(status: .accepted, requestID: request.fields["request_id"]!, sampleID: request.fields["sample_id"]!, fixtureToken: nil, correlationToken: nil)
+    }, execute: { work in
+        executions += 1
+        let response = try work()
+        if executions == 2 { throw IPCError.writeFailed }
+        return response
+    }, afterResponse: { _ in afterResponseCalls += 1 })
+    defer { try? server.shutdown() }
+    let done = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async { defer { done.signal() }; try? server.serveOne() }
+    let response = try FixtureSocketClient(socketPath: socket).send(FixtureRequest(command: "shutdown", fields: ["request_id": "req-001", "sample_id": "sample-001"]))
+    try expect(done.wait(timeout: .now() + 2) == .success, "server returns after one response")
+    try expect(response.status == .accepted, "post-response executor failure cannot append a rejected protocol line")
+    try expect(afterResponseCalls == 1, "nonthrowing after-response action runs only after accepted response write")
+}
+
 let ipcTests: [(String, () throws -> Void)] = [
     ("IPC codec requires four strict request schemas and private responses", testIPCCodecAcceptsOnlyExactStringSchemasAndProducesPrivateResponses),
     ("IPC write seam retries interrupted partial output", testIPCWriteAllRetriesInterruptedAndPartialWrites),
@@ -122,4 +146,5 @@ let ipcTests: [(String, () throws -> Void)] = [
     ("IPC client validates an existing private server socket before connect", testIPCClientRejectsUnsafeServerPathBeforeConnect),
     ("IPC server rejects unsafe directories and never unlinks existing paths", testIPCServerRequiresPrivatePreexistingDirectoryAndSafeSocketPath),
     ("IPC client and server exchange one request and clean up deterministically", testIPCClientServerOneRequestAndDeterministicCleanup),
+    ("IPC never appends rejection after an accepted response", testIPCAfterResponseFailureDoesNotAppendARejectedResponse),
 ]

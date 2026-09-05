@@ -39,16 +39,24 @@ public final class FixtureCoordinator {
         }
     }
 
-    public func didBecomeVisible(objectID: String) -> LifecycleHookResult {
+    public var hasActiveGeneration: Bool { control.activeGeneration != nil || lifecycle.active != nil }
+
+    public func didBecomeKeyCandidate(objectID: String) -> LifecycleHookResult {
         precondition(Thread.isMainThread, "FixtureCoordinator must run on the main thread")
-        return lifecycle.didBecomeVisible(objectID: objectID)
+        return lifecycle.didBecomeKeyCandidate(objectID: objectID)
     }
 
     public func windowWillClose(objectID: String) -> LifecycleHookResult {
         precondition(Thread.isMainThread, "FixtureCoordinator must run on the main thread")
+        let expected = lifecycle.active
         let result = lifecycle.windowWillClose(objectID: objectID)
-        if case .completedClose = result, let active = control.activeGeneration {
-            _ = control.completeClose(token: active.token, generation: active.generation)
+        if let expected {
+            switch result {
+            case .completedClose, .discardedReordered:
+                _ = control.completeClose(token: expected.token, generation: expected.generation)
+            case .rejectedWrongObject, .rejectedDuplicate, .recordedCreateCandidate:
+                break
+            }
         }
         return result
     }
@@ -56,9 +64,10 @@ public final class FixtureCoordinator {
     public func shutdown() {
         precondition(Thread.isMainThread, "FixtureCoordinator must run on the main thread")
         pending.shutdown()
-        guard let active = lifecycle.active else { return }
-        // A shutdown is allowed to close the sole fixture window even when the
-        // operator did not issue close. It never enumerates or touches another window.
+        guard let active = lifecycle.discardForShutdown() else { return }
+        _ = control.completeClose(token: active.token, generation: active.generation)
+        // A shutdown is allowed to close the sole fixture window only after its
+        // generation and pending work are terminal. It never enumerates another window.
         windows.performClose(objectID: active.objectID)
     }
 
@@ -77,7 +86,7 @@ public final class FixtureCoordinator {
     }
 
     private func probe(_ request: FixtureRequest) throws -> FixtureResponse {
-        guard let active = lifecycle.active, active.isCreateCompleted else {
+        guard let active = lifecycle.active, active.isKeyCandidateRecorded else {
             throw FixtureControlError.commandRejected(.unknownFixtureToken)
         }
         let response = try control.handle(request)
@@ -88,7 +97,7 @@ public final class FixtureCoordinator {
     }
 
     private func close(_ request: FixtureRequest) throws -> FixtureResponse {
-        guard let active = lifecycle.active, active.isCreateCompleted,
+        guard let active = lifecycle.active, active.isKeyCandidateRecorded,
               request.fields["fixture_token"] == active.token else {
             throw FixtureControlError.commandRejected(.unknownFixtureToken)
         }

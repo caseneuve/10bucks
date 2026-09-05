@@ -4,7 +4,7 @@ public enum CloseOrigin: Equatable { case ipc, user }
 
 public enum FixtureTraceEvent: Equatable {
     case createRequested(token: String, generation: UInt64, sampleID: String)
-    case createCompleted(token: String, generation: UInt64, sampleID: String)
+    case createKeyCandidate(token: String, generation: UInt64, sampleID: String)
     case closeRequested(token: String, generation: UInt64, sampleID: String)
     case closeCompleted(token: String, generation: UInt64, sampleID: String, origin: CloseOrigin)
     case pendingWorkRequested(token: String, generation: UInt64, sampleID: String)
@@ -27,7 +27,7 @@ public enum FixtureLifecycleError: Error, Equatable {
 }
 
 public enum LifecycleHookResult: Equatable {
-    case completedCreate
+    case recordedCreateCandidate
     case completedClose(CloseOrigin)
     case rejectedWrongObject
     case rejectedDuplicate
@@ -39,11 +39,11 @@ public struct LifecycleActiveGeneration: Equatable {
     public let generation: UInt64
     public let objectID: String
     public let createSampleID: String
-    fileprivate var createCompleted: Bool
+    fileprivate var keyCandidateRecorded: Bool
     fileprivate var closeRequested: Bool
     fileprivate var closeSampleID: String?
 
-    public var isCreateCompleted: Bool { createCompleted }
+    public var isKeyCandidateRecorded: Bool { keyCandidateRecorded }
 }
 
 public struct FixtureLifecycleHooks {
@@ -60,22 +60,22 @@ public struct FixtureLifecycleHooks {
     public mutating func register(token: String, generation: UInt64, objectID: String, createSampleID: String) throws {
         guard active == nil else { throw FixtureLifecycleError.activeGenerationExists }
         guard usedGenerations.insert(generation).inserted else { throw FixtureLifecycleError.duplicateGeneration }
-        active = LifecycleActiveGeneration(token: token, generation: generation, objectID: objectID, createSampleID: createSampleID, createCompleted: false, closeRequested: false, closeSampleID: nil)
+        active = LifecycleActiveGeneration(token: token, generation: generation, objectID: objectID, createSampleID: createSampleID, keyCandidateRecorded: false, closeRequested: false, closeSampleID: nil)
     }
 
-    public mutating func didBecomeVisible(objectID: String) -> LifecycleHookResult {
+    public mutating func didBecomeKeyCandidate(objectID: String) -> LifecycleHookResult {
         guard var active else { return .rejectedDuplicate }
         guard active.objectID == objectID else { return .rejectedWrongObject }
-        guard !active.createCompleted else { return .rejectedDuplicate }
-        active.createCompleted = true
+        guard !active.keyCandidateRecorded else { return .rejectedDuplicate }
+        active.keyCandidateRecorded = true
         self.active = active
-        trace.record(.createCompleted(token: active.token, generation: active.generation, sampleID: active.createSampleID))
-        return .completedCreate
+        trace.record(.createKeyCandidate(token: active.token, generation: active.generation, sampleID: active.createSampleID))
+        return .recordedCreateCandidate
     }
 
     @discardableResult
     public mutating func requestClose(token: String, generation: UInt64, closeSampleID: String) -> Bool {
-        guard var active, active.token == token, active.generation == generation, active.createCompleted, !active.closeRequested else { return false }
+        guard var active, active.token == token, active.generation == generation, active.keyCandidateRecorded, !active.closeRequested else { return false }
         active.closeRequested = true
         active.closeSampleID = closeSampleID
         self.active = active
@@ -87,10 +87,18 @@ public struct FixtureLifecycleHooks {
         guard active.objectID == objectID else { return .rejectedWrongObject }
         self.active = nil
         cancelGeneration(active.token, active.generation)
-        guard active.createCompleted else { return .discardedReordered }
+        guard active.keyCandidateRecorded else { return .discardedReordered }
         let origin: CloseOrigin = active.closeRequested ? .ipc : .user
         let sampleID = active.closeSampleID ?? active.createSampleID
         trace.record(.closeCompleted(token: active.token, generation: active.generation, sampleID: sampleID, origin: origin))
         return .completedClose(origin)
+    }
+
+    @discardableResult
+    public mutating func discardForShutdown() -> LifecycleActiveGeneration? {
+        guard let active else { return nil }
+        self.active = nil
+        cancelGeneration(active.token, active.generation)
+        return active
     }
 }

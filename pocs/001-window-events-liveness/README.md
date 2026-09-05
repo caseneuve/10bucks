@@ -94,18 +94,19 @@ security settings. The fixture must use public AppKit/Foundation/Darwin APIs;
 no `hs`, AX APIs, private Spaces APIs, polling, privileged helper, or
 non-fixture window operation is permitted.
 
-### Build-only integration corrections (2026-08-29)
+### Build-only integration corrections (2026-09-05)
 
 - **Verified integration mismatch:** the macOS 26 Command Line Tools SDK used by
   the frozen `swiftc` command has no `NSWindow.didBecomeVisibleNotification`
   declaration (and the frozen spelling does not compile). The build-only
   adapter therefore uses the public `NSWindowDelegate.windowDidBecomeKey(_:)`
   callback while retaining the pure identity/generation duplicate guards. Its
-  `native_create_completed` marker is a **Hypothesis**, not a claim that the
-  window became visible, unobscured, painted, or observable by another process.
-  A later live gate must either prove an equivalent public visible hook or
-  deliberately revise the measurement contract; this correction does not pass
-  the original did-become-visible threshold.
+  `fixture_key_became_candidate` marker is explicitly a candidate, not a
+  completion-looking event or a claim that the window became visible,
+  unobscured, painted, or observable by another process. A later live gate
+  must either prove an equivalent public visible hook or deliberately revise
+  the measurement contract; the original did-become-visible threshold remains
+  unresolved.
 - **Verified integration mismatch:** the frozen build command named only five
   sources, but the checked-in pure implementation intentionally factors the
   lifecycle, pending-work, token, and coordinator seams into additional source
@@ -127,11 +128,12 @@ handling run on the main thread.
    `NSWindow.didBecomeVisibleNotification` is unavailable in the verified CLT
    SDK; the build-only adapter currently uses `windowDidBecomeKey(_:)` for the
    guarded completion candidate.
-2. That callback emits at most one `native_create_completed` candidate for that
-   generation. It does **not** establish the original did-become-visible
-   measurement, nor that the window is unobscured, AX-visible, painted in a
-   captured frame, owned by a regular Space, observed by Hammerspoon, or live
-   by a production definition.
+2. That callback emits at most one explicitly named
+   `fixture_key_became_candidate` record for that generation. It does **not**
+   establish the original did-become-visible measurement, whose completion
+   threshold remains unresolved, nor that the window is unobscured, AX-visible,
+   painted in a captured frame, owned by a regular Space, observed by
+   Hammerspoon, or live by a production definition.
 3. On `close`, it emits `close_requested` and invokes only that fixture
    window's `performClose(nil)`. It does not close a window if the registry has
    no matching fixture token.
@@ -149,10 +151,10 @@ handling run on the main thread.
 
 No lifecycle hook is used as a production authority. Duplicate notifications,
 wrong object, and duplicate generation are safe rejected/duplicate outcomes.
-If the registered window's `windowWillClose(_:)` arrives before its create
-completion, that hook removes and cancels the generation for cleanup but emits
-no `native_close_completed`; it is an anomalous discarded ordering, never a
-completion.
+If the registered window's `windowWillClose(_:)` arrives before its key
+candidate, that hook clears both lifecycle/control generation state and cancels
+work for cleanup but emits no `native_close_completed`; it is an anomalous
+ discarded ordering, never a completion.
 
 ### Clock and trace
 
@@ -209,8 +211,8 @@ fixture token prefix above. The response repeats only request/sample IDs,
 accepted/rejected status, and the generated fixture/correlation tokens. The
 operator sequence for the later run is fixed: validate private output
 location → launch one fixture instance → wait for `run_started`/socket-ready →
-`create` → await its response and `native_create_completed` or timeout →
-`probe_pending_work` → await `pending_work_serviced` or timeout → `close` using
+`create` → await its response and the diagnostic `fixture_key_became_candidate`
+(or timeout; this is not create completion) → `probe_pending_work` → await `pending_work_serviced` or timeout → `close` using
 that response token → await `native_close_completed` or timeout → repeat only
 the declared class → `shutdown` → verify cleanup. No command is automatic, and
 no command in this handoff is authorized now.
@@ -239,8 +241,8 @@ destruction, and next-key service gates:
 
 | Class | Samples | Fixed measure and threshold |
 | --- | ---: | --- |
-| Warm create | 30 | `native_create_completed - create_requested`: p95 <= 100 ms |
-| Cold create (first create after fresh fixture launch) | 5 | completion or explicit timeout within 3,000 ms |
+| Warm create | 30 | **Unresolved:** original `native_create_completed - create_requested` cannot be measured by this build-only candidate hook |
+| Cold create (first create after fresh fixture launch) | 5 | **Unresolved:** original completion or explicit timeout remains a later live-gate measure |
 | Warm close | 10 | `native_close_completed - close_requested`: every successful sample <= 1,000 ms |
 | Pending-work (first after create, no other fixture work pending) | 30 warm + 5 cold | `pending_work_serviced - pending_work_requested`: p95 <= 50 ms and max <= 100 ms |
 

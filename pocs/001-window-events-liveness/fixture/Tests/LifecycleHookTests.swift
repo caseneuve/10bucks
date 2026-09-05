@@ -1,14 +1,14 @@
 import Foundation
 
-func testLifecycleHooksCompleteCreateOnlyOnceForTheRegisteredObjectAndGeneration() throws {
+func testLifecycleHooksRecordOneExplicitKeyCandidateForTheRegisteredObjectAndGeneration() throws {
     let trace = RecordingTraceSink()
     var model = FixtureLifecycleHooks(trace: trace)
     try model.register(token: "fixture-win-AAAA", generation: 1, objectID: "object-1", createSampleID: "fixture-create-warm-001")
 
-    try expect(model.didBecomeVisible(objectID: "other") == .rejectedWrongObject, "wrong visible notification is rejected")
-    try expect(model.didBecomeVisible(objectID: "object-1") == .completedCreate, "registered visible hook completes create")
-    try expect(model.didBecomeVisible(objectID: "object-1") == .rejectedDuplicate, "duplicate visible notification is rejected")
-    try expect(trace.events == [.createCompleted(token: "fixture-win-AAAA", generation: 1, sampleID: "fixture-create-warm-001")], "only one create completion carries its create sample")
+    try expect(model.didBecomeKeyCandidate(objectID: "other") == .rejectedWrongObject, "wrong key candidate is rejected")
+    try expect(model.didBecomeKeyCandidate(objectID: "object-1") == .recordedCreateCandidate, "registered key hook records a candidate, not completion")
+    try expect(model.didBecomeKeyCandidate(objectID: "object-1") == .rejectedDuplicate, "duplicate key candidate is rejected")
+    try expect(trace.events == [.createKeyCandidate(token: "fixture-win-AAAA", generation: 1, sampleID: "fixture-create-warm-001")], "only one explicit candidate carries its create sample")
 }
 
 func testLifecycleHooksDiscardReorderedCloseAtItsRemovalBoundary() throws {
@@ -27,7 +27,7 @@ func testLifecycleHooksAttributeCloseSamplesAndRetainRegistryUntilWillClose() th
     let trace = RecordingTraceSink()
     var model = FixtureLifecycleHooks(trace: trace)
     try model.register(token: "fixture-win-AAAA", generation: 7, objectID: "object-1", createSampleID: "fixture-create-warm-007")
-    _ = model.didBecomeVisible(objectID: "object-1")
+    _ = model.didBecomeKeyCandidate(objectID: "object-1")
     try expect(model.requestClose(token: "fixture-win-AAAA", generation: 7, closeSampleID: "fixture-close-warm-007"), "IPC close records expected attribution and sample")
     try expect(model.active != nil, "requesting close does not remove registry")
     try expect(model.windowWillClose(objectID: "wrong") == .rejectedWrongObject, "wrong close object is rejected")
@@ -41,7 +41,7 @@ func testLifecycleHooksAttributeUnrequestedUserCloseAndRejectDuplicateGeneration
     let trace = RecordingTraceSink()
     var model = FixtureLifecycleHooks(trace: trace)
     try model.register(token: "fixture-win-AAAA", generation: 2, objectID: "object-1", createSampleID: "fixture-create-warm-002")
-    _ = model.didBecomeVisible(objectID: "object-1")
+    _ = model.didBecomeKeyCandidate(objectID: "object-1")
     try expect(model.windowWillClose(objectID: "object-1") == .completedClose(.user), "unrequested close is attributed to user")
     try expect(trace.events.last == .closeCompleted(token: "fixture-win-AAAA", generation: 2, sampleID: "fixture-create-warm-002", origin: .user), "user close retains the create sample when no close request exists")
     try expectThrows(FixtureLifecycleError.duplicateGeneration) {
@@ -50,7 +50,7 @@ func testLifecycleHooksAttributeUnrequestedUserCloseAndRejectDuplicateGeneration
 }
 
 let lifecycleHookTests: [(String, () throws -> Void)] = [
-    ("lifecycle hooks complete one create with its sample", testLifecycleHooksCompleteCreateOnlyOnceForTheRegisteredObjectAndGeneration),
+    ("lifecycle hooks record one explicit key candidate with its sample", testLifecycleHooksRecordOneExplicitKeyCandidateForTheRegisteredObjectAndGeneration),
     ("lifecycle hooks discard reordered close at will-close removal boundary", testLifecycleHooksDiscardReorderedCloseAtItsRemovalBoundary),
     ("lifecycle hooks attribute close samples and remove only at will-close", testLifecycleHooksAttributeCloseSamplesAndRetainRegistryUntilWillClose),
     ("lifecycle hooks attribute user close and reject duplicate generation", testLifecycleHooksAttributeUnrequestedUserCloseAndRejectDuplicateGeneration),

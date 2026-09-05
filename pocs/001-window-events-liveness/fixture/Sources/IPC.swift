@@ -171,18 +171,22 @@ private struct JSONTokenObjectParser {
 public final class FixtureSocketServer {
     public typealias CommandDispatch = (FixtureRequest) throws -> FixtureResponse
     public typealias CommandExecutor = (@escaping () throws -> FixtureResponse) throws -> FixtureResponse
+    // This hook is intentionally nonthrowing. It runs only after the accepted
+    // response bytes are written; executor failure at this point cannot add a
+    // second protocol response.
+    public typealias AfterResponse = (FixtureRequest) -> Void
     private let descriptor: Int32
     private let socketPath: String
     private let identity: (dev: dev_t, ino: ino_t)
     private let dispatch: CommandDispatch
     private let execute: CommandExecutor
     private let configureWriteSocket: (Int32) -> Bool
-    private let afterResponse: (FixtureRequest) -> Void
+    private let afterResponse: AfterResponse
     private var stopped = false
 
     // Production composes this default with the AppKit main queue. Tests can
     // inject a direct executor without creating an AppKit run loop.
-    public init(socketPath: URL, dispatch: @escaping CommandDispatch, execute: @escaping CommandExecutor = FixtureSocketServer.onMainQueue, configureWriteSocket: @escaping (Int32) -> Bool = FixtureSocketServer.configureNoSigPipe, afterResponse: @escaping (FixtureRequest) -> Void = { _ in }) throws {
+    public init(socketPath: URL, dispatch: @escaping CommandDispatch, execute: @escaping CommandExecutor = FixtureSocketServer.onMainQueue, configureWriteSocket: @escaping (Int32) -> Bool = FixtureSocketServer.configureNoSigPipe, afterResponse: @escaping AfterResponse = { _ in }) throws {
         try Self.validateRunDirectory(socketPath.deletingLastPathComponent())
         self.socketPath = socketPath.path
         self.dispatch = dispatch
@@ -239,14 +243,19 @@ public final class FixtureSocketServer {
         defer { Darwin.close(connection) }
         guard configureWriteSocket(connection) else { throw IPCError.socketSetupFailed }
         let raw = try Self.readOneMessage(connection)
-        do {
-            let request = try FixtureCodec.decodeRequestLine(raw)
-            do {
-                try Self.writeAll(connection, data: FixtureCodec.encodeResponse(try execute { try self.dispatch(request) }))
-                _ = try execute { self.afterResponse(request); return FixtureResponse(status: .accepted, requestID: request.fields["request_id"]!, sampleID: request.fields["sample_id"]!, fixtureToken: nil, correlationToken: nil) }
-            } catch { try Self.writeAll(connection, data: FixtureCodec.encodeRejected(requestID: request.fields["request_id"], sampleID: request.fields["sample_id"])) }
-        } catch {
-            try Self.writeAll(connection, data: FixtureCodec.encodeRejected())
+        let request: FixtureRequest
+        do { request = try FixtureCodec.decodeRequestLine(raw) }
+        catch { try Self.writeAll(connection, data: FixtureCodec.encodeRejected()); return }
+
+        let response: FixtureResponse
+        do { response = try execute { try self.dispatch(request) } }
+        catch { try Self.writeAll(connection, data: FixtureCodec.encodeRejected(requestID: request.fields["request_id"], sampleID: request.fields["sample_id"])); return }
+
+        // Once accepted output is written, this method never writes again.
+        try Self.writeAll(connection, data: FixtureCodec.encodeResponse(response))
+        _ = try? execute {
+            self.afterResponse(request)
+            return response
         }
     }
 

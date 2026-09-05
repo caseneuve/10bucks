@@ -30,7 +30,7 @@ func testCoordinatorCloseTracesThenPerformsOnlyMatchingFixtureClose() throws {
     let control = FixtureControl(tokenGenerator: DeterministicTokenGenerator(values: ["AAAA", "BBBB"]))
     let coordinator = FixtureCoordinator(control: control, lifecycle: FixtureLifecycleHooks(trace: trace), windows: window, trace: trace, pending: PendingWorkModel(trace: trace, enqueue: { $0() }))
     let created = try coordinator.handle(FixtureRequest(command: "create", fields: ["request_id": "req-001", "sample_id": "create-001"]))
-    _ = coordinator.didBecomeVisible(objectID: "window-1")
+    _ = coordinator.didBecomeKeyCandidate(objectID: "window-1")
     let beforeClose = coordinator.operations.count
 
     _ = try coordinator.handle(FixtureRequest(command: "close", fields: ["request_id": "req-002", "sample_id": "close-001", "fixture_token": created.fixtureToken!]))
@@ -47,9 +47,37 @@ func testCoordinatorRejectsCloseBeforeCompletionWithoutPoisoningGeneration() thr
     try expectThrows(FixtureControlError.commandRejected(.unknownFixtureToken)) {
         _ = try coordinator.handle(FixtureRequest(command: "close", fields: ["request_id": "req-002", "sample_id": "close-001", "fixture_token": created.fixtureToken!]))
     }
-    _ = coordinator.didBecomeVisible(objectID: "window-1")
+    _ = coordinator.didBecomeKeyCandidate(objectID: "window-1")
     _ = try coordinator.handle(FixtureRequest(command: "close", fields: ["request_id": "req-003", "sample_id": "close-002", "fixture_token": created.fixtureToken!]))
     try expect(window.operations.last == "performClose:window-1", "rejected premature close leaves the completed generation closable")
+}
+
+func testCoordinatorClearsControlForReorderedWillCloseWithoutFalseCloseRecord() throws {
+    let trace = CoordinatorTrace()
+    let window = CoordinatorWindowPort()
+    let control = FixtureControl(tokenGenerator: DeterministicTokenGenerator(values: ["AAAA", "BBBB", "CCCC", "DDDD"]))
+    let coordinator = FixtureCoordinator(control: control, lifecycle: FixtureLifecycleHooks(trace: trace), windows: window, trace: trace, pending: PendingWorkModel(trace: trace, enqueue: { $0() }))
+    _ = try coordinator.handle(FixtureRequest(command: "create", fields: ["request_id": "req-001", "sample_id": "create-001"]))
+    try expect(coordinator.windowWillClose(objectID: "window-1") == .discardedReordered, "reordered will-close remains a discarded lifecycle result")
+    try expect(!coordinator.hasActiveGeneration, "every matching terminal will-close clears control and lifecycle state")
+    try expect(!trace.events.contains(where: { if case .closeCompleted = $0 { return true }; return false }), "discarded ordering emits no false close-completed record")
+    let next = try coordinator.handle(FixtureRequest(command: "create", fields: ["request_id": "req-002", "sample_id": "create-002"]))
+    try expect(next.fixtureToken == "fixture-win-CCCC", "cleared control accepts the next generation")
+}
+
+func testCoordinatorShutdownClearsActiveGenerationAndPendingWorkBeforeClosingFixture() throws {
+    let trace = CoordinatorTrace()
+    let window = CoordinatorWindowPort()
+    var queued: [() -> Void] = []
+    let pending = PendingWorkModel(trace: trace, enqueue: { queued.append($0) })
+    let control = FixtureControl(tokenGenerator: DeterministicTokenGenerator(values: ["AAAA", "BBBB"]))
+    let coordinator = FixtureCoordinator(control: control, lifecycle: FixtureLifecycleHooks(trace: trace), windows: window, trace: trace, pending: pending)
+    _ = try coordinator.handle(FixtureRequest(command: "create", fields: ["request_id": "req-001", "sample_id": "create-001"]))
+    _ = coordinator.didBecomeKeyCandidate(objectID: "window-1")
+    _ = try coordinator.handle(FixtureRequest(command: "probe_pending_work", fields: ["request_id": "req-002", "sample_id": "probe-001"]))
+    coordinator.shutdown()
+    try expect(!coordinator.hasActiveGeneration && pending.state == .shutDown, "shutdown leaves no active generation or pending work")
+    try expect(window.operations.last == "performClose:window-1", "shutdown closes only its fixture window after state cleanup")
 }
 
 func testCoordinatorRejectsPendingProbeWithoutCompletedMatchingGeneration() throws {
@@ -63,7 +91,7 @@ func testCoordinatorRejectsPendingProbeWithoutCompletedMatchingGeneration() thro
     try expectThrows(FixtureControlError.commandRejected(.unknownFixtureToken)) {
         _ = try coordinator.handle(FixtureRequest(command: "probe_pending_work", fields: ["request_id": "req-002", "sample_id": "probe-001"]))
     }
-    _ = coordinator.didBecomeVisible(objectID: "window-1")
+    _ = coordinator.didBecomeKeyCandidate(objectID: "window-1")
     _ = try coordinator.handle(FixtureRequest(command: "probe_pending_work", fields: ["request_id": "req-003", "sample_id": "probe-002"]))
     try expect(queued.count == 1, "probe queues exactly one pending main-work closure")
 }
@@ -72,5 +100,7 @@ let fixtureCoordinatorTests: [(String, () throws -> Void)] = [
     ("coordinator creates, registers, traces, and orders front in frozen order", testCoordinatorCreateRegistersTracesAndOrdersFrontInFrozenOrder),
     ("coordinator closes only the matching fixture in frozen order", testCoordinatorCloseTracesThenPerformsOnlyMatchingFixtureClose),
     ("coordinator rejects premature close without poisoning its generation", testCoordinatorRejectsCloseBeforeCompletionWithoutPoisoningGeneration),
-    ("coordinator queues pending work only for a completed fixture generation", testCoordinatorRejectsPendingProbeWithoutCompletedMatchingGeneration),
+    ("coordinator clears control for reordered will-close without a false completion", testCoordinatorClearsControlForReorderedWillCloseWithoutFalseCloseRecord),
+    ("coordinator shutdown clears state before closing the fixture", testCoordinatorShutdownClearsActiveGenerationAndPendingWorkBeforeClosingFixture),
+    ("coordinator queues pending work only for a recorded key candidate", testCoordinatorRejectsPendingProbeWithoutCompletedMatchingGeneration),
 ]

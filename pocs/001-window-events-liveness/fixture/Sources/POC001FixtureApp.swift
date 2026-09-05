@@ -37,7 +37,7 @@ private final class AppKitWindowPort: NSObject, FixtureWindowPort, NSWindowDeleg
     func windowDidBecomeKey(_ notification: Notification) {
         precondition(Thread.isMainThread)
         guard let window = notification.object as? NSWindow, let objectID = objectID(for: window) else { return }
-        _ = coordinator?.didBecomeVisible(objectID: objectID)
+        _ = coordinator?.didBecomeKeyCandidate(objectID: objectID)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -71,8 +71,8 @@ private final class AppTraceSink: FixtureTraceSink {
             let clock = try Clock.nowTicks()
             let mapped: (String, String, [String: TraceScalar], String?, Bool)
             switch event {
-            case let .createRequested(token, generation, sample): mapped = ("create_requested", sample, ["fixture_token": .string(token)], key(token, generation, "create"), false)
-            case let .createCompleted(token, generation, sample): mapped = ("native_create_completed", sample, ["fixture_token": .string(token)], key(token, generation, "create"), true)
+            case let .createRequested(token, generation, sample): mapped = ("create_requested", sample, ["fixture_token": .string(token)], key(token, generation, "create_candidate"), false)
+            case let .createKeyCandidate(token, generation, sample): mapped = ("fixture_key_became_candidate", sample, ["fixture_token": .string(token)], key(token, generation, "create_candidate"), true)
             case let .closeRequested(token, generation, sample): mapped = ("close_requested", sample, ["fixture_token": .string(token)], key(token, generation, "close"), false)
             case let .closeCompleted(token, generation, sample, origin): mapped = ("native_close_completed", sample, ["fixture_token": .string(token), "origin": .string(origin == .ipc ? "ipc" : "user")], key(token, generation, "close"), true)
             case let .pendingWorkRequested(token, generation, sample): mapped = ("pending_work_requested", sample, ["fixture_token": .string(token)], key(token, generation, "pending"), false)
