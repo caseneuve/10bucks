@@ -3,11 +3,13 @@
 **Status: approved implementation handoff; POC-001 remains `hypothesis`.** This
 is the separately gated handoff requested by
 [`docs/pocs/001-window-events-liveness.md`](../../docs/pocs/001-window-events-liveness.md).
-It authorizes a future worker to add the isolated fixture source and its tests
-only. It does **not** authorize compiling, signing, launching, opening the
-app, sending IPC, loading/reloading Hammerspoon, attaching an observer, or any
-live experiment. A distinct approval is required for each build/launch and for
-the later fixture--observer correlation experiment.
+The source/test checkpoint is complete. The next action is the proposed,
+separately human-gated [one-sample fixture-only live calibration](fixture/LIVE-CALIBRATION.md).
+It does **not** authorize compiling, signing, launching, opening the app,
+sending IPC, loading/reloading Hammerspoon, attaching an observer, or any live
+experiment until that guide receives explicit human approval. A distinct
+approval is required for each build/launch and for the later fixture--observer
+correlation experiment.
 
 ## Decision boundary
 
@@ -296,6 +298,7 @@ be committed. At POC conclusion remove fixture source, build products, and
 traces unless a result document names a POC-only diagnostic owner, use, and
 negligible idle cost.
 
-**Current authorized action: none beyond the future source/test implementation
-checkpoint.** No build, launch, IPC command, Hammerspoon action, or live POC
-is authorized by this README.
+**Current authorized action: none.** The [live-calibration guide](fixture/LIVE-CALIBRATION.md)
+is proposed only and requires explicit human approval before its one build,
+launch, IPC sequence, or other live action. It does not authorize a
+Hammerspoon action, observer, or fixture--observer correlation experiment.

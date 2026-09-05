@@ -14,8 +14,11 @@ advances the remaining live matrix. The companion
 now freezes the separately gated AppKit fixture **implementation handoff**.
 Its approved narrow source/test revision measures
 `fixture_create_visible_completed` from `create_requested` using the public
-AppKit occlusion callback and visible bit. **POC-001 remains `hypothesis`, and
-neither a fixture build/launch nor a live action is authorized**.
+AppKit occlusion callback and visible bit. The next
+[fixture-only one-sample live-calibration guide](../../pocs/001-window-events-liveness/fixture/LIVE-CALIBRATION.md)
+is **proposed** and requires explicit human approval. **POC-001 remains
+`hypothesis`; neither a fixture build/launch nor a live action is authorized
+until that approval**.
 
 ## Decision enabled
 Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,
