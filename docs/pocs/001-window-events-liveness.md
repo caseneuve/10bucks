@@ -7,10 +7,10 @@ This is a pre-run protocol. A disposable POC-only observer currently exists
 through step 2C (source comparison, targeted metadata/Space reads, and pure
 correlation); no production runtime changed. One short, orchestrator-guided
 Terminal-only calibration was run as diagnostic-only evidence. The next
-authorized action is exactly one human-gated Terminal manual regular-Space move
-specified in
+authorized action is exactly one human-gated Terminal manual regular-Space move retry 005 specified in
 [`pocs/001-window-events-liveness/README.md`](../../pocs/001-window-events-liveness/README.md).
-It is not a result and does not authorize the remaining live matrix.
+Aborted sample 004 remains recorded in Results; retry 005 is not a result and
+does not authorize the remaining live matrix.
 
 ## Decision enabled
 Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,
@@ -104,6 +104,12 @@ redacted token), `source`, `sequence`, and `monotonic_ms`.
 
 Use these markers exactly:
 
+- `action_target_binding_armed` / `action_target_binding_hotkey_result`:
+  the POC-only one-shot binder's armed state and its bound/rejected outcome.
+  The result records no raw focused-window identity. The retry guide uses
+  `⌃⌥⌘B` (physical Control, Option/Alt, and Command held while B is tapped
+  once); the binder deletes/disarms before it reads focus, never re-arms, and
+  does not issue an effect.
 - `action_begin`: the guide announces a manual action immediately before
   performing it, or explicitly directs the separate controlled action driver
   to issue the named native action.
@@ -159,9 +165,9 @@ eligibility/admission marker; POC-001 issues zero frame effects.
 
 The full matrix below remains **pending**. The first Terminal-only calibration
 is diagnostic-only. The operator guide separately authorizes exactly one next
-human-gated **manual regular-Space move** of a blank Terminal target from
-Desktop 1 to Desktop 2, using the one-shot target-binding chord and exact
-move-only flow. Do not advance from that move to minimize/hide/restore,
+human-gated **manual regular-Space move retry 005** of a blank Terminal target from
+Desktop 1 to Desktop 2, using the one-shot `⌃⌥⌘B` target-binding chord and
+exact move-only flow. Do not advance from that move to minimize/hide/restore,
 fullscreen, cold bootstrap/reload, rapid repetitions, other apps, or the
 representative-app matrix without a new approved handoff. For Terminal and the
 Chromium representative first, then each remaining representative app where its
@@ -482,7 +488,19 @@ The raw trace remains private and is not committed. This small fullscreen-only
 sample does not select an event source, destruction authority, move algorithm,
 or broad POC pass/fail result.
 
-### Manual regular-Space move 004 — prepared, not run
+### Aborted manual regular-Space move 004 — no target binding or move
+
+- **Observed:** the operator could not generate
+  Control-Option-Command-F12. The attempted key press inserted non-sensitive
+  terminal junk instead. The raw trace and inserted text are not copied here.
+- **Observed:** this happened before the target binder fired and before any
+  target binding or manual regular-Space move. The orchestrator marked the
+  sample aborted, stopped the observer, exported its trace with mode `0600`,
+  restored legacy 10bucks, and verified the binder was disarmed.
+- **Conclusion:** 004 is aborted history, not a result for event ordering,
+  ownership, latency, source selection, or manual-move detection.
+
+### Manual regular-Space move retry 005 — prepared, not run
 
 - **Observed run setup (not portable):** a read-only topology observation found
   one display, three regular Spaces with the first active, and three fullscreen
@@ -490,17 +508,20 @@ or broad POC pass/fail result.
   topology contract or a claim about another run.
 - **Target:** to avoid an operator Console/`hs -c` focus query binding the
   session window, the POC-only observer has a one-shot
-  Control-Option-Command-F12 binder. It deletes its `hs.hotkey` handle before
-  calling the existing read-only `begin_target_action` against the human's
-  current focus. It records binding success/rejection, permits no second arm,
-  reports armed state, and deletes the handle on stop and defensive failed
-  startup cleanup. It has no timer, effect, admission, or action driver.
-- **Verified source API:** installed Hammerspoon 1.1.1 `hs.hotkey` source
-  documents `hs.hotkey.new(...):enable()` and `hs.hotkey:delete()`; the POC
-  uses those APIs. Pure fakes include userdata-like hotkeys.
+  Control-Option-Command-B (`⌃⌥⌘B`) binder. Hold physical Control, Option/Alt,
+  and Command, then tap B once. It deletes its `hs.hotkey` handle before
+  calling the existing read-only `begin_target_action` against the human’s
+  current focus. It records binding success/rejection, permits no second arm
+  or re-arm, reports armed state, and deletes the handle on stop and defensive
+  failed startup cleanup. It has no timer, effect, admission, or action driver.
+- **Verified:** source inspection found no project legacy binding using the
+  exact Control-Option-Command-B chord. Legacy is stopped for this POC anyway.
+  Installed Hammerspoon 1.1.1 `hs.hotkey` source documents
+  `hs.hotkey.new(...):enable()` and `hs.hotkey:delete()`; the POC uses those
+  APIs. Pure fakes include userdata-like hotkeys.
 - **Next authorized live action:** only the exact move-only guide in the POC
-  README: bind the blank Terminal target once with the chord, manually drag
-  only that thumbnail from Desktop 1 to Desktop 2 in Mission Control, visually
+  README: bind the blank Terminal target once with `⌃⌥⌘B`, manually drag only
+  that thumbnail from Desktop 1 to Desktop 2 in Mission Control, visually
   verify it on Desktop 2, return to the Desktop 1/session window, then report
   completion. Manual action timing is unmeasurable; no two-second claim is
   authorized. Any UI/identity/destination uncertainty aborts without

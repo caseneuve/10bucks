@@ -199,7 +199,7 @@ return {
     equal(#coalesced, 1); equal(coalesced[1].result, "duplicate_active_space"); equal(state.topology_calls, after_first)
     observer:stop()
   end,
-  ["POC-001 one-shot target-binding hotkey deletes before binding the actual focused cached window"] = function()
+  ["POC-001 Ctrl-Option-Command-B one-shot target-binding hotkey deletes before binding the actual focused cached window"] = function()
     local window, application = fake_window(8041, complete_metadata()), fake_application(641, {})
     local state = install_fake_hs({ application }); install_fake_hotkey(state)
     install_fake_spaces(state, { ["8041"] = { 10 }, reverse = { ["10"] = { 8041 } } })
@@ -213,7 +213,7 @@ return {
     application.watcher.callback(window, "AXWindowCreated")
     assert(observer:arm_target_action("move-sample", "manual_move_regular_space"))
     equal(observer:status().target_binding_armed, true)
-    equal(state.hotkeys[1].key, "f12"); equal(table.concat(state.hotkeys[1].modifiers, ","), "ctrl,alt,cmd")
+    equal(state.hotkeys[1].key, "b"); equal(table.concat(state.hotkeys[1].modifiers, ","), "ctrl,alt,cmd")
     state.hotkeys[1].callback()
     equal(state.focused_calls, 1); assert(state.hotkeys[1].deleted); equal(observer:status().target_binding_armed, false)
     local action = events(observer, "action_begin")[1]

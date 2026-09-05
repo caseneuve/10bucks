@@ -539,7 +539,7 @@ function Observer:arm_target_action(sample_id, action)
     })
   end
   local created, created_hotkey = protected(function()
-    return hs.hotkey.new({ "ctrl", "alt", "cmd" }, "f12", callback)
+    return hs.hotkey.new({ "ctrl", "alt", "cmd" }, "b", callback)
   end)
   if not created or not created_hotkey then
     self.trace:emit("action_target_binding_rejected", { source = "operator", action = action, action_target_status = "unarmed", reason = "hotkey_create_failed", result = "aborted" })
