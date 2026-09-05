@@ -28,10 +28,12 @@ function Correlation.new(sha256)
   return setmetatable({ sha256 = sha256, aliases_by_window = {}, armed_generation = nil, consumed = false }, Correlation)
 end
 
-function Correlation:arm(generation)
+function Correlation:arm(generation, source)
   if self.armed_generation ~= nil and not self.consumed then return false, "already_armed" end
   if type(generation) ~= "number" or generation < 1 or generation % 1 ~= 0 then return false, "invalid_generation" end
-  self.armed_generation, self.consumed = generation, false
+  source = source or "window_filter" -- preserves the completed filter-smoke guide.
+  if source ~= "window_filter" and source ~= "direct_ax" then return false, "invalid_source" end
+  self.armed_generation, self.candidate_source, self.consumed = generation, source, false
   return true
 end
 
@@ -64,11 +66,11 @@ function Correlation:count()
 end
 
 function Correlation:clear()
-  self.aliases_by_window, self.armed_generation, self.consumed = {}, nil, false
+  self.aliases_by_window, self.armed_generation, self.candidate_source, self.consumed = {}, nil, nil, false
 end
 
 function Correlation:state()
-  return { armed_generation = self.armed_generation, consumed = self.consumed }
+  return { armed_generation = self.armed_generation, candidate_source = self.candidate_source, consumed = self.consumed }
 end
 
 function Correlation.join_aliases(fixture_alias, observer_alias)

@@ -104,11 +104,15 @@ pure tests, static checks, and build verification:
    `correlation_token`, raw AX values, PID, and native ID. The existing
    `fixture_token` remains the separate private close-control capability.
 2. **Observer source/test slice (implemented; not live-authorized):** an
-   explicit one-generation arm scopes only an already-delivered `windowCreated`
-   callback from the exact fixture bundle. The bundle check is not association
-   evidence and is not exported. That callback calls
-   `hs.axuielement.windowElement(callback_window)` once and
-   `:attributeValue("AXIdentifier")` once. It validates the exact raw-token
+   explicit one-generation arm selects exactly one candidate source:
+   `window_filter` (the completed smoke's compatibility default) or `direct_ax`.
+   The selected source alone may consume the generation. `window_filter` scopes
+   its already-delivered `windowCreated` callback and constructs one AX element;
+   `direct_ax` scopes only the exact fixture application's already-delivered
+   `AXWindowCreated` callback and reads that delivered AX window element directly
+   (no element construction). In either case the exact fixture bundle scopes the
+   callback but is not association evidence and is not exported. The selected
+   callback performs exactly one `AXIdentifier` read. It validates the exact raw-token
    grammar, computes `alias(T)` with `hs.hash.SHA256`, emits the alias, retains
    only `native-window-id -> correlation_alias` in memory, and immediately
    clears its raw Lua value/reference. It emits neither the raw token nor AX
@@ -220,6 +224,17 @@ a private hashing API, a different encoding, a raw-token export, or a rejected
 correlation input without a new handoff.
 
 ## Later live sequencing (not authorized now)
+
+A **separate direct-AX one-sample smoke is Target only**: it requires a fresh,
+explicit human approval and a fresh frozen-source review. It must arm exactly
+`arm_fixture_correlation(1, "direct_ax")`, then permit only the fixture
+application's delivered `AXWindowCreated` callback to take the one direct
+`AXIdentifier` read. The filter callback may still be observed for its existing
+candidate-only/destruction instrumentation, but must make zero correlation AX
+constructions and reads and must not consume the generation. Its acceptance is
+otherwise the same alias-only, cleanup, and both-destruction-candidate-retention
+boundary above. This definition authorizes no fixture launch, observer load,
+IPC, or live action.
 
 The one-sample correlation smoke completed under the
 [live-correlation guide](LIVE-CORRELATION.md). The separately approved volume

@@ -1,13 +1,35 @@
 # POC-001 fixture--observer correlation — one human-gated smoke
 
 **Status: completed once; no further run is authorized.** This was the
-one-sample live correlation smoke following the implemented source and
-absolute-clock prerequisite in [CORRELATION-HANDOFF.md](CORRELATION-HANDOFF.md).
+one-sample `window_filter`-selected live correlation smoke following the
+implemented source and absolute-clock prerequisite in
+[CORRELATION-HANDOFF.md](CORRELATION-HANDOFF.md).
 Its result is recorded in the canonical POC document. It is not authorization
 for a retry, volume run, POC-001 pass, destruction authority selection, or a
 pending/next-key service claim. The earlier [fixture-only
 calibration](fixture/LIVE-CALIBRATION.md) remains completed once and is not
 repeated here.
+
+## Separately gated direct-AX smoke (Target; not authorized)
+
+A future direct-AX smoke is a separate one-sample procedure, not a retry or
+continuation of this completed filter-selected run. It requires new explicit
+human approval, a newly recorded frozen source checkpoint, and the same private
+evidence/cleanup gates below. Its only procedural change is:
+
+```lua
+assert(POC001_OBSERVER:arm_fixture_correlation(1, "direct_ax"))
+```
+
+Only the exact fixture application's already-delivered `AXWindowCreated`
+callback may consume that arm. It reads `AXIdentifier` once directly from that
+callback's AX window element. The bundle check scopes the application but is not
+identity evidence. The filter remains available for its existing lifecycle and
+destruction-candidate instrumentation, but it performs zero correlation AX
+element constructions/identifier reads and cannot consume the generation. Pass
+requires the same alias-only join, raw cleanup, and direct/filter destruction
+candidate alias retention; it does not select authority or authorize any live
+action.
 
 ## Scope, hypothesis, and frozen boundary
 

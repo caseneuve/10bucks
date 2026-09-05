@@ -283,11 +283,12 @@ function Observer:_destruction_candidate(app, window, source, event, raw_window)
   end
 end
 
-function Observer:_observe_direct_window(app_key, app_alias, element, raw_event, scope)
+function Observer:_observe_direct_window(app_key, app_alias, element, raw_event, scope, application)
   local window_alias, raw_key = self:_window_alias(app_key, element, "direct_ax.window_identity", scope)
   self.trace:emit("direct_window_observed", { source = "direct_ax", app = app_alias, window = window_alias, raw_event = raw_event, result = window_alias and "identified" or "identity_unavailable" })
   self:_remember_window_identity(raw_key, app_alias, window_alias)
   if not raw_key then return end
+  if raw_event == "AXWindowCreated" then self:_observe_fixture_correlation("direct_ax", raw_key, application, element) end
   self:_read_direct_metadata(app_alias, window_alias, element, raw_event, scope)
   if raw_event == "bootstrap_existing_window" or raw_event == "AXWindowCreated" or raw_event == "AXFocusedWindowChanged" then
     self:_read_space_ownership(app_alias, window_alias, raw_key, raw_event, scope, raw_event == "bootstrap_existing_window" and "bootstrap" or "direct_ax_readiness")
@@ -356,7 +357,7 @@ function Observer:_attach_direct_application(application, origin)
       self.trace:callback_enter("direct_ax_application", event)
       local callback_ok = pcall(function()
         self.trace:emit("direct_application_event", { source = "direct_ax_application", app = app_alias, raw_event = event })
-        self:_observe_direct_window(app_key, app_alias, element, event, "steady")
+        self:_observe_direct_window(app_key, app_alias, element, event, "steady", application)
       end)
       if not callback_ok then self:_fact("callback_error", { source = "direct_ax_application", app = app_alias, error_class = "runtime_error" }) end
       self.trace:callback_exit("direct_ax_application", event)
@@ -416,45 +417,52 @@ function Observer:_start_application_watcher()
   self:_fact("application_watcher_attached", { source = "application_watcher", watcher_kind = "application_lifecycle", reason = "observer_start" })
 end
 
-function Observer:_fixture_bundle_matches(application)
+function Observer:_fixture_bundle_matches(application, source)
   local began = monotonic_ms()
-  self.trace:query("correlation_fixture_bundle_scope", "correlation.fixture_bundle_scope", "steady")
+  local query = source == "direct_ax" and "correlation_direct_ax_fixture_bundle_scope" or "correlation_fixture_bundle_scope"
+  self.trace:query(query, "correlation.fixture_bundle_scope", "steady")
   local ok, bundle_id = false, nil
   if application and type(application.bundleID) == "function" then ok, bundle_id = protected(function() return application:bundleID() end) end
   local matches = ok and bundle_id == FIXTURE_BUNDLE_ID
-  self.trace:emit("correlation_fixture_bundle_scoped", { source = "window_filter", duration_ms = monotonic_ms() - began, result = matches and "matched" or "unmatched" })
+  bundle_id = nil -- Bundle scope is not identity evidence and is never retained.
+  self.trace:emit("correlation_fixture_bundle_scoped", { source = source, duration_ms = monotonic_ms() - began, result = matches and "matched" or "unmatched" })
   return matches
 end
 
-function Observer:_observe_fixture_correlation(raw_id, application, callback_window)
-  if not self.correlation or self.correlation:state().armed_generation == nil then return end
-  if self.correlation:state().consumed then return end
-  -- The exact fixture bundle merely scopes this already-delivered callback. It
-  -- is not correlation evidence and is never traced or exported.
-  if not self:_fixture_bundle_matches(application) then return end
-  local began = monotonic_ms()
-  self.trace:query("correlation_window_element_construction", "correlation.windowElement", "steady")
-  local constructed, element = protected(function() return hs.axuielement.windowElement(callback_window) end)
-  self.trace:emit("correlation_window_element_constructed", { source = "window_filter", duration_ms = monotonic_ms() - began, result = constructed and element and "available" or "unavailable" })
+-- The selected callback source gets exactly one chance.  direct_ax receives
+-- the application watcher's delivered AX element directly; it must not create
+-- a second element.  The raw key is only the existing destruction-tracking key.
+function Observer:_observe_fixture_correlation(source, raw_id, application, callback_window)
+  local state = self.correlation and self.correlation:state() or {}
+  if state.armed_generation == nil or state.consumed or state.candidate_source ~= source then return end
+  if not self:_fixture_bundle_matches(application, source) then return end
+  local element, constructed = callback_window, true
+  if source == "window_filter" then
+    local began = monotonic_ms()
+    self.trace:query("correlation_window_element_construction", "correlation.windowElement", "steady")
+    constructed, element = protected(function() return hs.axuielement.windowElement(callback_window) end)
+    self.trace:emit("correlation_window_element_constructed", { source = source, duration_ms = monotonic_ms() - began, result = constructed and element and "available" or "unavailable" })
+  end
   if not constructed or not element then
     local result = self.correlation:unresolved("window_element_unavailable")
-    self.trace:emit("correlation_unresolved", { source = "window_filter", reason = result.reason, result = "unresolved" })
+    self.trace:emit("correlation_unresolved", { source = source, reason = result.reason, result = "unresolved" })
     return
   end
-  began = monotonic_ms()
-  self.trace:query("correlation_ax_identifier_read", "correlation.AXIdentifier", "steady")
+  local began = monotonic_ms()
+  local query = source == "direct_ax" and "correlation_direct_ax_identifier_read" or "correlation_ax_identifier_read"
+  self.trace:query(query, "correlation.AXIdentifier", "steady")
   local read, raw = protected(function() return element:attributeValue("AXIdentifier") end)
-  self.trace:emit("correlation_ax_identifier_read", { source = "window_filter", duration_ms = monotonic_ms() - began, result = read and "available" or "unavailable" })
+  self.trace:emit("correlation_ax_identifier_read", { source = source, duration_ms = monotonic_ms() - began, result = read and "available" or "unavailable" })
   local outcome
   if not read then outcome = self.correlation:unresolved("attribute_read_error"); raw = nil
   elseif raw_id == nil then outcome = self.correlation:unresolved("window_id_unavailable")
   else outcome = self.correlation:consume(raw_id, raw) end
-  raw = nil -- Do not retain a Lua reference to the raw AX identifier.
+  raw = nil -- Clear the sole raw AXIdentifier reference before emitting.
   if outcome.alias then
     self.correlation_active_alias = outcome.alias
-    self.trace:emit("correlation_observed", { source = "window_filter", correlation_alias = outcome.alias, result = "matched" })
+    self.trace:emit("correlation_observed", { source = source, correlation_alias = outcome.alias, result = "matched" })
   else
-    self.trace:emit("correlation_unresolved", { source = "window_filter", reason = outcome.reason, result = "unresolved" })
+    self.trace:emit("correlation_unresolved", { source = source, reason = outcome.reason, result = "unresolved" })
   end
 end
 
@@ -470,7 +478,7 @@ function Observer:_start_filter()
       local app_alias, window_alias
       if application_ok and application then local app_key; app_key, _, app_alias = self:_app_alias(application); window_alias = raw_id and self.trace:window_alias(app_key, tostring(raw_id)) or nil; self:_remember_window_identity(raw_id, app_alias, window_alias)
       else local cached = self:_cached_window_identity(raw_id); if cached then app_alias, window_alias = cached.app, cached.window else self:_fact("filter_application_unavailable", { source = "window_filter" }) end end
-      if event == "windowCreated" then self:_observe_fixture_correlation(raw_id, application, window) end
+      if event == "windowCreated" then self:_observe_fixture_correlation("window_filter", raw_id, application, window) end
       self.trace:emit("filter_window_event", { source = "window_filter", app = app_alias, window = window_alias, raw_event = event, result = window_alias and "identified" or "identity_unavailable" })
       self:_commit_lifecycle(app_alias, window_alias, event_fact(event), "window_filter", event)
       if app_alias and window_alias and raw_id and (event == "windowCreated" or event == "windowFocused" or event == "windowMoved") then
@@ -573,13 +581,13 @@ function Observer:_fixture_correlation_complete()
     and self.correlation_candidate_sources.filter
 end
 
-function Observer:arm_fixture_correlation(generation)
+function Observer:arm_fixture_correlation(generation, source)
   assert(self.trace, "start the POC before arming correlation")
   if not self.running then return false, "not_running" end
-  local armed, reason = self.correlation:arm(generation)
+  local armed, reason = self.correlation:arm(generation, source)
   if armed then
     self:_reset_fixture_correlation_status()
-    self.trace:emit("correlation_armed", { source = "operator", result = "armed" })
+    self.trace:emit("correlation_armed", { source = "operator", candidate_source = self.correlation:state().candidate_source, result = "armed" })
   end
   return armed, reason
 end
@@ -698,6 +706,7 @@ function Observer:status()
   local direct_ax, filter = sources.direct_ax == true, sources.filter == true
   status.correlation = {
     armed = correlation_state.armed_generation ~= nil,
+    candidate_source = correlation_state.candidate_source,
     map_count = self.correlation and self.correlation:count() or 0,
     candidate_sources = {
       direct_ax = direct_ax,
