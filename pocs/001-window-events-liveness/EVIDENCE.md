@@ -9,7 +9,7 @@ reload, live POC load, or live action was performed for this checkpoint.
   Hammerspoon `1.1.1`.
 - **Verified:** the installed
   `Resources/extensions/hs/window_filter.lua` documents and exposes
-  `windowCreated`, `windowFocused`, and `windowDestroyed`. Its `subscribe`
+  `windowCreated`, `windowFocused`, `windowDestroyed`, and `windowMoved`. Its `subscribe`
   callback receives `(hs.window, appName, event)`. Its `windowfilter.new()`
   implementation defines `true` as an empty filter that allows every window
   and `false` as a default reject-all rule. The observer therefore uses
@@ -101,9 +101,39 @@ reload, live POC load, or live action was performed for this checkpoint.
   module-global cleanup watcher; its host/module lifetime is an explicit
   framework-internal caveat, not a leaked POC-owned watcher.
 
+## Step 2C Space ownership/readiness source findings
+
+- **Verified:** installed `hs.spaces.lua` implements `spaceType(id)` by calling
+  `data_managedDisplaySpaces()` and walking every managed display/Space on each
+  invocation. The Step 2C observer instead issues one attributed
+  `data_managedDisplaySpaces()` topology snapshot per ownership observation and
+  classifies all returned IDs (`type == 0` regular; `type == 4` fullscreen;
+  other/missing type unknown). It intentionally makes no repeated `spaceType()`
+  calls.
+- **Verified:** the same local source wraps `windowsForSpace()` to inspect
+  Hammerspoon's own AX application windows and prune some non-window canvases.
+  This is a private/global-cost caveat: each POC-issued reciprocal query is
+  timed and counted, but source inspection cannot establish its live cost or
+  prove full semantic reliability. A missing/failed reciprocal result becomes
+  ownership uncertainty, never death.
+- **Verified:** `activeSpaceOnScreen()` and `spaceType()` each obtain managed
+  display data in the installed Lua source. The observer records the active
+  query separately and does not mistake it for a free read.
+- **Hypothesis:** `hs.spaces.watcher` active-Space callbacks and direct AX
+  move/resize, filter move, creation, and focus callbacks provide sufficiently bounded
+  triggers for the selected observations. The observer compares them only; no
+  live ordering, latency, or ownership fact is established.
+- **Target:** the pure `ownership.lua` accepts redacted aliases only, retains
+  prior confirmed regular membership across fullscreen/unknown/ambiguous
+  observations, and emits a move only when both prior and new regular owners
+  are unique reciprocal confirmations and differ. Its output is non-effecting.
+  Safe metadata readiness from 2B plus current unique regular ownership emits
+  one idempotent `window_ready_eligible`; focus itself does not admit.
+
 ## Implication
 
-This observer is suitable only to collect comparison evidence. The pure fake
+This observer is suitable only to collect comparison evidence. Step 2C adds no
+production behavior, timer, action, reload, or live result. The pure fake
 suite proves its bookkeeping and cleanup, not macOS behavior. It proves no
 liveness/destruction authority, live lifecycle distinction, Space behavior,
 metadata readiness, latency, or query-gate result. In particular, it must not

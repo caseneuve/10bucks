@@ -20,6 +20,7 @@ local function new_record(app, app_hidden)
       filter = { minimized = nil, native_fullscreen = nil, available = nil },
       direct_ax = { minimized = nil, native_fullscreen = nil, available = nil },
     },
+    metadata_ready = false,
   }
 end
 
@@ -49,6 +50,16 @@ function Lifecycle:observe_window(app, window, source, facts)
   candidate.available = availability(candidate, record.app_hidden)
   if was_available ~= candidate.available then changed = true end
   return changed, record, candidate
+end
+
+function Lifecycle:observe_metadata_ready(app, window)
+  assert(type(app) == "string" and app:match("^app%-%d+$"), "app must be a redacted alias")
+  assert(type(window) == "string" and window:match("^win%-%d+$"), "window must be a redacted alias")
+  local record = self.windows[window]
+  assert(record and record.app == app, "metadata requires an observed window alias")
+  if record.metadata_ready then return false, record end
+  record.metadata_ready = true
+  return true, record
 end
 
 function Lifecycle:observe_app_hidden(app, hidden)
@@ -84,6 +95,7 @@ function Lifecycle:window(window)
   return {
     app = record.app,
     app_hidden = record.app_hidden,
+    metadata_ready = record.metadata_ready,
     candidates = { filter = copy(record.candidates.filter), direct_ax = copy(record.candidates.direct_ax) },
   }
 end

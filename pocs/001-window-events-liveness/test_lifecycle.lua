@@ -59,6 +59,13 @@ return {
     equal(window.candidates.filter.available, false)
     equal(window.candidates.direct_ax.available, false)
   end,
+  ["DISC-002 POC safe metadata readiness is retained and idempotent"] = function()
+    local model = Lifecycle.new()
+    model:observe_window("app-001", "win-001", "direct_ax", {})
+    equal(model:observe_metadata_ready("app-001", "win-001"), true)
+    equal(model:observe_metadata_ready("app-001", "win-001"), false)
+    equal(model:window("win-001").metadata_ready, true)
+  end,
   ["LIFE-002 POC app hide updates all known aliases without changing candidate facts"] = function()
     local model = Lifecycle.new()
     model:observe_window("app-001", "win-001", "filter", { minimized = true })

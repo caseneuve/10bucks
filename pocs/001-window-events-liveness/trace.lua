@@ -9,7 +9,7 @@ local sensitive_keys = {
 }
 
 local allowed_keys = {
-  source = true, app = true, window = true, raw_event = true, marker = true,
+  source = true, app = true, window = true, space = true, raw_event = true, marker = true,
   action = true, sample = true, query = true, call_site = true, scope = true,
   callback_sequence = true, trigger_callback_sequence = true, fact = true,
   result = true, reason = true, error_class = true, lifecycle = true,
@@ -20,6 +20,9 @@ local allowed_keys = {
   metadata_status = true, field = true, query_phase = true,
   candidate_source = true, candidate_minimized = true,
   candidate_native_fullscreen = true, candidate_available = true,
+  ownership_kind = true, retained_regular_space = true, from_space = true,
+  to_space = true, trigger = true, sweep_scope = true, query_count = true,
+  topology_status = true, active_space = true,
 }
 
 local function safe_token(value)
@@ -99,9 +102,10 @@ function Trace.new(clock, run_id)
     started_at_ms = clock(),
     sequence = 0,
     events = {},
-    aliases = { apps = {}, windows = {} }, -- never exported
+    aliases = { apps = {}, windows = {}, spaces = {} }, -- never exported
     next_app = 0,
     next_window = 0,
+    next_space = 0,
     current_sample = "sample-unset",
     callback_stack = {},
     counters = { bootstrap = {}, steady = {} },
@@ -117,6 +121,18 @@ function Trace:app_alias(raw_key)
     self.next_app = self.next_app + 1
     alias = string.format("app-%03d", self.next_app)
     self.aliases.apps[raw_key] = alias
+  end
+  return alias
+end
+
+function Trace:space_alias(raw_space_key)
+  assert(raw_space_key ~= nil, "space identity is required")
+  local key = tostring(raw_space_key)
+  local alias = self.aliases.spaces[key]
+  if not alias then
+    self.next_space = self.next_space + 1
+    alias = string.format("space-%03d", self.next_space)
+    self.aliases.spaces[key] = alias
   end
   return alias
 end

@@ -7,8 +7,8 @@ stopped in an isolated Hammerspoon Console session.
 
 ## Do not run live actions yet
 
-This checkpoint implements **step 2B only**: source subscriptions, targeted
-read-only metadata observation, and pure lifecycle correlation. **Do not run
+This checkpoint implements **step 2C only** beyond 2B: targeted Space
+ownership/readiness and manual-move comparison instrumentation. **Do not run
 live actions yet.** Do not create, focus, close, minimize, hide, fullscreen,
 move, quit, reload, or otherwise manipulate an application for this harness.
 In particular, do not reload Hammerspoon. The guided matrix remains a later,
@@ -68,8 +68,10 @@ it is reported separately in [`EVIDENCE.md`](EVIDENCE.md).
 ## Sources compared
 
 - `hs.window.filter`: `windowCreated`, `windowFocused`, `windowDestroyed`,
-  `windowMinimized`, `windowUnminimized`, `windowFullscreened`, and
-  `windowUnfullscreened`. The observer constructs it with
+  `windowMinimized`, `windowUnminimized`, `windowFullscreened`,
+  `windowUnfullscreened`, and `windowMoved`. Its move callback is compared
+  with the direct AX move/resize source through the same bounded ownership
+  probe. The observer constructs it with
   `hs.window.filter.new(true, ...)`: installed Hammerspoon source defines
   `true` as an empty allow-all filter, while `false` is reject-all and would
   suppress this comparison.
@@ -92,8 +94,11 @@ Failure/unavailability is a trace fact, not a retry or an inference. Each
 relevant direct callback reads only `AXMinimized`, `AXFullScreen`, `AXRole`,
 `AXSubrole`, and `AXVisible` for its attributed redacted alias. Query begin/end
 timestamps and unavailable/error outcomes are traced. `metadata_ready` is
-emitted only when all five safe fields are available. It deliberately does
-**not** emit `window_ready_eligible`: actual regular-Space ownership is Step 2C.
+emitted only when all five safe fields are available and is retained in the
+pure correlator. Step 2C then emits one idempotent, non-effecting
+`window_ready_eligible` only when that safe metadata and exactly one reciprocal,
+confirmed regular-Space ownership are both available. Focus only triggers the
+probe; it never admits a window.
 
 Lifecycle facts are tri-state observations: absent is unknown, never false.
 `app_hidden` starts unknown and changes only on an attributed hide/unhide event;
@@ -102,8 +107,22 @@ direct-AX minimize/fullscreen observations remain in separate candidate records.
 Each candidate is unavailable if any observed condition is true, available only
 when app-hidden, minimize, and fullscreen are all explicitly false, and unknown
 otherwise. A contradictory candidate fact emits `lifecycle_source_conflict`; no
-candidate callback overwrites the other. The POC still has no
-liveness/removal/admission behavior, window effect, or permanent poll.
+candidate callback overwrites the other. The pure ownership correlator retains a prior confirmed regular owner through
+fullscreen or unknown/ambiguous observations. It emits `space_move_confirmed`
+only for two different, uniquely reciprocal-confirmed regular owners. It never
+uses absence, visibility, or `windowsForSpace()` as liveness/death evidence.
+The POC still has no liveness/removal/admission behavior, window effect, or
+permanent poll.
+
+Space queries are callback-bound and timed/attributed: direct AX move/resize,
+filter move, creation/focus readiness, and the
+`hs.spaces.watcher` active-Space callback. Every `windowSpaces`,
+`windowsForSpace`, `activeSpaceOnScreen`, and topology query is traced. A
+single `data_managedDisplaySpaces()` topology snapshot classifies all returned
+IDs, so the harness does not call `spaceType()` repeatedly. The active-Space
+callback may make exactly one synchronous known-window-only comparison sweep;
+its begin/end records name the trigger, scope, and exact query count, then it
+stops. It creates no timer.
 
 ## Pure checks
 
@@ -111,5 +130,6 @@ liveness/removal/admission behavior, window effect, or permanent poll.
 lua pocs/001-window-events-liveness/run-tests.lua
 luac -p pocs/001-window-events-liveness/trace.lua
 luac -p pocs/001-window-events-liveness/lifecycle.lua
+luac -p pocs/001-window-events-liveness/ownership.lua
 luac -p pocs/001-window-events-liveness/observer.lua
 ```

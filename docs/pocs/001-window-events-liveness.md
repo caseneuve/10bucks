@@ -4,7 +4,7 @@
 hypothesis
 
 This is a pre-run protocol. A disposable POC-only observer currently exists
-through step 2B (source comparison, targeted metadata reads, and pure
+through step 2C (source comparison, targeted metadata/Space reads, and pure
 correlation); no production runtime changed and no live POC action has been
 run. Live actions remain forbidden until an explicitly approved operator slice.
 
@@ -110,9 +110,10 @@ Use these markers exactly:
   minimize/fullscreen candidates are emitted separately; a conflict records
   uncertainty rather than overwriting either source. `metadata_ready` means
   only the agreed privacy-safe metadata fields were available; it makes no
-  ownership/admission claim. Step 2B MUST NOT emit `window_ready_eligible`,
-  because actual Space ownership is reserved for step 2C. None performs
-  production state mutation or any window effect.
+  ownership/admission claim. Step 2C MAY emit one idempotent,
+  non-effecting `window_ready_eligible` only after independently confirmed
+  regular ownership; focus itself never admits. None performs production state
+  mutation or any window effect.
 - `global_ax_enumeration_begin` / `global_ax_enumeration_end`: every broad AX
   or all-application/window enumeration attributable to POC harness calls.
   That counter must remain zero in steady callbacks. Candidate-source internals
@@ -146,8 +147,9 @@ retain every event order, including failures and late callbacks:
 1. Mark `create_first`, then create a first and an additional standard window;
    exercise focus/unfocus and rapid create → focus → close. Run warm creation
    samples and controlled cold launches. Observe readiness metadata, actual
-   regular-Space ownership, the non-effecting `metadata_ready` marker (without
-   `window_ready_eligible` until step 2C), and duplicate/delayed readiness.
+   regular-Space ownership, the non-effecting `metadata_ready` marker, the
+   idempotent non-effecting `window_ready_eligible` intersection, and
+   duplicate/delayed readiness.
 2. Mark `close_foreground`, `close_background`, and `close_last`; at explicit
    human direction, use the separate controlled action driver where available
    to close those windows. Repeat with a background/covered window. Correlate
@@ -214,7 +216,11 @@ app launch/termination/hide/unhide; focused window and active Space; targeted
 visibility, minimized, native-fullscreen, role/subrole, and capability metadata.
 
 It also records callback entry/exit, every harness-attributable query attempt,
-timer create/cancel/fire, and the counters below. Candidate sources may run
+timer create/cancel/fire, and the counters below. Step 2C attributes and times
+`windowSpaces(windowId)`, `windowsForSpace(spaceId)`, `activeSpaceOnScreen()`,
+and `data_managedDisplaySpaces()` topology snapshots. It uses one topology
+snapshot to classify all IDs and deliberately does not call `spaceType()` per
+ID. Raw IDs remain in memory only; traces export aliases/results only. Candidate sources may run
 concurrently only to compare evidence; no source may mutate 10bucks state or
 cause a window effect. POC-001 records zero frame effects and has no synthetic
 frame-request marker.
@@ -278,9 +284,9 @@ All thresholds are fixed before the run:
    after settling, targeted-check count remains unchanged until another trigger.
 5. **Creation/readiness:** for each meaningful warm creation/readiness path,
    `readiness_trigger → metadata_ready` has p95 <= 100 ms when all agreed safe
-   fields are available. `metadata_ready` is solely a non-effecting metadata
-   finding; actual ownership and `window_ready_eligible` are deferred to step
-   2C. POC-001 issues zero frame effects. A cold path reaches
+   fields are available. `metadata_ready` remains non-effecting; Step 2C adds
+   `window_ready_eligible` only for its idempotent intersection with exactly
+   one confirmed regular owner. POC-001 issues zero frame effects. A cold path reaches
    `readiness_confirmed` or an explicit
    deferred-uncertainty result within <= 3,000 ms. An uncertain cold window is retained/deferred, not
    admitted or destroyed on guesswork; uncertainty beyond that bound is
@@ -303,7 +309,11 @@ All thresholds are fixed before the run:
    broad latency claim; unsupported app actions remain explicitly unmeasured.
 
 ## Results
-Pending. No live actions, instrumentation, or measurements have been run.
+Pending. No live actions, instrumentation, or measurements have been run. The
+Step 2C fake suite covers regular bootstrap ownership, fullscreen/unknown,
+confirmed A→B move, same-Space duplicate, ambiguous deferral, callback query
+attribution, bounded active-Space known-window sweep/no timer, readiness
+intersection, and watcher cleanup; this is not live evidence.
 
 ## Conclusion
 Pending. This protocol proves no macOS/Hammerspoon behavior yet.
@@ -317,7 +327,7 @@ check; it does not justify treating absence from `_orderedwinids()` or a global
 snapshot as death.
 
 ## Cleanup
-The step-2B POC-only observer is intentionally retained for the remaining
+The step-2C POC-only observer is intentionally retained for the remaining
 POC-001 operator matrix; it is not production code and live actions remain
 forbidden until approved. Its isolated Hammerspoon configuration, traces, and
 any temporary timers/watchers used by later runs are deleted before a

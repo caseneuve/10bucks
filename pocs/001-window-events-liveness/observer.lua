@@ -2,6 +2,7 @@
 -- Step 2B adds observation/correlation only; it never admits, removes, or acts.
 local Trace = require("trace")
 local Lifecycle = require("lifecycle")
+local Ownership = require("ownership")
 
 local Observer = {}
 Observer.__index = Observer
@@ -9,7 +10,7 @@ Observer.__index = Observer
 local FILTER_EVENTS = {
   "windowCreated", "windowFocused", "windowDestroyed",
   "windowMinimized", "windowUnminimized",
-  "windowFullscreened", "windowUnfullscreened",
+  "windowFullscreened", "windowUnfullscreened", "windowMoved",
 }
 local DIRECT_APP_EVENTS = { "AXWindowCreated", "AXFocusedWindowChanged" }
 local DIRECT_WINDOW_EVENTS = {
@@ -64,9 +65,10 @@ end
 function Observer:_new_run()
   self.run_number = self.run_number + 1
   self.trace = Trace.new(monotonic_ms, string.format("run-%03d", self.run_number))
-  self.lifecycle = Lifecycle.new()
+  self.lifecycle, self.ownership = Lifecycle.new(), Ownership.new()
   self.app_watchers, self.window_watchers, self.window_identity_cache = {}, {}, {}
-  self.filter, self.application_watcher = nil, nil
+  self.window_raw_by_alias, self.ready_emitted = {}, {}
+  self.filter, self.application_watcher, self.spaces_watcher = nil, nil, nil
   self.active_timers, self.window_effects = 0, 0
 end
 
@@ -99,10 +101,75 @@ function Observer:_window_alias(app_key, element, call_site, scope)
 end
 
 function Observer:_remember_window_identity(raw_key, app, window)
-  if raw_key and app and window then self.window_identity_cache[tostring(raw_key)] = { app = app, window = window } end
+  if raw_key and app and window then
+    self.window_identity_cache[tostring(raw_key)] = { app = app, window = window }
+    self.window_raw_by_alias[window] = tostring(raw_key)
+  end
 end
 function Observer:_cached_window_identity(raw_key) return raw_key and self.window_identity_cache[tostring(raw_key)] or nil end
-function Observer:_forget_window_identity(raw_key) if raw_key then self.window_identity_cache[tostring(raw_key)] = nil end end
+function Observer:_forget_window_identity(raw_key)
+  if raw_key then
+    local cached = self.window_identity_cache[tostring(raw_key)]
+    if cached then self.window_raw_by_alias[cached.window] = nil end
+    self.window_identity_cache[tostring(raw_key)] = nil
+  end
+end
+
+local function contains(items, wanted)
+  for _, item in ipairs(items or {}) do if tostring(item) == tostring(wanted) then return true end end
+  return false
+end
+
+function Observer:_space_topology(event, scope)
+  self.trace:targeted_check_begin("spaces_topology_snapshot", "spaces.topology_snapshot", scope, { source = "hs_spaces", raw_event = event })
+  local ok, data = protected(function() return hs.spaces.data_managedDisplaySpaces() end)
+  self.trace:targeted_check_end("spaces_topology_snapshot", "spaces.topology_snapshot", scope, { source = "hs_spaces", raw_event = event })
+  if not ok or type(data) ~= "table" then
+    self:_fact("space_topology_uncertain", { source = "hs_spaces", raw_event = event, topology_status = ok and "unavailable" or "error" })
+    return nil
+  end
+  local types = {}
+  for _, display in ipairs(data) do
+    for _, space in ipairs(display.Spaces or {}) do
+      local id = space.ManagedSpaceID
+      if id ~= nil then types[tostring(id)] = space.type == 0 and "regular" or space.type == 4 and "fullscreen" or "unknown" end
+    end
+  end
+  return types
+end
+
+function Observer:_emit_ready_if_complete(app, window, event)
+  local lifecycle, ownership = self.lifecycle:window(window), self.ownership:window(window)
+  if lifecycle and lifecycle.metadata_ready and ownership and ownership.kind == "regular" and ownership.space and not self.ready_emitted[window] then
+    self.ready_emitted[window] = true
+    self.trace:emit("window_ready_eligible", { source = "poc001", app = app, window = window, raw_event = event, space = ownership.space, ownership_kind = "regular", result = "non_effecting" })
+  end
+end
+
+function Observer:_read_space_ownership(app, window, raw_window, event, scope, trigger)
+  self.trace:targeted_check_begin("spaces_window_spaces", "spaces.windowSpaces", scope, { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger })
+  local ok, raw_spaces = protected(function() return hs.spaces.windowSpaces(tonumber(raw_window) or raw_window) end)
+  self.trace:targeted_check_end("spaces_window_spaces", "spaces.windowSpaces", scope, { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger })
+  local types = self:_space_topology(event, scope)
+  local memberships = {}
+  if ok and type(raw_spaces) == "table" and types then
+    for _, raw_space in ipairs(raw_spaces) do
+      local raw_key, kind = tostring(raw_space), types[tostring(raw_space)] or "unknown"
+      self.trace:targeted_check_begin("spaces_windows_for_space", "spaces.windowsForSpace", scope, { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger })
+      local reciprocal_ok, windows = protected(function() return hs.spaces.windowsForSpace(raw_space) end)
+      self.trace:targeted_check_end("spaces_windows_for_space", "spaces.windowsForSpace", scope, { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger })
+      memberships[#memberships + 1] = { space = self.trace:space_alias(raw_key), kind = reciprocal_ok and type(windows) == "table" and contains(windows, raw_window) and kind or "unknown" }
+    end
+  else
+    memberships[1] = { space = self.trace:space_alias("unknown-space-" .. window), kind = "unknown" }
+  end
+  local outcome = self.ownership:observe(window, memberships)
+  self.trace:emit("space_ownership_observed", { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger, space = outcome.space, ownership_kind = outcome.kind, retained_regular_space = outcome.retained_regular, result = outcome.changed and "changed" or "duplicate" })
+  if outcome.move then
+    self.trace:emit("space_move_confirmed", { source = "hs_spaces", app = app, window = window, raw_event = event, trigger = trigger, from_space = outcome.move.from, to_space = outcome.move.to, result = "non_effecting" })
+  end
+  self:_emit_ready_if_complete(app, window, event)
+end
 
 function Observer:_commit_lifecycle(app, window, facts, source, event, inference)
   if not app or not window then return end
@@ -158,12 +225,14 @@ function Observer:_read_direct_metadata(app, window, element, event, scope)
   self:_commit_lifecycle(app, window, metadata, "direct_ax_window", event,
     (event == "AXWindowMoved" or event == "AXWindowResized") and "targeted_observed_property" or "targeted_metadata")
   if is_metadata_ready(metadata) then
-    self.trace:emit("metadata_ready", {
+    local first_ready = self.lifecycle:observe_metadata_ready(app, window)
+    self.trace:emit(first_ready and "metadata_ready" or "metadata_ready_duplicate", {
       source = "direct_ax_window", app = app, window = window, raw_event = event,
       metadata_ready = true, minimized = metadata.minimized,
       native_fullscreen = metadata.native_fullscreen, visibility = metadata.visibility,
       role = metadata.role, subrole = metadata.subrole,
     })
+    self:_emit_ready_if_complete(app, window, event)
   elseif uncertainty then
     self.trace:emit("metadata_not_ready", { source = "direct_ax_window", app = app, window = window, raw_event = event, metadata_status = "uncertain" })
   end
@@ -181,6 +250,9 @@ function Observer:_observe_direct_window(app_key, app_alias, element, raw_event,
   self:_remember_window_identity(raw_key, app_alias, window_alias)
   if not raw_key then return end
   self:_read_direct_metadata(app_alias, window_alias, element, raw_event, scope)
+  if raw_event == "bootstrap_existing_window" or raw_event == "AXWindowCreated" or raw_event == "AXFocusedWindowChanged" then
+    self:_read_space_ownership(app_alias, window_alias, raw_key, raw_event, scope, raw_event == "bootstrap_existing_window" and "bootstrap" or "direct_ax_readiness")
+  end
   local key = app_key .. "\0" .. raw_key
   if self.window_watchers[key] then return end
   local ok, watcher = protected(function()
@@ -189,7 +261,10 @@ function Observer:_observe_direct_window(app_key, app_alias, element, raw_event,
       local callback_ok = pcall(function()
         self.trace:emit("direct_window_event", { source = "direct_ax_window", app = app_alias, window = window_alias, raw_event = event })
         self:_commit_lifecycle(app_alias, window_alias, event_fact(event), "direct_ax_window", event)
-        if event ~= "AXUIElementDestroyed" then self:_read_direct_metadata(app_alias, window_alias, element, event, "steady") end
+        if event ~= "AXUIElementDestroyed" then
+          self:_read_direct_metadata(app_alias, window_alias, element, event, "steady")
+          if event == "AXWindowMoved" or event == "AXWindowResized" then self:_read_space_ownership(app_alias, window_alias, raw_key, event, "steady", "direct_ax_window_move") end
+        end
         if event == "AXUIElementDestroyed" then self:_forget_window_identity(raw_key); self:_stop_window_watcher(key) end
       end)
       if not callback_ok then self:_fact("callback_error", { source = "direct_ax_window", error_class = "runtime_error" }) end
@@ -291,11 +366,47 @@ function Observer:_start_filter()
       else local cached = self:_cached_window_identity(raw_id); if cached then app_alias, window_alias = cached.app, cached.window else self:_fact("filter_application_unavailable", { source = "window_filter" }) end end
       self.trace:emit("filter_window_event", { source = "window_filter", app = app_alias, window = window_alias, raw_event = event, result = window_alias and "identified" or "identity_unavailable" })
       self:_commit_lifecycle(app_alias, window_alias, event_fact(event), "window_filter", event)
+      if app_alias and window_alias and raw_id and (event == "windowCreated" or event == "windowFocused" or event == "windowMoved") then
+        local trigger = event == "windowMoved" and "window_filter_window_move" or "window_filter_readiness"
+        self:_read_space_ownership(app_alias, window_alias, tostring(raw_id), event, "steady", trigger)
+      end
       if event == "windowDestroyed" then self:_forget_window_identity(raw_id) end
     end)
     if not callback_ok then self:_fact("callback_error", { source = "window_filter", error_class = "runtime_error" }) end
     self.trace:callback_exit("window_filter", event)
   end) end
+end
+
+function Observer:_start_spaces_watcher()
+  local ok, watcher = protected(function()
+    return hs.spaces.watcher.new(function()
+      self.trace:callback_enter("spaces_watcher", "activeSpaceChanged")
+      local callback_ok = pcall(function()
+        self.trace:targeted_check_begin("spaces_active_space", "spaces.activeSpaceOnScreen", "steady", { source = "hs_spaces", trigger = "active_space_callback" })
+        local active_ok, active = protected(function() return hs.spaces.activeSpaceOnScreen() end)
+        self.trace:targeted_check_end("spaces_active_space", "spaces.activeSpaceOnScreen", "steady", { source = "hs_spaces", trigger = "active_space_callback", active_space = active_ok and self.trace:space_alias(tostring(active)) or nil })
+        local known = {}
+        for window, raw in pairs(self.window_raw_by_alias) do
+          local cached = self:_cached_window_identity(raw)
+          if cached then known[#known + 1] = { app = cached.app, window = window, raw = raw } end
+        end
+        table.sort(known, function(a, b) return a.window < b.window end)
+        local before, after = self.trace:status().query_counters.steady, nil
+        local count_before = 0; for _, count in pairs(before) do count_before = count_before + count end
+        self.trace:emit("active_space_known_window_sweep_begin", { source = "spaces_watcher", trigger = "active_space_callback", sweep_scope = "known_windows_only", query_count = 0, count = #known })
+        for _, known_window in ipairs(known) do self:_read_space_ownership(known_window.app, known_window.window, known_window.raw, "activeSpaceChanged", "steady", "active_space_callback_known_window_sweep") end
+        after = self.trace:status().query_counters.steady
+        local count_after = 0; for _, count in pairs(after) do count_after = count_after + count end
+        self.trace:emit("active_space_known_window_sweep_end", { source = "spaces_watcher", trigger = "active_space_callback", sweep_scope = "known_windows_only", query_count = count_after - count_before, count = #known, result = "callback_complete_no_timer" })
+      end)
+      if not callback_ok then self:_fact("callback_error", { source = "spaces_watcher", error_class = "runtime_error" }) end
+      self.trace:callback_exit("spaces_watcher", "activeSpaceChanged")
+    end)
+  end)
+  if not ok or not watcher then self:_fact("spaces_watcher_unavailable", { source = "hs_spaces" }); return end
+  if not protected(function() return watcher:start() end) then self:_fact("spaces_watcher_start_failed", { source = "hs_spaces" }); return end
+  self.spaces_watcher = watcher
+  self:_fact("spaces_watcher_attached", { source = "hs_spaces", watcher_kind = "spaces" })
 end
 
 function Observer:_bootstrap_existing_apps()
@@ -310,7 +421,7 @@ function Observer:start()
   self:_new_run(); self.running = true; self.trace:lifecycle("start"); self.trace:mark("run_start", { source = "poc001" })
   for _, source in ipairs({ "window_filter", "application_watcher", "direct_ax" }) do self.trace:mark("candidate_sources", { source = source }) end
   self.trace:mark("framework_evidence", { source = "window_filter", framework_evidence = "source_inspection_unknown" }); self.trace:mark("framework_evidence", { source = "direct_ax", framework_evidence = "source_inspection_global_cleanup_watcher" })
-  self:_start_application_watcher(); self:_bootstrap_existing_apps(); self:_start_filter()
+  self:_start_application_watcher(); self:_bootstrap_existing_apps(); self:_start_filter(); self:_start_spaces_watcher()
   return true, self.trace:status().run_id
 end
 
@@ -318,16 +429,17 @@ function Observer:stop()
   if not self.running then return false, "already_stopped" end
   if self.filter then protected(function() self.filter:unsubscribeAll() end); protected(function() self.filter:delete() end) end
   if self.application_watcher then protected(function() self.application_watcher:stop() end) end
+  if self.spaces_watcher then protected(function() self.spaces_watcher:stop() end) end
   local window_keys, app_keys = {}, {}; for key in pairs(self.window_watchers) do window_keys[#window_keys + 1] = key end; for key in pairs(self.app_watchers) do app_keys[#app_keys + 1] = key end
   for _, key in ipairs(window_keys) do self:_stop_window_watcher(key) end
   for _, key in ipairs(app_keys) do local record = self.app_watchers[key]; if record then protected(function() record.watcher:stop() end) end; self.app_watchers[key] = nil end
-  self.filter, self.application_watcher, self.running = nil, nil, false; self.trace:lifecycle("stop"); self.trace:mark("cleanup_complete", { source = "poc001", count = 0 }); return true
+  self.filter, self.application_watcher, self.spaces_watcher, self.running = nil, nil, nil, false; self.trace:lifecycle("stop"); self.trace:mark("cleanup_complete", { source = "poc001", count = 0 }); return true
 end
 
 function Observer:mark(sample_id, marker, action) assert(self.trace, "start the POC before marking"); self.trace:set_sample(sample_id); return self.trace:mark(marker, { source = "operator", action = action }) end
 function Observer:status()
   if not self.trace then return { lifecycle = "not_started" } end
-  local status = self.trace:status(); status.active_timers, status.window_effects, status.direct_application_watchers, status.direct_window_watchers = self.active_timers, self.window_effects, 0, 0
+  local status = self.trace:status(); status.active_timers, status.window_effects, status.direct_application_watchers, status.direct_window_watchers, status.spaces_watcher_active = self.active_timers, self.window_effects, 0, 0, self.spaces_watcher ~= nil
   for _ in pairs(self.app_watchers) do status.direct_application_watchers = status.direct_application_watchers + 1 end; for _ in pairs(self.window_watchers) do status.direct_window_watchers = status.direct_window_watchers + 1 end
   return status
 end
