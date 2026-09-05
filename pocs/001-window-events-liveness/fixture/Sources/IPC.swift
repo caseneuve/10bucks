@@ -177,16 +177,18 @@ public final class FixtureSocketServer {
     private let dispatch: CommandDispatch
     private let execute: CommandExecutor
     private let configureWriteSocket: (Int32) -> Bool
+    private let afterResponse: (FixtureRequest) -> Void
     private var stopped = false
 
     // Production composes this default with the AppKit main queue. Tests can
     // inject a direct executor without creating an AppKit run loop.
-    public init(socketPath: URL, dispatch: @escaping CommandDispatch, execute: @escaping CommandExecutor = FixtureSocketServer.onMainQueue, configureWriteSocket: @escaping (Int32) -> Bool = FixtureSocketServer.configureNoSigPipe) throws {
+    public init(socketPath: URL, dispatch: @escaping CommandDispatch, execute: @escaping CommandExecutor = FixtureSocketServer.onMainQueue, configureWriteSocket: @escaping (Int32) -> Bool = FixtureSocketServer.configureNoSigPipe, afterResponse: @escaping (FixtureRequest) -> Void = { _ in }) throws {
         try Self.validateRunDirectory(socketPath.deletingLastPathComponent())
         self.socketPath = socketPath.path
         self.dispatch = dispatch
         self.execute = execute
         self.configureWriteSocket = configureWriteSocket
+        self.afterResponse = afterResponse
         guard Self.pathDoesNotExist(socketPath.path) else { throw IPCError.socketPathExists }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw IPCError.socketSetupFailed }
@@ -239,8 +241,10 @@ public final class FixtureSocketServer {
         let raw = try Self.readOneMessage(connection)
         do {
             let request = try FixtureCodec.decodeRequestLine(raw)
-            do { try Self.writeAll(connection, data: FixtureCodec.encodeResponse(try execute { try self.dispatch(request) })) }
-            catch { try Self.writeAll(connection, data: FixtureCodec.encodeRejected(requestID: request.fields["request_id"], sampleID: request.fields["sample_id"])) }
+            do {
+                try Self.writeAll(connection, data: FixtureCodec.encodeResponse(try execute { try self.dispatch(request) }))
+                _ = try execute { self.afterResponse(request); return FixtureResponse(status: .accepted, requestID: request.fields["request_id"]!, sampleID: request.fields["sample_id"]!, fixtureToken: nil, correlationToken: nil) }
+            } catch { try Self.writeAll(connection, data: FixtureCodec.encodeRejected(requestID: request.fields["request_id"], sampleID: request.fields["sample_id"])) }
         } catch {
             try Self.writeAll(connection, data: FixtureCodec.encodeRejected())
         }

@@ -3,7 +3,9 @@ import Foundation
 public enum CloseOrigin: Equatable { case ipc, user }
 
 public enum FixtureTraceEvent: Equatable {
+    case createRequested(token: String, generation: UInt64, sampleID: String)
     case createCompleted(token: String, generation: UInt64, sampleID: String)
+    case closeRequested(token: String, generation: UInt64, sampleID: String)
     case closeCompleted(token: String, generation: UInt64, sampleID: String, origin: CloseOrigin)
     case pendingWorkRequested(token: String, generation: UInt64, sampleID: String)
     case pendingWorkServiced(token: String, generation: UInt64, sampleID: String)
@@ -40,6 +42,8 @@ public struct LifecycleActiveGeneration: Equatable {
     fileprivate var createCompleted: Bool
     fileprivate var closeRequested: Bool
     fileprivate var closeSampleID: String?
+
+    public var isCreateCompleted: Bool { createCompleted }
 }
 
 public struct FixtureLifecycleHooks {

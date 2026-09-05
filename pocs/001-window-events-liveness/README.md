@@ -94,6 +94,25 @@ security settings. The fixture must use public AppKit/Foundation/Darwin APIs;
 no `hs`, AX APIs, private Spaces APIs, polling, privileged helper, or
 non-fixture window operation is permitted.
 
+### Build-only integration corrections (2026-08-29)
+
+- **Verified integration mismatch:** the macOS 26 Command Line Tools SDK used by
+  the frozen `swiftc` command has no `NSWindow.didBecomeVisibleNotification`
+  declaration (and the frozen spelling does not compile). The build-only
+  adapter therefore uses the public `NSWindowDelegate.windowDidBecomeKey(_:)`
+  callback while retaining the pure identity/generation duplicate guards. Its
+  `native_create_completed` marker is a **Hypothesis**, not a claim that the
+  window became visible, unobscured, painted, or observable by another process.
+  A later live gate must either prove an equivalent public visible hook or
+  deliberately revise the measurement contract; this correction does not pass
+  the original did-become-visible threshold.
+- **Verified integration mismatch:** the frozen build command named only five
+  sources, but the checked-in pure implementation intentionally factors the
+  lifecycle, pending-work, token, and coordinator seams into additional source
+  files. `build-fixture.sh` compiles that closed dependency set and compiles
+  `fixturectl` with the token protocol source. Build products remain only under
+  ignored `fixture/build`; no execution, signing, or security behavior changed.
+
 ## Exact fixture contract
 
 ### Public lifecycle hooks
@@ -101,16 +120,18 @@ non-fixture window operation is permitted.
 All AppKit object creation, window mutation, delegate calls, and notification
 handling run on the main thread.
 
-1. On `create`, the fixture allocates one `NSWindow`, assigns itself as that
-   window's delegate, registers only for that window's
-   `NSWindow.didBecomeVisibleNotification`, emits `create_requested`, and calls
-   `makeKeyAndOrderFront(nil)`.
-2. On that registered notification, it emits exactly one
-   `native_create_completed` for that generation. This means AppKit posted the
-   fixture window's *did become visible* notification. It does **not** mean the
-   window is unobscured, focused by the user, AX-visible, painted in a captured
-   frame, owned by a regular Space, observed by Hammerspoon, or live by a
-   production definition.
+1. **Superseded by the labelled build-only integration correction above.** On
+   `create`, the fixture allocates one `NSWindow`, assigns itself as that
+   window's delegate, emits `create_requested`, and calls
+   `makeKeyAndOrderFront(nil)`. The original requested
+   `NSWindow.didBecomeVisibleNotification` is unavailable in the verified CLT
+   SDK; the build-only adapter currently uses `windowDidBecomeKey(_:)` for the
+   guarded completion candidate.
+2. That callback emits at most one `native_create_completed` candidate for that
+   generation. It does **not** establish the original did-become-visible
+   measurement, nor that the window is unobscured, AX-visible, painted in a
+   captured frame, owned by a regular Space, observed by Hammerspoon, or live
+   by a production definition.
 3. On `close`, it emits `close_requested` and invokes only that fixture
    window's `performClose(nil)`. It does not close a window if the registry has
    no matching fixture token.

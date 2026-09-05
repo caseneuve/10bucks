@@ -11,6 +11,7 @@ swiftc -sdk "$SDKROOT" -target arm64-apple-macosx26.0 \
   "$fixture/Sources/Clock.swift" \
   "$fixture/Sources/Trace.swift" \
   "$fixture/Sources/FixtureControl.swift" \
+  "$fixture/Sources/FixtureCoordinator.swift" \
   "$fixture/Sources/IPC.swift" \
   "$fixture/Sources/LifecycleHooks.swift" \
   "$fixture/Sources/PendingWork.swift" \
@@ -19,6 +20,7 @@ swiftc -sdk "$SDKROOT" -target arm64-apple-macosx26.0 \
   "$fixture/Tests/ClockTests.swift" \
   "$fixture/Tests/TraceTests.swift" \
   "$fixture/Tests/FixtureControlTests.swift" \
+  "$fixture/Tests/FixtureCoordinatorTests.swift" \
   "$fixture/Tests/LifecycleHookTests.swift" \
   "$fixture/Tests/PendingWorkTests.swift" \
   "$fixture/Tests/TokenTests.swift" \
