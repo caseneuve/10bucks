@@ -14,6 +14,20 @@ func expectThrows<T: Error & Equatable>(_ expected: T, _ body: () throws -> Void
     }
 }
 
+final class DeterministicTokenGenerator: TokenGenerating {
+    private var values: [String]
+
+    init(values: [String]) { self.values = values }
+
+    func fixtureToken() throws -> String { "fixture-win-" + (try next()) }
+    func correlationToken() throws -> String { "corr-" + (try next()) }
+
+    private func next() throws -> String {
+        guard !values.isEmpty else { throw TokenGenerationError.randomSourceFailure }
+        return values.removeFirst()
+    }
+}
+
 struct TestFailure: Error, CustomStringConvertible {
     let message: String
     init(_ message: String) { self.message = message }
