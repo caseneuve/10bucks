@@ -6,7 +6,10 @@ hypothesis
 This is a pre-run protocol. A disposable POC-only observer currently exists
 through step 2C (source comparison, targeted metadata/Space reads, and pure
 correlation); no production runtime changed and no live POC action has been
-run. Live actions remain forbidden until an explicitly approved operator slice.
+run. One short, orchestrator-guided Terminal-only calibration is approved but
+**pending**; it is specified in
+[`pocs/001-window-events-liveness/README.md`](../../pocs/001-window-events-liveness/README.md).
+It is not a result and does not authorize the remaining live matrix.
 
 ## Decision enabled
 Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,
@@ -56,19 +59,20 @@ a command, or the Hammerspoon host.
 1. Record the Environment fields, POC branch/commit, test date, and whether
    each sample is warm or cold. Do not run if any required environment fact is
    unknown; mark the affected result unmeasured instead.
-2. Stop the legacy 10bucks runtime before loading any POC harness. In the
-   Hammerspoon Console, unload/disable the 10bucks init/load path, reload into
-   the isolated POC configuration, and record a `legacy_stopped` marker only
-   after confirming that no legacy 10bucks watcher, reconciliation timer,
-   bar timer, or hotkey remains active. The POC observer performs zero frame,
-   focus, minimize, hide, fullscreen, move, close, or other window effects.
+2. Stop the legacy 10bucks runtime before loading any POC harness. Use the
+   existing `spoon["10bucks"]` global, explicitly verify `started == false`,
+   and load the observer directly from its absolute repository path; do not
+   alter the init/load path or call `hs.reload`. Record `legacy_stopped` only
+   after confirming that no legacy 10bucks watcher, reconciliation timer, bar
+   timer, or hotkey remains active. The observer performs zero frame, focus,
+   minimize, hide, fullscreen, move, close, or other window effects.
 3. Start one disposable POC-only observer configuration. It may subscribe to
    candidate sources in parallel for comparison, but it is not a production
    path and is deleted after the POC unless separately justified. Emit
-   `run_start` and an inventory marker naming enabled candidate sources. A
-   controlled action driver/fixture, if one is used, is separate from this
-   observer, is invoked only at explicit human direction for a named sample,
-   and is never an autonomous mutation loop.
+   `run_start` and an inventory marker naming enabled candidate sources. The
+   currently approved calibration uses only explicitly named human Terminal
+   actions; it has no autonomous action driver or mutation loop. Never run the
+   observer and legacy runtime concurrently.
 4. Prepare the representative matrix: Terminal, a Chromium-based browser or
    Chromium app, Slack, Signal, Thunderbird, Claude, and Zoom. For every app,
    create a redacted app label and native window ID mapping. Do not put titles,
@@ -140,9 +144,13 @@ eligibility/admission marker; POC-001 issues zero frame effects.
 
 ### 3. Guided matrix
 
-For Terminal and the Chromium representative first, then each remaining
-representative app where its UI supports the action, run the following and
-retain every event order, including failures and late callbacks:
+The full matrix below remains **pending**. Before it begins, run only the
+short Terminal-only calibration in the operator guide and record its results
+separately. Do not advance from calibration to minimize/hide/fullscreen/Space
+move/cold-bootstrap or the representative-app matrix without a new approved
+handoff. For Terminal and the Chromium representative first, then each
+remaining representative app where its UI supports the action, run the
+following and retain every event order, including failures and late callbacks:
 
 1. Mark `create_first`, then create a first and an additional standard window;
    exercise focus/unfocus and rapid create → focus → close. Run warm creation
@@ -309,11 +317,12 @@ All thresholds are fixed before the run:
    broad latency claim; unsupported app actions remain explicitly unmeasured.
 
 ## Results
-Pending. No live actions, instrumentation, or measurements have been run. The
-Step 2C fake suite covers regular bootstrap ownership, fullscreen/unknown,
-confirmed A→B move, same-Space duplicate, ambiguous deferral, callback query
-attribution, bounded active-Space known-window sweep/no timer, readiness
-intersection, and watcher cleanup; this is not live evidence.
+Pending. The approved short Terminal-only calibration has not yet run; no
+results, measurements, or platform conclusions are recorded here. The Step 2C
+fake suite covers regular bootstrap ownership, fullscreen/unknown, confirmed
+A→B move, same-Space duplicate, ambiguous deferral, callback query attribution,
+bounded active-Space known-window sweep/no timer, readiness intersection, and
+watcher cleanup; this is not live evidence.
 
 ## Conclusion
 Pending. This protocol proves no macOS/Hammerspoon behavior yet.
@@ -327,9 +336,11 @@ check; it does not justify treating absence from `_orderedwinids()` or a global
 snapshot as death.
 
 ## Cleanup
-The step-2C POC-only observer is intentionally retained for the remaining
-POC-001 operator matrix; it is not production code and live actions remain
-forbidden until approved. Its isolated Hammerspoon configuration, traces, and
-any temporary timers/watchers used by later runs are deleted before a
-production replacement unless a named reusable diagnostic has an ongoing owner,
-a documented use, and measured negligible idle cost.
+The step-2C POC-only observer is intentionally retained for the approved
+pending Terminal calibration and the remaining POC-001 operator matrix; it is
+not production code. The calibration must stop the observer, export locally,
+and restore legacy bindings before legacy starts; later matrix actions remain
+unapproved until separately handed off. Its isolated traces and any temporary
+timers/watchers used by later runs are deleted before a production replacement
+unless a named reusable diagnostic has an ongoing owner, a documented use, and
+measured negligible idle cost.
