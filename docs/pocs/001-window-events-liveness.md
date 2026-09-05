@@ -607,6 +607,16 @@ coverage verifies repeated same-fullscreen resize skips, both fullscreen
 transitions probe, moved always probes, and unavailable resize is
 non-destructive.
 
+### Aborted fixture--observer correlation smoke preflight — no live sample
+
+**Observed:** one approved correlation-smoke attempt aborted during the
+published guide's preflight, before any live sample. The guide-prescribed
+`hs -v` command exited 64. The frozen paths matched and the tree was clean, but
+the fixture was never started or created; legacy 10bucks was not stopped during
+this attempt; and the observer was never loaded. No retry occurred. This is
+preflight-abort evidence only: POC-001 remains a **Hypothesis**, and any future
+attempt remains unapproved.
+
 ### Fixture-only one-sample smoke/calibration — recorded result
 
 **Observed, fixture-only:** one approved warm fixture smoke/calibration sample
