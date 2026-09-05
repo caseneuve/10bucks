@@ -24,7 +24,9 @@ public struct ActiveFixtureGeneration: Equatable {
     public let token: String
     public let correlationToken: String
     public let generation: UInt64
+    public let createSampleID: String
     public var closeRequested: Bool
+    public var closeSampleID: String?
 }
 
 public enum FixtureCommandRejection: Equatable {
@@ -36,6 +38,7 @@ public enum FixtureCommandRejection: Equatable {
 
 public enum FixtureControlError: Error, Equatable {
     case invalidRequest
+    case generationExhausted
     case commandRejected(FixtureCommandRejection)
 }
 
@@ -45,8 +48,9 @@ public struct FixtureControl {
     public private(set) var activeGeneration: ActiveFixtureGeneration?
     public private(set) var isShutDown = false
 
-    public init(tokenGenerator: TokenGenerating) {
+    public init(tokenGenerator: TokenGenerating, initialGeneration: UInt64 = 1) {
         self.tokenGenerator = tokenGenerator
+        self.nextGeneration = initialGeneration
     }
 
     public mutating func handle(_ request: FixtureRequest) throws -> FixtureResponse {
@@ -58,11 +62,14 @@ public struct FixtureControl {
         switch request.command {
         case "create":
             guard activeGeneration == nil else { throw FixtureControlError.commandRejected(.createAlreadyActive) }
+            guard nextGeneration != UInt64.max else { throw FixtureControlError.generationExhausted }
             let active = ActiveFixtureGeneration(
                 token: try tokenGenerator.fixtureToken(),
                 correlationToken: try tokenGenerator.correlationToken(),
                 generation: nextGeneration,
-                closeRequested: false
+                createSampleID: sampleID,
+                closeRequested: false,
+                closeSampleID: nil
             )
             nextGeneration += 1
             activeGeneration = active
@@ -75,6 +82,7 @@ public struct FixtureControl {
             guard var active = activeGeneration, active.token == token else { throw FixtureControlError.commandRejected(.unknownFixtureToken) }
             guard !active.closeRequested else { throw FixtureControlError.commandRejected(.closeAlreadyRequested) }
             active.closeRequested = true
+            active.closeSampleID = sampleID
             activeGeneration = active
             return FixtureResponse(status: .accepted, requestID: requestID, sampleID: sampleID, fixtureToken: nil, correlationToken: nil)
         case "shutdown":

@@ -14,6 +14,7 @@ func testFixtureControlAcceptsOnlyTheFourExactCommandGrammars() throws {
     try expect(created.status == .accepted, "accepts create with exactly request and sample IDs")
     try expect(created.fixtureToken == "fixture-win-AAAA", "returns the generated fixture token")
     try expect(created.correlationToken == "corr-BBBB", "returns the generated correlation token")
+    try expect(control.activeGeneration?.createSampleID == "fixture-create-warm-001", "retains the create sample for lifecycle completion")
 
     for invalid in [
         request("CREATE", ["request_id": "req-002", "sample_id": "sample-002"]),
@@ -50,6 +51,7 @@ func testFixtureControlRemovesOnlyAfterMatchingWillCloseAndRejectsAfterShutdown(
     var control = FixtureControl(tokenGenerator: generator)
     let created = try control.handle(request("create", ["request_id": "req-001", "sample_id": "sample-001"]))
     _ = try control.handle(request("close", ["request_id": "req-002", "sample_id": "sample-002", "fixture_token": created.fixtureToken!]))
+    try expect(control.activeGeneration?.closeSampleID == "sample-002", "retains the close sample for lifecycle completion")
 
     try expect(!control.completeClose(token: "fixture-win-wrong", generation: 1), "wrong close hook cannot remove the active registry entry")
     try expect(control.activeGeneration != nil, "wrong completion retains active registry")
@@ -71,8 +73,16 @@ func testFixtureControlRemovesOnlyAfterMatchingWillCloseAndRejectsAfterShutdown(
     try expect(shuttingDown.activeGeneration != nil, "shutdown rejects work but does not remove a live registry entry outside will-close")
 }
 
+func testFixtureControlRejectsGenerationCounterOverflow() throws {
+    var control = FixtureControl(tokenGenerator: DeterministicTokenGenerator(values: ["AAAA", "BBBB"]), initialGeneration: UInt64.max)
+    try expectThrows(FixtureControlError.generationExhausted) {
+        _ = try control.handle(request("create", ["request_id": "req-001", "sample_id": "sample-001"]))
+    }
+}
+
 let fixtureControlTests: [(String, () throws -> Void)] = [
     ("fixture control accepts only the exact four-command grammar", testFixtureControlAcceptsOnlyTheFourExactCommandGrammars),
     ("fixture control serializes active-token command state", testFixtureControlSerializesStateAndRejectsDuplicateOrWrongTokens),
     ("fixture control removes only at matching will-close and rejects after shutdown", testFixtureControlRemovesOnlyAfterMatchingWillCloseAndRejectsAfterShutdown),
+    ("fixture control rejects generation counter overflow", testFixtureControlRejectsGenerationCounterOverflow),
 ]

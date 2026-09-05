@@ -8,9 +8,9 @@ func testSecureTokenGeneratorUsesInjectedRandomBoundaryAndFrozenPrefixes() throw
     })
     let fixtureToken = try generator.fixtureToken()
     try expect(fixtureToken == "fixture-win-AAAAAAAAAAAAAAAA", "encodes random bytes as base32")
-    bytes[0] = 0xff
+    bytes = Array(repeating: 0xff, count: 10)
     let correlationToken = try generator.correlationToken()
-    try expect(correlationToken == "corr-74AAAAAAAAAAAAAA", "uses only base32 alphabet with correlation prefix")
+    try expect(correlationToken == "corr-7777777777777777", "encodes all 80 random bits without overflowing its accumulator")
 }
 
 func testSecureTokenGeneratorRejectsBoundaryFailuresAndWrongLengths() throws {

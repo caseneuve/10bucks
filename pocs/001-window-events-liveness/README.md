@@ -127,8 +127,11 @@ handling run on the main thread.
    never terminates the fixture. Only `shutdown` may terminate it.
 
 No lifecycle hook is used as a production authority. Duplicate notifications,
-wrong object, duplicate generation, or a close before create completion are
-traced as a safe rejected/duplicate outcome, never converted into completion.
+wrong object, and duplicate generation are safe rejected/duplicate outcomes.
+If the registered window's `windowWillClose(_:)` arrives before its create
+completion, that hook removes and cancels the generation for cleanup but emits
+no `native_close_completed`; it is an anomalous discarded ordering, never a
+completion.
 
 ### Clock and trace
 

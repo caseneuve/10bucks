@@ -5,7 +5,7 @@ public enum PendingWorkState: Equatable { case idle, queued, shutDown }
 public final class PendingWorkModel {
     private let trace: FixtureTraceSink
     private let enqueue: (@escaping () -> Void) -> Void
-    private var pending: (token: String, generation: UInt64)?
+    private var pending: (token: String, generation: UInt64, sampleID: String)?
     public private(set) var state: PendingWorkState = .idle
 
     public init(trace: FixtureTraceSink, enqueue: @escaping (@escaping () -> Void) -> Void) {
@@ -14,12 +14,12 @@ public final class PendingWorkModel {
     }
 
     @discardableResult
-    public func request(token: String, generation: UInt64) -> Bool {
+    public func request(token: String, generation: UInt64, sampleID: String) -> Bool {
         guard state == .idle, pending == nil else { return false }
-        pending = (token, generation)
+        pending = (token, generation, sampleID)
         state = .queued
-        trace.record(.pendingWorkRequested(token: token, generation: generation))
-        enqueue { [weak self] in self?.service(token: token, generation: generation) }
+        trace.record(.pendingWorkRequested(token: token, generation: generation, sampleID: sampleID))
+        enqueue { [weak self] in self?.service(token: token, generation: generation, sampleID: sampleID) }
         return true
     }
 
@@ -34,10 +34,10 @@ public final class PendingWorkModel {
         state = .shutDown
     }
 
-    private func service(token: String, generation: UInt64) {
-        guard state == .queued, let pending, pending.token == token, pending.generation == generation else { return }
+    private func service(token: String, generation: UInt64, sampleID: String) {
+        guard state == .queued, let pending, pending.token == token, pending.generation == generation, pending.sampleID == sampleID else { return }
         self.pending = nil
         state = .idle
-        trace.record(.pendingWorkServiced(token: token, generation: generation))
+        trace.record(.pendingWorkServiced(token: token, generation: generation, sampleID: sampleID))
     }
 }

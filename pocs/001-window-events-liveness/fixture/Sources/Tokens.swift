@@ -34,26 +34,32 @@ public final class SecureTokenGenerator: TokenGenerating {
 
     private static func systemRandomBytes(count: Int) throws -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: count)
-        guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
-            throw TokenGenerationError.randomSourceFailure
+        let status = bytes.withUnsafeMutableBytes { buffer -> OSStatus in
+            guard let baseAddress = buffer.baseAddress else { return errSecParam }
+            return SecRandomCopyBytes(kSecRandomDefault, count, baseAddress)
         }
+        guard status == errSecSuccess else { throw TokenGenerationError.randomSourceFailure }
         return bytes
     }
 
     private static func base32(_ bytes: [UInt8]) -> String {
         let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
         var result = ""
-        var buffer = 0
-        var bitCount = 0
+        var remainingBits: UInt16 = 0
+        var remainingCount = 0
         for byte in bytes {
-            buffer = (buffer << 8) | Int(byte)
-            bitCount += 8
-            while bitCount >= 5 {
-                bitCount -= 5
-                result.append(alphabet[(buffer >> bitCount) & 31])
+            remainingBits = (remainingBits << 8) | UInt16(byte)
+            remainingCount += 8
+            while remainingCount >= 5 {
+                remainingCount -= 5
+                result.append(alphabet[Int((remainingBits >> remainingCount) & 31)])
+                let mask: UInt16 = remainingCount == 0 ? 0 : (1 << remainingCount) - 1
+                remainingBits &= mask
             }
         }
-        if bitCount > 0 { result.append(alphabet[(buffer << (5 - bitCount)) & 31]) }
+        if remainingCount > 0 {
+            result.append(alphabet[Int((remainingBits << (5 - remainingCount)) & 31)])
+        }
         return result
     }
 }
