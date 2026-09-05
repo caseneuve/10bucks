@@ -46,6 +46,9 @@ grep -F 'import CommonCrypto' "$fixture/Sources/Tokens.swift" >/dev/null
 grep -F 'CC_SHA256' "$fixture/Sources/Tokens.swift" >/dev/null
 grep -F 'correlation_alias' "$fixture/Sources/IPC.swift" >/dev/null
 grep -F 'correlation_alias' "$fixture/Sources/Trace.swift" >/dev/null
+grep -F 'POC001_FIXTURE_CLOCK_KIND' "$fixture/Sources/Clock.swift" >/dev/null
+grep -F 'Clock.nowTicks(kind: clockKind)' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null
+grep -F '"timebase_numer": record.clock.timebase.numer' "$fixture/Sources/Trace.swift" >/dev/null
 ! grep -F '"correlation_token"' "$fixture/Sources/IPC.swift" "$fixture/Sources/Trace.swift" >/dev/null
 ! grep -E '\.title|NSWindow\.identifier' "$fixture/Sources/POC001FixtureApp.swift" "$fixture/Sources/FixtureCoordinator.swift" >/dev/null
 printf '%s\n' 'PASS fixture bundle/build static checks'

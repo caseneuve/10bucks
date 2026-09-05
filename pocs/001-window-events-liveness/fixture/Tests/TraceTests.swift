@@ -9,8 +9,6 @@ func validTraceRecord(sequence: UInt64 = 1) -> TraceRecord {
         clock: ClockReading(kind: .machContinuous, ticks: 7, timebase: MachTimebase(numer: 1, denom: 1)),
         approvedFields: [
             "fixture_token": .string("fixture-win-ABC234"),
-            "timebase_numer": .unsigned(1),
-            "timebase_denom": .unsigned(1),
         ]
     )
 }
@@ -18,11 +16,23 @@ func validTraceRecord(sequence: UInt64 = 1) -> TraceRecord {
 func testTraceEncodesOnlyRequiredAndApprovedFields() throws {
     let line = try Trace.encode(validTraceRecord())
     let object = try JSONSerialization.jsonObject(with: line) as! [String: Any]
-    try expect(Set(object.keys) == ["schema", "run_id", "sample_id", "sequence", "event", "clock_kind", "ticks", "monotonic_ms", "fixture_token", "timebase_numer", "timebase_denom"], "emits exactly required plus approved fields")
+    try expect(Set(object.keys) == ["schema", "run_id", "sample_id", "sequence", "event", "clock_kind", "ticks", "timebase_numer", "timebase_denom", "monotonic_ms", "fixture_token"], "emits frozen clock/timebase metadata plus approved fields")
     try expect(object["schema"] as? String == Trace.schema, "uses frozen schema")
     try expect(object["monotonic_ms"] as? UInt64 == 0, "derives floor milliseconds from clock")
-    try expect(object["timebase_numer"] as? UInt64 == 1, "preserves approved numeric scalar fields")
+    try expect(object["timebase_numer"] as? UInt64 == 1, "records timebase metadata for every raw-tick conversion")
     try expect(line.last == 0x0A, "writes one NDJSON line")
+}
+
+func testTraceRecordsAbsoluteClockMetadataForCorrelationWithoutDerivedTimestamp() throws {
+    let record = TraceRecord(
+        runID: "run-001", sampleID: "close-001", sequence: 1, event: "native_close_completed",
+        clock: ClockReading(kind: .machAbsolute, ticks: 17, timebase: MachTimebase(numer: 10, denom: 3))
+    )
+    let object = try JSONSerialization.jsonObject(with: Trace.encode(record)) as! [String: Any]
+    try expect(object["clock_kind"] as? String == "mach_absolute", "records the explicitly selected correlation clock")
+    try expect(object["ticks"] as? UInt64 == 17, "retains raw absolute-clock ticks for later conversion")
+    try expect(object["timebase_numer"] as? UInt64 == 10 && object["timebase_denom"] as? UInt64 == 3, "freezes conversion inputs alongside every event")
+    try expect(object["monotonic_ms"] as? UInt64 == 0, "keeps display-relative milliseconds separate from raw comparison inputs")
 }
 
 func testTraceEmitsOnlyFullCorrelationAliasNeverRawToken() throws {
@@ -121,6 +131,7 @@ func testTraceOutputIsExactlyOwnerPrivate() throws {
 
 let traceTests: [(String, () throws -> Void)] = [
     ("trace emits strict NDJSON required and approved fields", testTraceEncodesOnlyRequiredAndApprovedFields),
+    ("trace records raw absolute-clock conversion metadata", testTraceRecordsAbsoluteClockMetadataForCorrelationWithoutDerivedTimestamp),
     ("trace emits only full correlation aliases", testTraceEmitsOnlyFullCorrelationAliasNeverRawToken),
     ("trace rejects unsafe fields and values", testTraceRejectsUnsafeValuesAndUnknownFields),
     ("trace enforces sequence ordering", testTraceEnforcesSequenceOrdering),

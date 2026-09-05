@@ -47,6 +47,24 @@ return {
     joined, reason = Correlation.join_aliases("poc001-corr-sha256-not-a-digest", local_alias)
     equal(joined, false); equal(reason, "malformed_alias")
   end,
+  ["POC-001 correlation compares fixture raw absolute ticks with observer absolute nanoseconds only"] = function()
+    local latency = Correlation.close_latency({
+      clock_kind = "mach_absolute", ticks = 17, timebase_numer = 10, timebase_denom = 3,
+    }, { absolute_ns = 61 }, { sleep_observed = false })
+    equal(latency, 5)
+
+    for _, invalid in ipairs({
+      { fixture = { clock_kind = "mach_continuous", ticks = 17, timebase_numer = 10, timebase_denom = 3 }, observer = { absolute_ns = 61 }, options = { sleep_observed = false }, reason = "fixture_clock_not_absolute" },
+      { fixture = { clock_kind = "mach_absolute", ticks = 17, timebase_numer = 10, timebase_denom = 0 }, observer = { absolute_ns = 61 }, options = { sleep_observed = false }, reason = "invalid_timebase" },
+      { fixture = { clock_kind = "mach_absolute", ticks = 17, timebase_numer = 10, timebase_denom = 3 }, observer = { absolute_ns = 55 }, options = { sleep_observed = false }, reason = "negative_or_order_invalid" },
+      { fixture = { clock_kind = "mach_absolute", ticks = 17, timebase_numer = 10, timebase_denom = 3 }, observer = { absolute_ns = 61 }, options = { sleep_observed = true }, reason = "sleep_observed" },
+      { fixture = { clock_kind = "mach_absolute", ticks = math.maxinteger, timebase_numer = 2, timebase_denom = 1 }, observer = { absolute_ns = 61 }, options = { sleep_observed = false }, reason = "conversion_overflow" },
+    }) do
+      local value, reason = Correlation.close_latency(invalid.fixture, invalid.observer, invalid.options)
+      equal(value, nil); equal(reason, invalid.reason)
+    end
+  end,
+
   ["POC-001 correlation candidates retain aliases until explicit cleanup"] = function()
     local model = Correlation.new(sha256); assert(model:arm(1)); model:consume("101", "corr-AAAAAAAAAAAAAAAA")
     equal(model:alias_for_window("101"), local_alias); equal(model:count(), 1)

@@ -78,15 +78,18 @@ private final class AppKitWindowPort: NSObject, FixtureWindowPort, NSWindowDeleg
 private final class AppTraceSink: FixtureTraceSink {
     private let writer: TraceWriter
     private let runID: String
+    private let clockKind: ClockKind
     private var sequence: UInt64 = 1
     private var starts: [String: UInt64] = [:]
 
-    init(writer: TraceWriter, runID: String) { self.writer = writer; self.runID = runID }
+    init(writer: TraceWriter, runID: String, clockKind: ClockKind) {
+        self.writer = writer; self.runID = runID; self.clockKind = clockKind
+    }
 
     func record(_ event: FixtureTraceEvent) {
         precondition(Thread.isMainThread, "trace writes must run on the main thread")
         do {
-            let clock = try Clock.nowTicks()
+            let clock = try Clock.nowTicks(kind: clockKind)
             let mapped: (String, String, [String: TraceScalar], String?, Bool)
             switch event {
             case let .createRequested(token, correlationAlias, generation, sample): mapped = ("create_requested", sample, ["fixture_token": .string(token), "correlation_alias": .string(correlationAlias)], key(token, generation, "create_visible"), false)
@@ -112,7 +115,7 @@ private final class AppTraceSink: FixtureTraceSink {
 
     func append(event: String, sampleID: String, fields: [String: TraceScalar] = [:]) {
         precondition(Thread.isMainThread, "trace writes must run on the main thread")
-        do { try append(event: event, sampleID: sampleID, fields: fields, clock: Clock.nowTicks()) }
+        do { try append(event: event, sampleID: sampleID, fields: fields, clock: Clock.nowTicks(kind: clockKind)) }
         catch { fatalError("fixture trace failure") }
     }
 
@@ -146,11 +149,14 @@ final class POC001FixtureApp: NSObject, NSApplicationDelegate {
         precondition(Thread.isMainThread)
         do {
             let runDirectory = try requiredRunDirectory()
+            // Validate the mode before creating any trace/socket artifact.
+            let clockKind = try Clock.kind(environment: ProcessInfo.processInfo.environment)
             let writer = try TraceWriter(createAt: runDirectory.appendingPathComponent("trace.ndjson"))
             let runID = "run-" + String(try SecureTokenGenerator().fixtureToken().dropFirst(12))
-            let sink = AppTraceSink(writer: writer, runID: runID)
-            let clock = try Clock.nowTicks()
-            sink.append(event: "run_started", sampleID: "startup", fields: ["timebase_numer": .unsigned(clock.timebase.numer), "timebase_denom": .unsigned(clock.timebase.denom)])
+            let sink = AppTraceSink(writer: writer, runID: runID, clockKind: clockKind)
+            // Each trace record contains the selected clock kind and timebase;
+            // this startup record makes the choice explicit before any action.
+            sink.append(event: "run_started", sampleID: "startup")
             let port = AppKitWindowPort()
             let pending = PendingWorkModel(trace: sink, enqueue: { work in DispatchQueue.main.async(execute: work) })
             let lifecycle = FixtureLifecycleHooks(trace: sink, cancelGeneration: { [weak pending] token, generation in pending?.cancel(token: token, generation: generation) })

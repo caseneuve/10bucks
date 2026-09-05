@@ -37,6 +37,23 @@ return {
     assert(not rendered:find("window:99", 1, true))
   end,
 
+  ["POC-001 observer trace exports independent absolute nanoseconds without raw identifiers"] = function()
+    local relative, absolute = 10, 9000000000
+    local trace = Trace.new(function()
+      relative = relative + 7
+      return relative
+    end, "run-absolute", function()
+      absolute = absolute + 1234567
+      return absolute
+    end)
+    trace:emit("destruction_candidate", { raw_id = "99", raw_ax = "corr-AAAAAAAAAAAAAAAA" })
+    local event = trace:export_table().events[1]
+    equal(event.monotonic_ms, 7)
+    equal(event.absolute_ns, 9001234567)
+    assert(event.absolute_ns ~= event.monotonic_ms * 1000000)
+    equal(event.raw_id, nil); equal(event.raw_ax, nil)
+  end,
+
   ["POC-001 trace separates bootstrap global queries from steady callback queries"] = function()
     local trace = Trace.new(function() return 10 end, "run-002")
     trace:query("all_application_scan", "bootstrap.attach_existing_apps", "bootstrap")

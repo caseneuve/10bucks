@@ -30,7 +30,11 @@ local READINESS_METADATA = {
 }
 local LIFECYCLE_METADATA = { READINESS_METADATA[1], READINESS_METADATA[2] }
 
-local function monotonic_ms() return hs.timer.absoluteTime() / 1000000 end
+-- Hammerspoon documents absoluteTime as nanoseconds since boot excluding sleep.
+-- Keep the absolute sample for cross-process correlation and a separate
+-- run-relative millisecond clock for ordinary callback-duration reporting.
+local function absolute_ns() return hs.timer.absoluteTime() end
+local function monotonic_ms() return absolute_ns() / 1000000 end
 
 local function protected(callable)
   local ok, value = pcall(callable)
@@ -69,7 +73,7 @@ end
 
 function Observer:_new_run()
   self.run_number = self.run_number + 1
-  self.trace = Trace.new(monotonic_ms, string.format("run-%03d", self.run_number))
+  self.trace = Trace.new(monotonic_ms, string.format("run-%03d", self.run_number), absolute_ns)
   self.lifecycle, self.ownership = Lifecycle.new(), Ownership.new()
   self.app_watchers, self.window_watchers, self.window_identity_cache = {}, {}, {}
   self.window_raw_by_alias, self.ready_emitted, self.metadata_by_window = {}, {}, {}

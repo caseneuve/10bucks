@@ -32,30 +32,48 @@ public enum ClockError: Error, Equatable {
     case tickUnderflow
     case invalidTimebase
     case conversionOverflow
+    case invalidClockKind
 }
 
 public enum Clock {
-    public static func nowTicks() throws -> ClockReading {
+    // The correlation smoke must request mach_absolute explicitly so its raw
+    // ticks share hs.timer.absoluteTime's documented timebase. Standalone
+    // fixture calibration retains continuous time by default.
+    public static func kind(environment: [String: String]) throws -> ClockKind {
+        guard let value = environment["POC001_FIXTURE_CLOCK_KIND"] else { return .machContinuous }
+        guard let kind = ClockKind(rawValue: value) else { throw ClockError.invalidClockKind }
+        return kind
+    }
+
+    public static func nowTicks(kind: ClockKind = .machContinuous) throws -> ClockReading {
         var nativeTimebase = mach_timebase_info_data_t()
         let status = mach_timebase_info(&nativeTimebase)
         let timebase = MachTimebase(numer: UInt64(nativeTimebase.numer), denom: UInt64(nativeTimebase.denom))
-
-        if #available(macOS 10.12, *) {
-            return try makeReading(
-                timebaseStatus: status,
-                continuousAvailable: true,
-                continuousTicks: mach_continuous_time(),
-                absoluteTicks: 0,
-                timebase: timebase
-            )
+        let ticks: UInt64
+        switch kind {
+        case .machAbsolute:
+            ticks = mach_absolute_time()
+        case .machContinuous:
+            if #available(macOS 10.12, *) {
+                ticks = mach_continuous_time()
+            } else {
+                ticks = mach_absolute_time()
+                return try makeReading(timebaseStatus: status, kind: .machAbsolute, ticks: ticks, timebase: timebase)
+            }
         }
-        return try makeReading(
-            timebaseStatus: status,
-            continuousAvailable: false,
-            continuousTicks: 0,
-            absoluteTicks: mach_absolute_time(),
-            timebase: timebase
-        )
+        return try makeReading(timebaseStatus: status, kind: kind, ticks: ticks, timebase: timebase)
+    }
+
+    static func makeReading(
+        timebaseStatus: kern_return_t,
+        kind: ClockKind,
+        ticks: UInt64,
+        timebase: MachTimebase
+    ) throws -> ClockReading {
+        guard timebaseStatus == KERN_SUCCESS, timebase.numer != 0, timebase.denom != 0 else {
+            throw ClockError.timebaseUnavailable
+        }
+        return ClockReading(kind: kind, ticks: ticks, timebase: timebase)
     }
 
     // Keeps the raw system result and clock selection testable without mocking Darwin.

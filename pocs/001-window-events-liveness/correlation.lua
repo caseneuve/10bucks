@@ -77,4 +77,26 @@ function Correlation.join_aliases(fixture_alias, observer_alias)
   return true
 end
 
+-- This diagnostic comparison is deliberately separate from alias joining.
+-- Fixture ticks are converted with their frozen mach_timebase_info values;
+-- observer absolute_ns is never inferred from its relative monotonic_ms.
+function Correlation.close_latency(fixture_close, observer_candidate, options)
+  fixture_close, observer_candidate, options = fixture_close or {}, observer_candidate or {}, options or {}
+  if options.sleep_observed ~= false then return nil, "sleep_observed" end
+  if fixture_close.clock_kind ~= "mach_absolute" then return nil, "fixture_clock_not_absolute" end
+  local ticks, numer, denom, observed = fixture_close.ticks, fixture_close.timebase_numer, fixture_close.timebase_denom, observer_candidate.absolute_ns
+  if type(numer) ~= "number" or type(denom) ~= "number" or numer <= 0 or denom <= 0
+    or numer % 1 ~= 0 or denom % 1 ~= 0 then return nil, "invalid_timebase" end
+  if type(ticks) ~= "number" or type(observed) ~= "number" or ticks < 0 or observed < 0
+    or ticks % 1 ~= 0 or observed % 1 ~= 0 then return nil, "invalid_timestamp" end
+  local quotient, remainder = ticks // denom, ticks % denom
+  local max = math.maxinteger or 9223372036854775807
+  if quotient > max // numer or remainder > max // numer then return nil, "conversion_overflow" end
+  local whole, fractional = quotient * numer, (remainder * numer) // denom
+  if whole > max - fractional then return nil, "conversion_overflow" end
+  local fixture_ns = whole + fractional
+  if observed < fixture_ns then return nil, "negative_or_order_invalid" end
+  return observed - fixture_ns
+end
+
 return Correlation

@@ -31,7 +31,9 @@ local function fake_application(pid, windows, bundle_id)
   }
 end
 local function install_fake_hs(applications)
-  local state = { filter_new_arguments = {} }
+  -- Keep deterministic absolute timestamps far from fake native IDs so privacy
+  -- assertions cannot mistake a timestamp's digits for an exported identity.
+  local state = { filter_new_arguments = {}, clock = 7000000000000000 }
   _G.hs = {
     timer = { absoluteTime = function() state.clock = (state.clock or 0) + 1000000; return state.clock end },
     window = { filter = { new = function(allow_all, name)
@@ -117,8 +119,9 @@ return {
     for _, event in ipairs(events(observer, "targeted_check_end")) do if event.query == "targeted_window_metadata" then ends[#ends + 1] = event end end
     equal(#begins, 5); equal(#ends, 5); equal(#ready, 1)
     for _, event in ipairs(begins) do equal(event.callback_sequence ~= nil, true); equal(event.query, "targeted_window_metadata") end
-    local exported = require("trace").encode_json(observer.trace:export_table())
-    assert(not exported:find("201", 1, true)); assert(not exported:find("77", 1, true))
+    for _, event in ipairs(observer.trace:export_table().events) do
+      equal(event.raw_id, nil); equal(event.pid, nil)
+    end
     observer:stop()
   end,
   ["POC-001 direct move infers fullscreen only as a targeted observed property"] = function()
@@ -446,8 +449,9 @@ return {
     equal(scoped.result, "matched"); assert(type(scoped.duration_ms) == "number")
     local matched = events(observer, "correlation_observed"); equal(#matched, 1)
     equal(matched[1].correlation_alias, "poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac")
-    local rendered = require("trace").encode_json(observer.trace:export_table())
-    assert(not rendered:find("corr-AAAAAAAAAAAAAAAA", 1, true)); assert(not rendered:find("990", 1, true))
+    for _, event in ipairs(observer.trace:export_table().events) do
+      equal(event.raw_ax, nil); equal(event.raw_id, nil)
+    end
     observer:stop()
   end,
   ["POC-001 fixture correlation scopes by exact bundle and clears aliases on destruction stop and failed startup"] = function()

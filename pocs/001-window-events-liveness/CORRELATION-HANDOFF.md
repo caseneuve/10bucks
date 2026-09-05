@@ -40,6 +40,7 @@ production identity mechanism. It causes no window effect.
 | Hammerspoon SHA-256 | **Verified** | Installed Hammerspoon 1.1.1 `hs/hash.lua` documents `hs.hash.SHA256(data)` as returning the hexadecimal SHA-256 digest and says it is equivalent to `hs.hash.new("SHA256"):append(data):finish():value()`. `hs.hash.types` lists `SHA256` as a 256-bit cryptographic hash. The future observer uses the non-HMAC SHA-256 operation; there is no shared secret. |
 | Public Swift SHA-256 | **Verified** | The installed macOS SDK has public `usr/include/CommonCrypto/module.modulemap` defining system module `CommonCrypto`, whose umbrella includes `CommonDigest.h`. That header declares `CC_SHA256_DIGEST_LENGTH` (32), `CC_SHA256_Init`/`Update`/`Final`, and one-shot `CC_SHA256`, available on macOS 10.4+. A future Swift fixture may `import CommonCrypto` and use this public API; CryptoKit was not relied on because it was not found in this Command Line Tools SDK. |
 | Identical runtime output | **Hypothesis until tests run** | Both APIs document SHA-256/hex output, but the fixture and observer implementations must pass the same fixed vectors before any live gate. |
+| Cross-process absolute-time basis | **Verified** | Hammerspoon [1.1.1 tag `extensions/timer/libtimer.m`](https://github.com/Hammerspoon/hammerspoon/blob/1.1.1/extensions/timer/libtimer.m) implements `hs.timer.absoluteTime` with `mach_absolute_time()` and `mach_timebase_info()`. Installed [`hs.timer` docs](https://www.hammerspoon.org/docs/hs.timer.html#absoluteTime) specify nanoseconds since boot, excluding sleep. This differs from the fixture's default `mach_continuous_time()` clock, so its old run-relative milliseconds could not support a direct close-candidate comparison. |
 
 ## Frozen alias format and security scope
 
@@ -126,6 +127,46 @@ pure tests, static checks, and build verification:
 **Hypothesis:** the public AppKit identifier appears as the same callback
 window's `AXIdentifier`, allowing the two independently calculated aliases to
 match. Source/header/doc evidence does not prove it.
+
+## Build-only clock prerequisite — implemented, not live-authorized
+
+**Verified:** the fixture now accepts only `POC001_FIXTURE_CLOCK_KIND` values
+`mach_continuous` (the standalone default) and `mach_absolute`; any other value
+fails closed before the fixture creates its trace/socket state. A separately
+approved correlation smoke must explicitly select `mach_absolute`. Every fixture
+trace record records `clock_kind`, raw `ticks`, `timebase_numer`, and
+`timebase_denom`. The observer retains its run-relative `monotonic_ms` and now
+records an independently sampled `absolute_ns` from `hs.timer.absoluteTime()`
+on every event. `absolute_ns` is whitelisted scalar telemetry only; it carries
+no raw AX value, native ID, PID, title, or other identity.
+
+**Frozen comparison (Target for a later authorized smoke only):** with no sleep
+during the sample, convert the fixture's `native_close_completed` raw ticks
+using its record's frozen timebase:
+
+```text
+fixture_absolute_ns = (ticks / denom) * numer + ((ticks % denom) * numer) / denom
+latency_ns = observer_destruction_candidate.absolute_ns - fixture_absolute_ns
+```
+
+The fixture clock kind must be `mach_absolute`; missing/invalid fields, a zero
+or invalid timebase, observed sleep, or a negative/order-invalid latency fails
+the sample. This comparison is diagnostic timing only: exact correlation alias
+equality remains the sole join and no timing result may repair a failed join.
+Pure fixture/Lua tests cover explicit mode selection, fail-closed invalid mode,
+raw tick/timebase preservation, independent observer `absolute_ns`, redaction,
+and negative/order failure.
+
+**Prerequisite status:** source/test/build prerequisite complete; no smoke,
+fixture launch, IPC, Hammerspoon load/action, authorization, or POC-001 result
+has occurred. POC-001 remains a **Hypothesis**.
+
+## Aborted research command
+
+A research command accidentally started a second Hammerspoon process. It was
+aborted; that process exited. It made no sample or configuration change and
+produced no evidence. It is not a POC run and does not alter the authorization
+boundary above.
 
 ## Fixed pass/fail, privacy, and query limits
 

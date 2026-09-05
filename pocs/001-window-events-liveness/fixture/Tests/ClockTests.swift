@@ -24,6 +24,16 @@ func testClockSelectionAndMetadata() throws {
     try expect(fallback.ticks == 202, "retains absolute fallback ticks")
 }
 
+func testCorrelationClockModeSelectsAbsoluteAndRejectsInvalidConfiguration() throws {
+    let defaultKind = try Clock.kind(environment: [:])
+    let correlationKind = try Clock.kind(environment: ["POC001_FIXTURE_CLOCK_KIND": "mach_absolute"])
+    try expect(defaultKind == .machContinuous, "defaults standalone fixture runs to continuous time")
+    try expect(correlationKind == .machAbsolute, "selects absolute time explicitly for correlation")
+    try expectThrows(ClockError.invalidClockKind) {
+        _ = try Clock.kind(environment: ["POC001_FIXTURE_CLOCK_KIND": "continuous-ish"])
+    }
+}
+
 func testClockRejectsFailedOrZeroTimebase() throws {
     try expectThrows(ClockError.timebaseUnavailable) {
         _ = try Clock.makeReading(
@@ -75,6 +85,7 @@ func testNanosecondConversionRejectsInvalidAndOverflowingValues() throws {
 
 let clockTests: [(String, () throws -> Void)] = [
     ("clock selects continuous and fallback metadata", testClockSelectionAndMetadata),
+    ("correlation clock mode selects absolute and fails closed", testCorrelationClockModeSelectsAbsoluteAndRejectsInvalidConfiguration),
     ("clock rejects failed and zero timebase metadata", testClockRejectsFailedOrZeroTimebase),
     ("clock checks elapsed tick subtraction", testElapsedTicksIsChecked),
     ("clock converts ticks with quotient and remainder", testNanosecondConversionUsesQuotientAndRemainder),

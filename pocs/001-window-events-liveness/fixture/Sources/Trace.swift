@@ -71,7 +71,7 @@ public enum Trace {
         "fixture_token", "correlation_alias", "request_id", "origin", "status", "reason"
     ]
     private static let approvedUnsignedFieldNames: Set<String> = [
-        "timebase_numer", "timebase_denom", "elapsed_ticks"
+        "elapsed_ticks"
     ]
 
     public static func encode(_ record: TraceRecord) throws -> Data {
@@ -104,6 +104,8 @@ public enum Trace {
             "event": record.event,
             "clock_kind": record.clock.kind.rawValue,
             "ticks": record.clock.ticks,
+            "timebase_numer": record.clock.timebase.numer,
+            "timebase_denom": record.clock.timebase.denom,
             "monotonic_ms": Clock.monotonicMilliseconds(nanoseconds: nanoseconds),
         ]
         for (name, value) in record.approvedFields {

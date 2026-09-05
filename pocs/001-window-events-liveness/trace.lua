@@ -107,11 +107,13 @@ function Trace.encode_json(value)
   return "{" .. table.concat(parts, ",") .. "}"
 end
 
-function Trace.new(clock, run_id)
+function Trace.new(clock, run_id, absolute_clock)
   assert(type(clock) == "function", "clock is required")
+  assert(absolute_clock == nil or type(absolute_clock) == "function", "absolute_clock must be a function")
   assert_safe_token(run_id, "run_id")
   return setmetatable({
     clock = clock,
+    absolute_clock = absolute_clock,
     run_id = run_id,
     started_at_ms = clock(),
     sequence = 0,
@@ -175,6 +177,9 @@ function Trace:emit(marker, fields)
   event.sample_id = self.current_sample
   event.sequence = self.sequence
   event.monotonic_ms = self.clock() - self.started_at_ms
+  -- absolute_ns is sampled independently from the run-relative display clock;
+  -- it is never reconstructed from monotonic_ms during export.
+  if self.absolute_clock then event.absolute_ns = self.absolute_clock() end
   event.marker = marker
   self.events[#self.events + 1] = event
   return event.sequence
