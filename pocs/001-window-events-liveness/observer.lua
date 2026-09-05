@@ -78,6 +78,8 @@ function Observer:_new_run()
   self.app_watchers, self.window_watchers, self.window_identity_cache = {}, {}, {}
   self.window_raw_by_alias, self.ready_emitted, self.metadata_by_window = {}, {}, {}
   self.correlation = Correlation.new(function(value) return hs.hash.SHA256(value) end)
+  self.correlation_active_alias = nil
+  self.correlation_candidate_sources = { direct_ax = false, filter = false }
   self.destruction_candidates, self.active_target_action, self.target_binding_hotkey = {}, nil, nil
   self.space_trigger_generation, self.last_active_space, self.last_active_generation = 0, nil, nil
   self.filter, self.application_watcher, self.spaces_watcher = nil, nil, nil
@@ -271,6 +273,9 @@ function Observer:_destruction_candidate(app, window, source, event, raw_window)
   local relation = "no_active_target"
   if self.active_target_action then relation = self.active_target_action.window == window and "target" or "non_target" end
   local correlation_alias = raw_window and self.correlation:alias_for_window(raw_window) or nil
+  if (source == "direct_ax" or source == "filter") and self.correlation_active_alias and correlation_alias == self.correlation_active_alias then
+    self.correlation_candidate_sources[source] = true
+  end
   self.trace:emit("destruction_candidate", { source = source, app = app, window = window, raw_event = event, target_relation = relation, correlation_alias = correlation_alias, result = "candidate_only" })
   if candidates.direct_ax and candidates.filter and not candidates.paired then
     candidates.paired = true
@@ -446,6 +451,7 @@ function Observer:_observe_fixture_correlation(raw_id, application, callback_win
   else outcome = self.correlation:consume(raw_id, raw) end
   raw = nil -- Do not retain a Lua reference to the raw AX identifier.
   if outcome.alias then
+    self.correlation_active_alias = outcome.alias
     self.trace:emit("correlation_observed", { source = "window_filter", correlation_alias = outcome.alias, result = "matched" })
   else
     self.trace:emit("correlation_unresolved", { source = "window_filter", reason = outcome.reason, result = "unresolved" })
@@ -556,18 +562,44 @@ function Observer:_delete_target_binding_hotkey(reason)
   end
 end
 
+function Observer:_reset_fixture_correlation_status()
+  self.correlation_active_alias = nil
+  self.correlation_candidate_sources = { direct_ax = false, filter = false }
+end
+
+function Observer:_fixture_correlation_complete()
+  return self.correlation_active_alias ~= nil
+    and self.correlation_candidate_sources.direct_ax
+    and self.correlation_candidate_sources.filter
+end
+
 function Observer:arm_fixture_correlation(generation)
   assert(self.trace, "start the POC before arming correlation")
   if not self.running then return false, "not_running" end
   local armed, reason = self.correlation:arm(generation)
-  if armed then self.trace:emit("correlation_armed", { source = "operator", result = "armed" }) end
+  if armed then
+    self:_reset_fixture_correlation_status()
+    self.trace:emit("correlation_armed", { source = "operator", result = "armed" })
+  end
   return armed, reason
 end
 
 function Observer:finish_fixture_correlation()
   assert(self.trace, "start the POC before finishing correlation")
+  if not self:_fixture_correlation_complete() then return false, "candidates_incomplete" end
   self.correlation:clear()
+  self:_reset_fixture_correlation_status()
   self.trace:emit("correlation_finished", { source = "operator", correlation_armed = false, correlation_map_count = 0, result = "cleaned" })
+  return true
+end
+
+function Observer:abort_fixture_correlation(reason)
+  assert(self.trace, "start the POC before aborting correlation")
+  local state = self.correlation:state()
+  local active = state.armed_generation ~= nil or self.correlation:count() ~= 0 or self.correlation_active_alias ~= nil
+  self.correlation:clear()
+  self:_reset_fixture_correlation_status()
+  if active then self.trace:emit("correlation_aborted", { source = "operator", reason = reason or "operator_abort", result = "cleaned" }) end
   return true
 end
 
@@ -580,7 +612,7 @@ function Observer:stop()
   local window_keys, app_keys = {}, {}; for key in pairs(self.window_watchers) do window_keys[#window_keys + 1] = key end; for key in pairs(self.app_watchers) do app_keys[#app_keys + 1] = key end
   for _, key in ipairs(window_keys) do self:_stop_window_watcher(key, "observer_stop") end
   for _, key in ipairs(app_keys) do local record = self.app_watchers[key]; if record then protected(function() record.watcher:stop() end); self:_fact("application_watcher_detached", { source = "direct_ax", app = record.alias, watcher_kind = "application", reason = "observer_stop" }) end; self.app_watchers[key] = nil end
-  self.correlation:clear()
+  self:abort_fixture_correlation("observer_stop")
   self.filter, self.application_watcher, self.spaces_watcher, self.running = nil, nil, nil, false; self.trace:lifecycle("stop"); self.trace:mark("cleanup_complete", { source = "poc001", count = 0 }); return true
 end
 
@@ -662,7 +694,18 @@ function Observer:status()
   if not self.trace then return { lifecycle = "not_started", target_binding_armed = false } end
   local status = self.trace:status(); status.active_timers, status.window_effects, status.direct_application_watchers, status.direct_window_watchers, status.spaces_watcher_active, status.target_binding_armed = self.active_timers, self.window_effects, 0, 0, self.spaces_watcher ~= nil, self.target_binding_hotkey ~= nil
   local correlation_state = self.correlation and self.correlation:state() or {}
-  status.correlation = { armed = correlation_state.armed_generation ~= nil, map_count = self.correlation and self.correlation:count() or 0 }
+  local sources = self.correlation_candidate_sources or {}
+  local direct_ax, filter = sources.direct_ax == true, sources.filter == true
+  status.correlation = {
+    armed = correlation_state.armed_generation ~= nil,
+    map_count = self.correlation and self.correlation:count() or 0,
+    candidate_sources = {
+      direct_ax = direct_ax,
+      filter = filter,
+      count = (direct_ax and 1 or 0) + (filter and 1 or 0),
+      complete = self:_fixture_correlation_complete(),
+    },
+  }
   for _ in pairs(self.app_watchers) do status.direct_application_watchers = status.direct_application_watchers + 1 end; for _ in pairs(self.window_watchers) do status.direct_window_watchers = status.direct_window_watchers + 1 end
   return status
 end

@@ -469,7 +469,9 @@ return {
     state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
     state.filter.subscriptions.windowDestroyed(window, nil, "windowDestroyed")
     local destroyed = events(observer, "destruction_candidate"); equal(destroyed[#destroyed].correlation_alias, "poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac")
-    equal(observer:status().correlation.map_count, 1); assert(observer:finish_fixture_correlation())
+    equal(observer:status().correlation.map_count, 1)
+    local finished, reason = observer:finish_fixture_correlation(); equal(finished, false); equal(reason, "candidates_incomplete")
+    assert(observer:abort_fixture_correlation("test_cleanup"))
     equal(observer:status().correlation.map_count, 0); equal(observer:status().correlation.armed, false)
     observer:stop(); equal(observer:status().correlation.map_count, 0)
   end,
@@ -490,9 +492,39 @@ return {
       equal(#candidates, 2); equal(#paired, 1)
       for _, candidate in ipairs(candidates) do equal(candidate.correlation_alias, "poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac") end
       equal(paired[1].correlation_alias, "poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac")
-      equal(observer:status().correlation.map_count, 1); observer:finish_fixture_correlation(); equal(observer:status().correlation.map_count, 0)
+      local readiness = observer:status().correlation.candidate_sources
+      equal(readiness.direct_ax, true); equal(readiness.filter, true); equal(readiness.count, 2); equal(readiness.complete, true)
+      assert(observer:finish_fixture_correlation()); equal(observer:status().correlation.map_count, 0)
+      readiness = observer:status().correlation.candidate_sources
+      equal(readiness.count, 0); equal(readiness.complete, false)
       observer:stop()
     end
+  end,
+  ["POC-001 correlation candidate status ignores duplicates and unmapped windows and resets"] = function()
+    local window = fake_window(995, complete_metadata())
+    local application = fake_application(95, {}, "local.poc001.fixture")
+    window.application = function() return application end
+    local state = install_fake_hs({ application }); package.loaded.observer = nil
+    hs.hash = { SHA256 = function() return "83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac" end }
+    hs.axuielement = { windowElement = function() return { attributeValue = function() return "corr-AAAAAAAAAAAAAAAA" end } end }
+    local observer = require("observer").new(); assert(observer:start())
+    application.watcher.callback(window, "AXWindowCreated")
+    assert(observer:arm_fixture_correlation(1)); state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
+    window.watcher.callback(window, "AXUIElementDestroyed")
+    window.watcher.callback(window, "AXUIElementDestroyed")
+    observer:_destruction_candidate("other-app", "other-window", "filter", "windowDestroyed", "unmapped-window")
+    local readiness = observer:status().correlation.candidate_sources
+    equal(readiness.direct_ax, true); equal(readiness.filter, false); equal(readiness.count, 1); equal(readiness.complete, false)
+    local finished, reason = observer:finish_fixture_correlation(); equal(finished, false); equal(reason, "candidates_incomplete")
+    state.filter.subscriptions.windowDestroyed(window, nil, "windowDestroyed")
+    readiness = observer:status().correlation.candidate_sources
+    equal(readiness.complete, true); assert(observer:finish_fixture_correlation())
+    assert(observer:arm_fixture_correlation(2))
+    readiness = observer:status().correlation.candidate_sources
+    equal(readiness.direct_ax, false); equal(readiness.filter, false); equal(readiness.count, 0); equal(readiness.complete, false)
+    observer:stop()
+    readiness = observer:status().correlation.candidate_sources
+    equal(readiness.count, 0); equal(readiness.complete, false); equal(observer:status().correlation.map_count, 0)
   end,
   ["POC-001 fixture correlation unresolved callbacks consume the generation without prohibited fallback reads"] = function()
     local window = fake_window(992, complete_metadata())
