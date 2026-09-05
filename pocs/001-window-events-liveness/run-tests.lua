@@ -6,7 +6,8 @@ local trace_suite = require("test_trace")
 local observer_suite = require("test_observer")
 local lifecycle_suite = require("test_lifecycle")
 local ownership_suite = require("test_ownership")
-local suites = { trace_suite, lifecycle_suite, ownership_suite, observer_suite }
+local private_export_suite = require("test_private_export")
+local suites = { trace_suite, lifecycle_suite, ownership_suite, observer_suite, private_export_suite }
 local passed, failed = 0, 0
 for _, suite in ipairs(suites) do
   for name, test in pairs(suite) do

@@ -5,11 +5,16 @@ package.path = root .. "pocs/001-window-events-liveness/?.lua;" .. package.path
 local function equal(actual, expected) assert(actual == expected, string.format("expected %s, got %s", tostring(expected), tostring(actual))) end
 local function fake_watcher() return { start = function(self, events) self.started, self.events = true, events; return self end, stop = function(self) self.stopped = true; return self end } end
 local function fake_window(id, metadata)
-  return {
+  local window = {
     id = function() return id end,
-    attributeValue = function(_, attribute) return metadata and metadata[attribute] end,
     newWatcher = function(self, callback) local watcher = fake_watcher(); watcher.callback = callback; self.watcher = watcher; return watcher end,
   }
+  window.isMinimized = function() return metadata and metadata.minimized end
+  window.isFullScreen = function() return metadata and metadata.native_fullscreen end
+  window.role = function() return metadata and metadata.role end
+  window.subrole = function() return metadata and metadata.subrole end
+  window.isVisible = function() return metadata and metadata.visibility end
+  return window
 end
 local function fake_application(pid, windows)
   return {
@@ -47,7 +52,7 @@ local function install_fake_spaces(state, memberships)
     watcher = { new = function(callback) local watcher = fake_watcher(); watcher.callback = callback; state.spaces_watcher = watcher; return watcher end },
   }
 end
-local function complete_metadata() return { AXMinimized = false, AXFullScreen = false, AXRole = "AXWindow", AXSubrole = "AXStandardWindow", AXVisible = true } end
+local function complete_metadata() return { minimized = false, native_fullscreen = false, role = "AXWindow", subrole = "AXStandardWindow", visibility = true } end
 local function events(observer, marker) local result = {}; for _, event in ipairs(observer.trace:export_table().events) do if event.marker == marker then result[#result + 1] = event end end; return result end
 
 return {
@@ -93,7 +98,7 @@ return {
     local metadata, window = complete_metadata(), fake_window(301, complete_metadata())
     local application = fake_application(88, {}); local state = install_fake_hs({ application }); package.loaded.observer = nil
     local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated")
-    metadata.AXFullScreen = true; window.attributeValue = function(_, attribute) return metadata[attribute] end
+    metadata.native_fullscreen = true; window.isFullScreen = function() return metadata.native_fullscreen end
     window.watcher.callback(window, "AXWindowMoved")
     local commits = events(observer, "lifecycle_fact_committed"); local inferred
     for _, event in ipairs(commits) do if event.raw_event == "AXWindowMoved" then inferred = event end end
@@ -120,7 +125,9 @@ return {
     local first, second = fake_window(401, complete_metadata()), fake_window(402, complete_metadata())
     local application = fake_application(99, {}); local state = install_fake_hs({ application }); package.loaded.observer = nil
     local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(first, "AXWindowCreated"); application.watcher.callback(second, "AXWindowCreated")
-    first.attributeValue = function(_, attr) local m = complete_metadata(); m.AXMinimized = true; return m[attr] end; first.watcher.callback(first, "AXWindowMiniaturized"); second.attributeValue = function(_, attr) local m = complete_metadata(); m.AXFullScreen = true; return m[attr] end; second.watcher.callback(second, "AXWindowMoved")
+    local first_metadata, second_metadata = complete_metadata(), complete_metadata(); first_metadata.minimized = true; second_metadata.native_fullscreen = true
+    first.isMinimized = function() return first_metadata.minimized end; first.watcher.callback(first, "AXWindowMiniaturized")
+    second.isFullScreen = function() return second_metadata.native_fullscreen end; second.watcher.callback(second, "AXWindowMoved")
     state.application_watcher_callback(nil, hs.application.watcher.hidden, application)
     state.application_watcher_callback(nil, hs.application.watcher.unhidden, application)
     local one, two = observer.lifecycle:window("win-001"), observer.lifecycle:window("win-002")
@@ -155,6 +162,49 @@ return {
     local end_events = events(observer, "active_space_known_window_sweep_end")
     equal(#end_events, 1); equal(end_events[1].sweep_scope, "known_windows_only"); assert(end_events[1].query_count > 0); equal(observer:status().active_timers, 0)
     observer:stop(); assert(state.spaces_watcher.stopped)
+  end,
+  ["DISC-002 POC metadata uses callback public methods without attributeValue and retains readiness across lifecycle-only reads"] = function()
+    local metadata, window = complete_metadata(), fake_window(901, complete_metadata())
+    local application = fake_application(59, {}); local state = install_fake_hs({ application }); package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated")
+    assert(window.attributeValue == nil); equal(#events(observer, "metadata_ready"), 1)
+    metadata.native_fullscreen = true; window.isFullScreen = function() return metadata.native_fullscreen end
+    window.watcher.callback(window, "AXWindowMoved")
+    local move_fields = {}; for _, event in ipairs(events(observer, "metadata_field_observed")) do if event.raw_event == "AXWindowMoved" then move_fields[#move_fields + 1] = event.field end end
+    equal(#move_fields, 2); assert(table.concat(move_fields, ","):find("native_fullscreen", 1, true))
+    equal(#events(observer, "metadata_ready"), 1)
+    observer:stop()
+  end,
+  ["POC-001 unavailable callback methods leave metadata uncertain without clearing cached readiness"] = function()
+    local window, application = fake_window(902, complete_metadata()), fake_application(60, {})
+    local state = install_fake_hs({ application }); package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated")
+    window.isMinimized = nil; window.watcher.callback(window, "AXWindowMoved")
+    local uncertain = events(observer, "observation_fact"); local found = false
+    for _, event in ipairs(uncertain) do if event.fact == "metadata_uncertain" and event.field == "minimized" then found = true end end
+    assert(found); equal(#events(observer, "metadata_ready"), 1); observer:stop()
+  end,
+  ["POC-001 pairs direct and filter destruction candidates in either callback order without confirmation"] = function()
+    local window, application = fake_window(903, complete_metadata()), fake_application(61, {})
+    local state = install_fake_hs({ application }); package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated"); window.application = function() return application end
+    window.watcher.callback(window, "AXUIElementDestroyed"); state.filter.subscriptions.windowDestroyed(window, nil, "windowDestroyed")
+    equal(#events(observer, "destruction_paired_candidate"), 1); equal(#events(observer, "destruction_confirmed"), 0)
+    local attached, detached = events(observer, "observation_fact"), false
+    for _, event in ipairs(attached) do if event.fact == "window_watcher_detached" and event.reason == "element_destroyed" then detached = true end end
+    assert(detached); observer:stop()
+  end,
+  ["POC-001 pairs filter then direct destruction candidates and callback context carries aliases"] = function()
+    local window, application = fake_window(904, complete_metadata()), fake_application(62, {})
+    local state = install_fake_hs({ application }); package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated"); window.application = function() return application end
+    state.filter.subscriptions.windowDestroyed(window, nil, "windowDestroyed"); window.watcher.callback(window, "AXUIElementDestroyed")
+    equal(#events(observer, "destruction_paired_candidate"), 1)
+    local enter, exit; for _, event in ipairs(events(observer, "callback_enter")) do if event.source == "direct_ax_window" and event.raw_event == "AXUIElementDestroyed" then enter = event end end
+    for _, event in ipairs(events(observer, "callback_exit")) do if event.source == "direct_ax_window" and event.raw_event == "AXUIElementDestroyed" then exit = event end end
+    assert(enter and enter.app == "app-001" and enter.window == "win-001")
+    assert(exit and exit.app == "app-001" and exit.window == "win-001")
+    observer:stop()
   end,
   ["POC-001 cleanup removes observer-owned direct watchers"] = function()
     local window, application = fake_window(501, complete_metadata()), fake_application(55, {})

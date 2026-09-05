@@ -3,6 +3,7 @@
 local Trace = require("trace")
 local Lifecycle = require("lifecycle")
 local Ownership = require("ownership")
+local PrivateExport = require("private_export")
 
 local Observer = {}
 Observer.__index = Observer
@@ -17,13 +18,14 @@ local DIRECT_WINDOW_EVENTS = {
   "AXUIElementDestroyed", "AXWindowMiniaturized", "AXWindowDeminiaturized",
   "AXWindowMoved", "AXWindowResized",
 }
-local AX_METADATA = {
-  { field = "minimized", attribute = "AXMinimized" },
-  { field = "native_fullscreen", attribute = "AXFullScreen" },
-  { field = "role", attribute = "AXRole" },
-  { field = "subrole", attribute = "AXSubrole" },
-  { field = "visibility", attribute = "AXVisible" },
+local READINESS_METADATA = {
+  { field = "minimized", method = "isMinimized", value_type = "boolean" },
+  { field = "native_fullscreen", method = "isFullScreen", value_type = "boolean" },
+  { field = "role", method = "role", value_type = "string" },
+  { field = "subrole", method = "subrole", value_type = "string" },
+  { field = "visibility", method = "isVisible", value_type = "boolean" },
 }
+local LIFECYCLE_METADATA = { READINESS_METADATA[1], READINESS_METADATA[2] }
 
 local function monotonic_ms() return hs.timer.absoluteTime() / 1000000 end
 
@@ -67,7 +69,8 @@ function Observer:_new_run()
   self.trace = Trace.new(monotonic_ms, string.format("run-%03d", self.run_number))
   self.lifecycle, self.ownership = Lifecycle.new(), Ownership.new()
   self.app_watchers, self.window_watchers, self.window_identity_cache = {}, {}, {}
-  self.window_raw_by_alias, self.ready_emitted = {}, {}
+  self.window_raw_by_alias, self.ready_emitted, self.metadata_by_window = {}, {}, {}
+  self.destruction_candidates = {}
   self.filter, self.application_watcher, self.spaces_watcher = nil, nil, nil
   self.active_timers, self.window_effects = 0, 0
 end
@@ -198,39 +201,35 @@ end
 function Observer:_read_direct_metadata(app, window, element, event, scope)
   scope = scope or "steady"
   local metadata, uncertainty = {}, false
-  for _, spec in ipairs(AX_METADATA) do
+  local fields = (event == "AXWindowMoved" or event == "AXWindowResized") and LIFECYCLE_METADATA or READINESS_METADATA
+  for _, spec in ipairs(fields) do
     local call_site = "direct_ax.metadata." .. spec.field
     self.trace:targeted_check_begin("targeted_window_metadata", call_site, scope, {
       source = "direct_ax_window", app = app, window = window, raw_event = event, field = spec.field,
     })
     local ok, value = false, nil
-    if type(element.attributeValue) == "function" then ok, value = protected(function() return element:attributeValue(spec.attribute) end) end
+    if type(element[spec.method]) == "function" then ok, value = protected(function() return element[spec.method](element) end) end
     self.trace:targeted_check_end("targeted_window_metadata", call_site, scope, {
       source = "direct_ax_window", app = app, window = window, raw_event = event, field = spec.field,
     })
-    if ok and ((spec.field == "role" or spec.field == "subrole") and type(value) == "string" or type(value) == "boolean") then
+    if ok and type(value) == spec.value_type and not (spec.value_type == "string" and value == "") then
       metadata[spec.field] = value
-      self.trace:emit("metadata_field_observed", {
-        source = "direct_ax_window", app = app, window = window, raw_event = event,
-        field = spec.field, result = "available",
-      })
+      self.trace:emit("metadata_field_observed", { source = "direct_ax_window", app = app, window = window, raw_event = event, field = spec.field, result = "available" })
     else
       uncertainty = true
-      self:_fact("metadata_uncertain", {
-        source = "direct_ax_window", app = app, window = window, raw_event = event,
-        field = spec.field, result = ok and "unavailable" or "error",
-      })
+      self:_fact("metadata_uncertain", { source = "direct_ax_window", app = app, window = window, raw_event = event, field = spec.field, result = ok and "unavailable" or "method_unavailable" })
     end
   end
+  local cached = self.metadata_by_window[window] or {}
+  for field, value in pairs(metadata) do cached[field] = value end
+  self.metadata_by_window[window] = cached
   self:_commit_lifecycle(app, window, metadata, "direct_ax_window", event,
     (event == "AXWindowMoved" or event == "AXWindowResized") and "targeted_observed_property" or "targeted_metadata")
-  if is_metadata_ready(metadata) then
+  if is_metadata_ready(cached) then
     local first_ready = self.lifecycle:observe_metadata_ready(app, window)
     self.trace:emit(first_ready and "metadata_ready" or "metadata_ready_duplicate", {
-      source = "direct_ax_window", app = app, window = window, raw_event = event,
-      metadata_ready = true, minimized = metadata.minimized,
-      native_fullscreen = metadata.native_fullscreen, visibility = metadata.visibility,
-      role = metadata.role, subrole = metadata.subrole,
+      source = "direct_ax_window", app = app, window = window, raw_event = event, metadata_ready = true,
+      minimized = cached.minimized, native_fullscreen = cached.native_fullscreen, visibility = cached.visibility, role = cached.role, subrole = cached.subrole,
     })
     self:_emit_ready_if_complete(app, window, event)
   elseif uncertainty then
@@ -238,10 +237,25 @@ function Observer:_read_direct_metadata(app, window, element, event, scope)
   end
 end
 
-function Observer:_stop_window_watcher(key)
+function Observer:_stop_window_watcher(key, reason)
   local watcher = self.window_watchers[key]
-  if watcher then protected(function() watcher:stop() end) end
+  if watcher then
+    protected(function() watcher:stop() end)
+    self:_fact("window_watcher_detached", { source = "direct_ax", app = watcher.app, window = watcher.window, watcher_kind = "window", reason = reason or "unspecified" })
+  end
   self.window_watchers[key] = nil
+end
+
+function Observer:_destruction_candidate(app, window, source, event)
+  if not window then return end
+  local candidates = self.destruction_candidates[window] or {}
+  if candidates[source] then return end
+  candidates[source], self.destruction_candidates[window] = true, candidates
+  self.trace:emit("destruction_candidate", { source = source, app = app, window = window, raw_event = event, result = "candidate_only" })
+  if candidates.direct_ax and candidates.filter and not candidates.paired then
+    candidates.paired = true
+    self.trace:emit("destruction_paired_candidate", { source = "poc001", app = app, window = window, raw_event = event, result = "paired_candidate_only" })
+  end
 end
 
 function Observer:_observe_direct_window(app_key, app_alias, element, raw_event, scope)
@@ -257,7 +271,7 @@ function Observer:_observe_direct_window(app_key, app_alias, element, raw_event,
   if self.window_watchers[key] then return end
   local ok, watcher = protected(function()
     return element:newWatcher(function(_, event)
-      self.trace:callback_enter("direct_ax_window", event)
+      self.trace:callback_enter("direct_ax_window", event, { app = app_alias, window = window_alias, reason = "window_watcher_callback" })
       local callback_ok = pcall(function()
         self.trace:emit("direct_window_event", { source = "direct_ax_window", app = app_alias, window = window_alias, raw_event = event })
         self:_commit_lifecycle(app_alias, window_alias, event_fact(event), "direct_ax_window", event)
@@ -265,17 +279,18 @@ function Observer:_observe_direct_window(app_key, app_alias, element, raw_event,
           self:_read_direct_metadata(app_alias, window_alias, element, event, "steady")
           if event == "AXWindowMoved" or event == "AXWindowResized" then self:_read_space_ownership(app_alias, window_alias, raw_key, event, "steady", "direct_ax_window_move") end
         end
-        if event == "AXUIElementDestroyed" then self:_forget_window_identity(raw_key); self:_stop_window_watcher(key) end
+        if event == "AXUIElementDestroyed" then self:_destruction_candidate(app_alias, window_alias, "direct_ax", event); self:_forget_window_identity(raw_key); self:_stop_window_watcher(key, "element_destroyed") end
       end)
       if not callback_ok then self:_fact("callback_error", { source = "direct_ax_window", error_class = "runtime_error" }) end
-      self.trace:callback_exit("direct_ax_window", event)
+      self.trace:callback_exit("direct_ax_window", event, { app = app_alias, window = window_alias, reason = "window_watcher_callback" })
     end)
   end)
   if not ok or not watcher then self:_fact("window_watcher_unavailable", { source = "direct_ax", app = app_alias, window = window_alias }); return end
   local started = protected(function() return watcher:start(DIRECT_WINDOW_EVENTS) end)
   if not started then self:_fact("window_watcher_start_failed", { source = "direct_ax", app = app_alias, window = window_alias }); return end
+  watcher.app, watcher.window = app_alias, window_alias
   self.window_watchers[key] = watcher
-  self:_fact("window_watcher_attached", { source = "direct_ax", app = app_alias, window = window_alias, watcher_kind = "window" })
+  self:_fact("window_watcher_attached", { source = "direct_ax", app = app_alias, window = window_alias, watcher_kind = "window", reason = "direct_window_observed" })
 end
 
 function Observer:_attach_bootstrap_windows(application, app_key, app_alias)
@@ -311,11 +326,11 @@ end
 function Observer:_detach_direct_application_by_pid(pid)
   if pid == nil then return end
   local key, record = "pid:" .. tostring(pid), self.app_watchers["pid:" .. tostring(pid)]
-  if record then protected(function() record.watcher:stop() end) end
+  if record then protected(function() record.watcher:stop() end); self:_fact("application_watcher_detached", { source = "direct_ax", app = record.alias, watcher_kind = "application", reason = "application_terminated" }) end
   self.app_watchers[key] = nil
   local keys, prefix = {}, key .. "\0"
   for window_key in pairs(self.window_watchers) do if window_key:sub(1, #prefix) == prefix then keys[#keys + 1] = window_key end end
-  for _, window_key in ipairs(keys) do self:_stop_window_watcher(window_key) end
+  for _, window_key in ipairs(keys) do self:_stop_window_watcher(window_key, "application_terminated") end
 end
 
 function Observer:_observe_app_hidden(app, hidden, event)
@@ -351,10 +366,12 @@ function Observer:_start_application_watcher()
     self.trace:callback_exit("application_watcher", event_name)
   end)
   self.application_watcher:start()
+  self:_fact("application_watcher_attached", { source = "application_watcher", watcher_kind = "application_lifecycle", reason = "observer_start" })
 end
 
 function Observer:_start_filter()
   self.filter = hs.window.filter.new(true, "poc001-window-events")
+  self:_fact("filter_watcher_attached", { source = "window_filter", watcher_kind = "filter", reason = "observer_start" })
   for _, event_name in ipairs(FILTER_EVENTS) do self.filter:subscribe(event_name, function(window, _, event)
     self.trace:callback_enter("window_filter", event)
     local callback_ok = pcall(function()
@@ -370,7 +387,7 @@ function Observer:_start_filter()
         local trigger = event == "windowMoved" and "window_filter_window_move" or "window_filter_readiness"
         self:_read_space_ownership(app_alias, window_alias, tostring(raw_id), event, "steady", trigger)
       end
-      if event == "windowDestroyed" then self:_forget_window_identity(raw_id) end
+      if event == "windowDestroyed" then self:_destruction_candidate(app_alias, window_alias, "filter", event); self:_forget_window_identity(raw_id) end
     end)
     if not callback_ok then self:_fact("callback_error", { source = "window_filter", error_class = "runtime_error" }) end
     self.trace:callback_exit("window_filter", event)
@@ -406,7 +423,7 @@ function Observer:_start_spaces_watcher()
   if not ok or not watcher then self:_fact("spaces_watcher_unavailable", { source = "hs_spaces" }); return end
   if not protected(function() return watcher:start() end) then self:_fact("spaces_watcher_start_failed", { source = "hs_spaces" }); return end
   self.spaces_watcher = watcher
-  self:_fact("spaces_watcher_attached", { source = "hs_spaces", watcher_kind = "spaces" })
+  self:_fact("spaces_watcher_attached", { source = "hs_spaces", watcher_kind = "spaces", reason = "observer_start" })
 end
 
 function Observer:_bootstrap_existing_apps()
@@ -427,12 +444,12 @@ end
 
 function Observer:stop()
   if not self.running then return false, "already_stopped" end
-  if self.filter then protected(function() self.filter:unsubscribeAll() end); protected(function() self.filter:delete() end) end
-  if self.application_watcher then protected(function() self.application_watcher:stop() end) end
-  if self.spaces_watcher then protected(function() self.spaces_watcher:stop() end) end
+  if self.filter then protected(function() self.filter:unsubscribeAll() end); protected(function() self.filter:delete() end); self:_fact("filter_watcher_detached", { source = "window_filter", watcher_kind = "filter", reason = "observer_stop" }) end
+  if self.application_watcher then protected(function() self.application_watcher:stop() end); self:_fact("application_watcher_detached", { source = "application_watcher", watcher_kind = "application_lifecycle", reason = "observer_stop" }) end
+  if self.spaces_watcher then protected(function() self.spaces_watcher:stop() end); self:_fact("spaces_watcher_detached", { source = "hs_spaces", watcher_kind = "spaces", reason = "observer_stop" }) end
   local window_keys, app_keys = {}, {}; for key in pairs(self.window_watchers) do window_keys[#window_keys + 1] = key end; for key in pairs(self.app_watchers) do app_keys[#app_keys + 1] = key end
-  for _, key in ipairs(window_keys) do self:_stop_window_watcher(key) end
-  for _, key in ipairs(app_keys) do local record = self.app_watchers[key]; if record then protected(function() record.watcher:stop() end) end; self.app_watchers[key] = nil end
+  for _, key in ipairs(window_keys) do self:_stop_window_watcher(key, "observer_stop") end
+  for _, key in ipairs(app_keys) do local record = self.app_watchers[key]; if record then protected(function() record.watcher:stop() end); self:_fact("application_watcher_detached", { source = "direct_ax", app = record.alias, watcher_kind = "application", reason = "observer_stop" }) end; self.app_watchers[key] = nil end
   self.filter, self.application_watcher, self.spaces_watcher, self.running = nil, nil, nil, false; self.trace:lifecycle("stop"); self.trace:mark("cleanup_complete", { source = "poc001", count = 0 }); return true
 end
 
@@ -444,7 +461,8 @@ function Observer:status()
   return status
 end
 function Observer:export(path)
-  assert(self.trace, "start the POC before exporting"); assert(type(path) == "string" and path:sub(1, 1) == "/", "export path must be an explicitly chosen absolute path")
-  self.trace:mark("export_requested", { source = "operator" }); local file, err = io.open(path, "w"); assert(file, "cannot open export path: " .. tostring(err)); file:write(Trace.encode_json(self.trace:export_table()), "\n"); file:close(); return path
+  assert(self.trace, "start the POC before exporting")
+  self.trace:mark("export_requested", { source = "operator" })
+  return PrivateExport.write(path, Trace.encode_json(self.trace:export_table()), self.export_ops)
 end
 return Observer.new()

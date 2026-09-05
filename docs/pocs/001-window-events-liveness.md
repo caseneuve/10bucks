@@ -5,9 +5,8 @@ hypothesis
 
 This is a pre-run protocol. A disposable POC-only observer currently exists
 through step 2C (source comparison, targeted metadata/Space reads, and pure
-correlation); no production runtime changed and no live POC action has been
-run. One short, orchestrator-guided Terminal-only calibration is approved but
-**pending**; it is specified in
+correlation); no production runtime changed. One short, orchestrator-guided
+Terminal-only calibration was run as diagnostic-only evidence; it is specified in
 [`pocs/001-window-events-liveness/README.md`](../../pocs/001-window-events-liveness/README.md).
 It is not a result and does not authorize the remaining live matrix.
 
@@ -108,6 +107,8 @@ Use these markers exactly:
   `windowSpaces(windowId)`, `windowsForSpace(spaceId)`, or other selected
   per-window/per-Space check, including trigger callback sequence.
 - `normalized_event_enqueued`, `lifecycle_fact_committed` (POC model only),
+  `destruction_candidate`, `destruction_paired_candidate` (diagnostic only;
+  neither is `destruction_confirmed` or an authority choice),
   `destruction_confirmed`, `space_move_confirmed`, `readiness_confirmed`, and
   `metadata_ready`, and `lifecycle_source_conflict`: POC correlation outcomes.
   Lifecycle facts are tri-state: unknown is not false. Filter/direct-AX
@@ -317,12 +318,55 @@ All thresholds are fixed before the run:
    broad latency claim; unsupported app actions remain explicitly unmeasured.
 
 ## Results
-Pending. The approved short Terminal-only calibration has not yet run; no
-results, measurements, or platform conclusions are recorded here. The Step 2C
-fake suite covers regular bootstrap ownership, fullscreen/unknown, confirmed
-A→B move, same-Space duplicate, ambiguous deferral, callback query attribution,
-bounded active-Space known-window sweep/no timer, readiness intersection, and
-watcher cleanup; this is not live evidence.
+
+### First Terminal calibration — calibration-only observations
+
+This is **not a pass/fail result** and does not advance the pending matrix or
+select a production source/authority. The raw private trace was reviewed
+locally and is neither committed nor copied here. The following redacted
+aggregates are the only retained calibration observations:
+
+- Export contained 3,201 schema-valid redacted event objects. It initially had
+  mode `0644`; it was immediately remediated locally to `0600`. This exposed a
+  harness defect: shell `umask 077` did not constrain the already-running
+  Hammerspoon process, while `io.open(..., "w")` did not enforce a mode. The
+  harness now fails closed through an existing owner-private directory,
+  temporary write, fixed `/bin/chmod 600`, mode verification, and atomic
+  rename; the operator guide retains the private-directory setup as defense in
+  depth.
+- The observed action stream included an **unplanned deviation**: the cancelled
+  `terminal_focus_other_blank` was followed by `terminal_reveal_focus_other`.
+  That action was outside the approved four-action guide. This calibration is
+  therefore not a clean protocol sample; later guides must stop/mark an
+  explicit cancellation rather than continue with a reveal/focus action.
+- There were 98 callback pairs, 906 query attempts (296 bootstrap, 610 steady),
+  and zero POC-issued steady global queries. Ownership produced 85 observations
+  (81 steady topology snapshots and `windowSpaces` reads); no Space watcher
+  callback or `space_move_confirmed` occurred. These counts are diagnostic,
+  not a query-gate result.
+- All 72 direct metadata attempts were uncertain because the callback/window
+  objects did not support the assumed `attributeValue` method. The callback
+  shape did expose the narrow public methods `isMinimized`, `isFullScreen`,
+  `role`, `subrole`, and `isVisible`; the POC now uses those only when present,
+  attributes each field, reads complete readiness metadata only on
+  bootstrap/create/focus, and retains cached safe fields across move/resize
+  lifecycle reads. Visibility was not used as liveness evidence.
+- One close-area observation had a direct AX destruction candidate and a filter
+  destruction candidate for the same redacted alias 0.552 ms apart. No
+  controlled `native_action_completed` existed, no `destruction_confirmed` was
+  emitted, and no destruction authority is selected. The POC now records
+  independent direct/filter candidates and only an idempotent paired-candidate
+  diagnostic in either callback order.
+- Callback processing (98 samples) had median/p95/max 8.120/20.802/28.420 ms;
+  targeted topology reads (85) had 5.544/8.320/9.464 ms. These are limited
+  calibration observations, not threshold claims.
+
+The pure fake suite covers regular bootstrap ownership, fullscreen/unknown,
+confirmed A→B move, same-Space duplicate, ambiguous deferral, callback query
+attribution, bounded active-Space known-window sweep/no timer, metadata method
+shape/partial cached merge/readiness/uncertainty, paired destruction candidates
+in both orders, watcher attach/detach diagnostics, and fail-closed export.
+Pure coverage is not live evidence.
 
 ## Conclusion
 Pending. This protocol proves no macOS/Hammerspoon behavior yet.

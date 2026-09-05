@@ -65,19 +65,28 @@ reload, live POC load, or live action was performed for this checkpoint.
   traced. The correlator has no removal, liveness, or admission operation.
   Fake sequence coverage includes both prescribed minimize/hide orderings,
   duplicates/stale facts, fullscreen overlap, and competing-source conflicts.
-- **Hypothesis:** on a relevant direct AX callback, the five per-window AX
-  attributes `AXMinimized`, `AXFullScreen`, `AXRole`, `AXSubrole`, and
-  `AXVisible` can be read cheaply and consistently enough to mark
-  `metadata_ready`. Every unavailable attribute or read error is recorded as
-  uncertainty; no live result has established availability or latency.
+- **Superseded hypothesis:** direct callback objects support
+  `attributeValue()` for `AXMinimized`, `AXFullScreen`, `AXRole`, `AXSubrole`,
+  and `AXVisible`. The first calibration found no such method on all 72
+  attempted reads, so the observer no longer depends on it.
+- **Verified (first calibration):** the observed callback/window shape exposes
+  the narrow public methods `isMinimized`, `isFullScreen`, `role`, `subrole`,
+  and `isVisible`. The observer queries a method only when present, attributes
+  each field separately, and records missing/failed methods as uncertainty.
+  Local source inspection did not establish an equivalent AX-element fallback,
+  so none is used. Visibility remains readiness metadata only and is never
+  liveness evidence.
 - **Hypothesis:** because the inspected direct event constants contain no
   fullscreen notification, a direct move/resize callback can trigger a
   targeted `AXFullScreen` observation. The trace labels this
   `targeted_observed_property`; it does not infer fullscreen from visibility,
   onscreen state, or Space membership.
-- **Target:** `metadata_ready` requires all five privacy-safe fields. The
-  harness does not emit `window_ready_eligible`; actual Space ownership is
-  deliberately deferred to Step 2C.
+- **Target:** `metadata_ready` requires all five privacy-safe fields. Complete
+  readiness fields are read on bootstrap/create/focus; move/resize reads only
+  minimize/fullscreen. Cached safe fields merge monotonically, so a lifecycle
+  callback need not return every readiness field. Step 2C emits the
+  non-effecting `window_ready_eligible` marker only when safe metadata and one
+  confirmed regular owner intersect; focus itself does not admit.
 
 ## Framework-internal query/lifecycle caveats
 
@@ -131,6 +140,11 @@ reload, live POC load, or live action was performed for this checkpoint.
   one idempotent `window_ready_eligible`; focus itself does not admit.
 
 ## Implication
+
+The observer also records direct-AX and filter destruction candidates
+independently and emits an idempotent paired-candidate diagnostic only when
+both sources report one alias. It never emits `destruction_confirmed` and
+selects no authority.
 
 This observer is suitable only to collect comparison evidence. Step 2C adds no
 production behavior, timer, action, reload, or live result. The pure fake

@@ -28,9 +28,13 @@ run the full POC matrix.
   parallel only to gather comparison evidence; this does not create a second
   production runtime.
 
-The examples use this checked-out repository path and a private export
-location. The directory command makes the export directory owner-only. Do not
-share the export before reviewing it.
+The examples use this checked-out repository path and a private export location.
+The directory setup is defense in depth: `umask 077` affects this shell, **not**
+the already-running Hammerspoon GUI process. The harness itself now requires an
+existing directory owned by the current user with no group/other permissions,
+writes only a temporary file in that directory, enforces and verifies mode
+`0600`, then atomically renames it into place. It fails closed and removes its
+temporary file if any step fails. Do not share the export before reviewing it.
 
 ```sh
 umask 077
@@ -216,7 +220,7 @@ hs -c 'print(hs.inspect(poc001:status()))'
 Record the displayed status for the later result write-up. It is diagnostic
 only: do not interpret it as a pass/fail result during this handoff.
 
-Stop, verify the observer stopped, and export to the owner-only `/tmp` path:
+Stop, verify the observer stopped, and export to the pre-created owner-private `/tmp` path. `export()` rejects a relative path, a missing/non-private directory, failed chmod, failed mode verification, or failed atomic rename:
 
 ```lua
 assert(poc001:stop())
@@ -287,5 +291,6 @@ lua pocs/001-window-events-liveness/run-tests.lua
 luac -p pocs/001-window-events-liveness/trace.lua
 luac -p pocs/001-window-events-liveness/lifecycle.lua
 luac -p pocs/001-window-events-liveness/ownership.lua
+luac -p pocs/001-window-events-liveness/private_export.lua
 luac -p pocs/001-window-events-liveness/observer.lua
 ```
