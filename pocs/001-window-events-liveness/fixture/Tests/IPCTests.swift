@@ -42,6 +42,32 @@ func testIPCWriteAllRetriesInterruptedAndPartialWrites() throws {
     try expect(written == expected, "write seam retries EINTR and completes partial writes")
 }
 
+func testIPCNoSigPipeFailsClosedAndPreventsPeerCloseTermination() throws {
+    try expect(!FixtureSocketServer.configureNoSigPipe(-1, setSocketOption: { _ in false }), "configuration fails closed when SO_NOSIGPIPE cannot be set")
+
+    var pair = [Int32](repeating: -1, count: 2)
+    try expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0, "creates local test socketpair")
+    defer { if pair[0] >= 0 { Darwin.close(pair[0]) }; if pair[1] >= 0 { Darwin.close(pair[1]) } }
+    try expect(FixtureSocketServer.configureNoSigPipe(pair[0]), "configures SO_NOSIGPIPE on a writing socket")
+    Darwin.close(pair[1]); pair[1] = -1
+    try expectThrows(IPCError.writeFailed) {
+        try FixtureSocketServer.writeAll(pair[0], data: Data("x".utf8))
+    }
+}
+
+func testIPCClientRejectsUnsafeServerPathBeforeConnect() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try setFileMode(root, mode: 0o700)
+    let path = root.appendingPathComponent("poc001-fixture.sock")
+    FileManager.default.createFile(atPath: path.path, contents: Data("not a socket".utf8))
+    try setFileMode(path, mode: 0o600)
+    try expectThrows(IPCError.unsafeSocketPath) {
+        _ = try FixtureSocketClient(socketPath: path).send(FixtureRequest(command: "shutdown", fields: ["request_id": "req-001", "sample_id": "sample-001"]))
+    }
+    try expect(FileManager.default.contents(atPath: path.path) == Data("not a socket".utf8), "client validation never touches an unsafe server path")
+}
+
 func testIPCServerRequiresPrivatePreexistingDirectoryAndSafeSocketPath() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -92,6 +118,8 @@ func testIPCClientServerOneRequestAndDeterministicCleanup() throws {
 let ipcTests: [(String, () throws -> Void)] = [
     ("IPC codec requires four strict request schemas and private responses", testIPCCodecAcceptsOnlyExactStringSchemasAndProducesPrivateResponses),
     ("IPC write seam retries interrupted partial output", testIPCWriteAllRetriesInterruptedAndPartialWrites),
+    ("IPC fails closed for SO_NOSIGPIPE and survives a peer-close write", testIPCNoSigPipeFailsClosedAndPreventsPeerCloseTermination),
+    ("IPC client validates an existing private server socket before connect", testIPCClientRejectsUnsafeServerPathBeforeConnect),
     ("IPC server rejects unsafe directories and never unlinks existing paths", testIPCServerRequiresPrivatePreexistingDirectoryAndSafeSocketPath),
     ("IPC client and server exchange one request and clean up deterministically", testIPCClientServerOneRequestAndDeterministicCleanup),
 ]

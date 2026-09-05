@@ -8,11 +8,13 @@ public enum IPCError: Error, Equatable {
     case invalidRequest
     case oversizedRequest
     case unsafeRunDirectory
+    case unsafeSocketPath
     case socketPathExists
     case socketSetupFailed
     case socketConnectFailed
     case readFailed
     case writeFailed
+    case closeFailed
     case invalidResponse
     case cleanupFailed
 }
@@ -174,15 +176,17 @@ public final class FixtureSocketServer {
     private let identity: (dev: dev_t, ino: ino_t)
     private let dispatch: CommandDispatch
     private let execute: CommandExecutor
+    private let configureWriteSocket: (Int32) -> Bool
     private var stopped = false
 
     // Production composes this default with the AppKit main queue. Tests can
     // inject a direct executor without creating an AppKit run loop.
-    public init(socketPath: URL, dispatch: @escaping CommandDispatch, execute: @escaping CommandExecutor = FixtureSocketServer.onMainQueue) throws {
+    public init(socketPath: URL, dispatch: @escaping CommandDispatch, execute: @escaping CommandExecutor = FixtureSocketServer.onMainQueue, configureWriteSocket: @escaping (Int32) -> Bool = FixtureSocketServer.configureNoSigPipe) throws {
         try Self.validateRunDirectory(socketPath.deletingLastPathComponent())
         self.socketPath = socketPath.path
         self.dispatch = dispatch
         self.execute = execute
+        self.configureWriteSocket = configureWriteSocket
         guard Self.pathDoesNotExist(socketPath.path) else { throw IPCError.socketPathExists }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw IPCError.socketSetupFailed }
@@ -207,6 +211,17 @@ public final class FixtureSocketServer {
         }
     }
 
+    public static func configureNoSigPipe(_ descriptor: Int32) -> Bool {
+        configureNoSigPipe(descriptor, setSocketOption: { fd in
+            var enabled: Int32 = 1
+            return setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size)) == 0
+        })
+    }
+
+    static func configureNoSigPipe(_ descriptor: Int32, setSocketOption: (Int32) -> Bool) -> Bool {
+        setSocketOption(descriptor)
+    }
+
     public static func onMainQueue(_ work: @escaping () throws -> FixtureResponse) throws -> FixtureResponse {
         if Thread.isMainThread { return try work() }
         var result: Result<FixtureResponse, Error>!
@@ -220,6 +235,7 @@ public final class FixtureSocketServer {
         guard !stopped else { throw IPCError.readFailed }
         let connection = try Self.acceptConnection(descriptor)
         defer { Darwin.close(connection) }
+        guard configureWriteSocket(connection) else { throw IPCError.socketSetupFailed }
         let raw = try Self.readOneMessage(connection)
         do {
             let request = try FixtureCodec.decodeRequestLine(raw)
@@ -233,14 +249,22 @@ public final class FixtureSocketServer {
     public func shutdown() throws {
         guard !stopped else { return }
         stopped = true
-        Darwin.close(descriptor)
+        let closeSucceeded = Darwin.close(descriptor) == 0
         guard Self.unlinkOwnedSocket(at: socketPath, expected: identity) else { throw IPCError.cleanupFailed }
+        guard closeSucceeded else { throw IPCError.closeFailed }
     }
 
-    private static func validateRunDirectory(_ url: URL) throws {
+    static func validateRunDirectory(_ url: URL) throws {
         var info = stat()
         guard lstat(url.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR,
               info.st_uid == getuid(), (info.st_mode & 0o777) == 0o700 else { throw IPCError.unsafeRunDirectory }
+    }
+
+    static func validateExistingSocket(_ url: URL) throws {
+        try validateRunDirectory(url.deletingLastPathComponent())
+        var info = stat()
+        guard lstat(url.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFSOCK,
+              info.st_uid == getuid(), (info.st_mode & 0o777) == 0o600 else { throw IPCError.unsafeSocketPath }
     }
 
     private static func pathDoesNotExist(_ path: String) -> Bool {
@@ -311,12 +335,21 @@ public final class FixtureSocketServer {
 }
 
 public struct FixtureSocketClient {
+    private let socketURL: URL
     private let socketPath: String
-    public init(socketPath: URL) { self.socketPath = socketPath.path }
+    private let configureWriteSocket: (Int32) -> Bool
+
+    public init(socketPath: URL, configureWriteSocket: @escaping (Int32) -> Bool = FixtureSocketServer.configureNoSigPipe) {
+        self.socketURL = socketPath
+        self.socketPath = socketPath.path
+        self.configureWriteSocket = configureWriteSocket
+    }
 
     public func send(_ request: FixtureRequest) throws -> FixtureResponse {
+        try FixtureSocketServer.validateExistingSocket(socketURL)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw IPCError.socketConnectFailed }
+        guard configureWriteSocket(fd) else { Darwin.close(fd); throw IPCError.socketSetupFailed }
         defer { Darwin.close(fd) }
         // connect constructs the same AF_UNIX address as the server without binding a local pathname.
         var address = sockaddr_un()
