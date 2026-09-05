@@ -53,6 +53,11 @@ cite existing evidence where applicable
   → green checkpoint
 ```
 
+### POC agent time and failure discipline
+
+- A POC agent MUST NOT start a command with a timeout longer than 120 seconds, or start work expected to run longer than 120 seconds, without first stating the expected duration and reason and receiving explicit human approval. Hour- or day-scale defensive timeouts are forbidden. Split work into short, observable steps instead.
+- A POC agent's failure report is not accepted as evidence by itself. Before recording or acting on a failure, the orchestrator MUST inspect the underlying trace/output and independently check for harness defects, stale state, operator/procedure errors, and analyzer mistakes. Safe deterministic re-analysis is allowed; another live action or changed threshold still requires the applicable approval. Classify the outcome as platform evidence only after this review rules out a false negative.
+
 Do not require a new POC for ordinary pure implementation work whose platform assumptions are already proved. A behavior-preserving tidy-first change is allowed only when it creates a required replacement seam more cheaply than directly rewriting the coupled piece. It must not preserve a rejected contract.
 
 ## Evidence language

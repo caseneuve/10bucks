@@ -6,6 +6,11 @@ POCs run on disposable branches. They are required for unproved platform assumpt
 
 The user may participate in guided manual runs. Manual actions are often preferable to automation that changes focus/event timing and contaminates the behavior being measured.
 
+## Agent execution discipline
+
+- A POC agent may use at most a 120-second command timeout by default. If one command or step is expected to take longer than 120 seconds, the agent must first state its expected duration and why it cannot be split, then obtain explicit human approval. Never use hour- or day-scale timeouts as a substitute for progress checks.
+- Treat a POC agent's reported failure as untrusted until the orchestrator reviews the underlying private/raw evidence. The orchestrator must independently check for analyzer bugs, stale module/process state, harness defects, premature checks, and operator/procedure deviations before classifying the observation. Do not record a platform failure or redesign production from the agent's summary alone. Re-analysis does not authorize another live run or a threshold change.
+
 ## Required result format
 
 Create `docs/pocs/NNN-short-name.md` from this structure:
