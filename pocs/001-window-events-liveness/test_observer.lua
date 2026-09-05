@@ -4,6 +4,12 @@ package.path = root .. "pocs/001-window-events-liveness/?.lua;" .. package.path
 
 local function equal(actual, expected) assert(actual == expected, string.format("expected %s, got %s", tostring(expected), tostring(actual))) end
 local function fake_watcher() return { start = function(self, events) self.started, self.events = true, events; return self end, stop = function(self) self.stopped = true; return self end } end
+local function userdata_like_watcher()
+  local watcher, state = {}, {}
+  watcher.start = function(_, events) state.started, state.events = true, events; return watcher end
+  watcher.stop = function() state.stopped = true; return watcher end
+  return setmetatable(watcher, { __newindex = function() error("userdata does not allow arbitrary fields") end }), state
+end
 local function fake_window(id, metadata)
   local window = {
     id = function() return id end,
@@ -205,6 +211,48 @@ return {
     assert(enter and enter.app == "app-001" and enter.window == "win-001")
     assert(exit and exit.app == "app-001" and exit.window == "win-001")
     observer:stop()
+  end,
+  ["POC-001 userdata-like direct watchers retain context in a Lua record and clean up"] = function()
+    local watcher, watcher_state = userdata_like_watcher()
+    local window = fake_window(502, complete_metadata())
+    window.newWatcher = function() return watcher end
+    local application = fake_application(65, { window })
+    install_fake_hs({ application }); package.loaded.observer = nil
+    local observer = require("observer").new()
+    assert(observer:start())
+    local record
+    for _, candidate in pairs(observer.window_watchers) do record = candidate end
+    assert(record and record.watcher == watcher)
+    equal(record.app, "app-001"); equal(record.window, "win-001")
+    equal(observer:status().direct_window_watchers, 1)
+    observer:stop()
+    assert(watcher_state.started and watcher_state.stopped)
+    local detached = false
+    for _, event in ipairs(events(observer, "observation_fact")) do
+      if event.fact == "window_watcher_detached" then
+        detached = event.app == "app-001" and event.window == "win-001" and event.reason == "observer_stop"
+      end
+    end
+    assert(detached); equal(observer:status().direct_window_watchers, 0)
+  end,
+  ["POC-001 failed startup transaction cleans every already-created observer watcher"] = function()
+    local window = fake_window(503, complete_metadata())
+    local application = fake_application(66, { window })
+    local state = install_fake_hs({ application }); install_fake_spaces(state)
+    package.loaded.observer = nil
+    local observer = require("observer").new()
+    observer._start_spaces_watcher = function() error("forced final startup stage failure") end
+    local started, startup_error = observer:start()
+    equal(started, false); assert(startup_error:find("startup_failed:", 1, true))
+    equal(observer:status().lifecycle, "stopped")
+    equal(observer:status().direct_application_watchers, 0); equal(observer:status().direct_window_watchers, 0)
+    assert(state.filter.unsubscribed and state.filter.deleted); assert(state.application_watcher.stopped)
+    assert(application.watcher.stopped); assert(window.watcher.stopped)
+    local failed = false
+    for _, event in ipairs(events(observer, "observation_fact")) do
+      if event.fact == "observer_start_failed" and event.reason == "startup_error" then failed = true end
+    end
+    assert(failed)
   end,
   ["POC-001 cleanup removes observer-owned direct watchers"] = function()
     local window, application = fake_window(501, complete_metadata()), fake_application(55, {})

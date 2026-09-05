@@ -332,6 +332,21 @@ All thresholds are fixed before the run:
 
 ## Results
 
+### Aborted pre-sample startup — harness evidence only
+
+- A later attempt to begin the approved Terminal lifecycle calibration aborted
+  during observer startup, before any sample marker or human UI action. The
+  direct window watcher was a real `hs.uielement.watcher` userdata; the harness
+  attempted to assign diagnostic aliases to it and startup failed. The
+  orchestrator immediately stopped the partially started observer and restored
+  legacy 10bucks. No trace sample, lifecycle action, measurement, or macOS
+  behavior claim resulted from this aborted attempt.
+- The harness now keeps each direct watcher and its redacted app/window aliases
+  in a separate plain-Lua record, and pure fakes cover userdata-like assignment
+  rejection plus transactional cleanup after a later startup-stage failure.
+  This is harness bookkeeping evidence only; no Hammerspoon/live run was
+  performed for this checkpoint.
+
 ### First Terminal calibration — calibration-only observations
 
 This is **not a pass/fail result** and does not advance the pending matrix or

@@ -238,10 +238,10 @@ function Observer:_read_direct_metadata(app, window, element, event, scope)
 end
 
 function Observer:_stop_window_watcher(key, reason)
-  local watcher = self.window_watchers[key]
-  if watcher then
-    protected(function() watcher:stop() end)
-    self:_fact("window_watcher_detached", { source = "direct_ax", app = watcher.app, window = watcher.window, watcher_kind = "window", reason = reason or "unspecified" })
+  local record = self.window_watchers[key]
+  if record then
+    protected(function() record.watcher:stop() end)
+    self:_fact("window_watcher_detached", { source = "direct_ax", app = record.app, window = record.window, watcher_kind = "window", reason = reason or "unspecified" })
   end
   self.window_watchers[key] = nil
 end
@@ -287,9 +287,13 @@ function Observer:_observe_direct_window(app_key, app_alias, element, raw_event,
   end)
   if not ok or not watcher then self:_fact("window_watcher_unavailable", { source = "direct_ax", app = app_alias, window = window_alias }); return end
   local started = protected(function() return watcher:start(DIRECT_WINDOW_EVENTS) end)
-  if not started then self:_fact("window_watcher_start_failed", { source = "direct_ax", app = app_alias, window = window_alias }); return end
-  watcher.app, watcher.window = app_alias, window_alias
-  self.window_watchers[key] = watcher
+  if not started then
+    protected(function() watcher:stop() end)
+    self:_fact("window_watcher_start_failed", { source = "direct_ax", app = app_alias, window = window_alias })
+    return
+  end
+  -- hs.uielement.watcher is userdata; keep all POC diagnostic context in this Lua record.
+  self.window_watchers[key] = { watcher = watcher, app = app_alias, window = window_alias }
   self:_fact("window_watcher_attached", { source = "direct_ax", app = app_alias, window = window_alias, watcher_kind = "window", reason = "direct_window_observed" })
 end
 
@@ -318,7 +322,9 @@ function Observer:_attach_direct_application(application, origin)
     end)
   end)
   if not ok or not watcher then self:_fact("application_watcher_unavailable", { source = "direct_ax", app = app_alias, reason = origin })
-  elseif not protected(function() return watcher:start(DIRECT_APP_EVENTS) end) then self:_fact("application_watcher_start_failed", { source = "direct_ax", app = app_alias, reason = origin })
+  elseif not protected(function() return watcher:start(DIRECT_APP_EVENTS) end) then
+    protected(function() watcher:stop() end)
+    self:_fact("application_watcher_start_failed", { source = "direct_ax", app = app_alias, reason = origin })
   else self.app_watchers[app_key] = { watcher = watcher, pid = pid, alias = app_alias }; self:_fact("application_watcher_attached", { source = "direct_ax", app = app_alias, reason = origin, watcher_kind = "application" }) end
   if bootstrap then self:_attach_bootstrap_windows(application, app_key, app_alias) end
 end
@@ -421,7 +427,11 @@ function Observer:_start_spaces_watcher()
     end)
   end)
   if not ok or not watcher then self:_fact("spaces_watcher_unavailable", { source = "hs_spaces" }); return end
-  if not protected(function() return watcher:start() end) then self:_fact("spaces_watcher_start_failed", { source = "hs_spaces" }); return end
+  if not protected(function() return watcher:start() end) then
+    protected(function() watcher:stop() end)
+    self:_fact("spaces_watcher_start_failed", { source = "hs_spaces" })
+    return
+  end
   self.spaces_watcher = watcher
   self:_fact("spaces_watcher_attached", { source = "hs_spaces", watcher_kind = "spaces", reason = "observer_start" })
 end
@@ -436,9 +446,16 @@ end
 function Observer:start()
   if self.running then return false, "already_running" end
   self:_new_run(); self.running = true; self.trace:lifecycle("start"); self.trace:mark("run_start", { source = "poc001" })
-  for _, source in ipairs({ "window_filter", "application_watcher", "direct_ax" }) do self.trace:mark("candidate_sources", { source = source }) end
-  self.trace:mark("framework_evidence", { source = "window_filter", framework_evidence = "source_inspection_unknown" }); self.trace:mark("framework_evidence", { source = "direct_ax", framework_evidence = "source_inspection_global_cleanup_watcher" })
-  self:_start_application_watcher(); self:_bootstrap_existing_apps(); self:_start_filter(); self:_start_spaces_watcher()
+  local ok, startup_error = pcall(function()
+    for _, source in ipairs({ "window_filter", "application_watcher", "direct_ax" }) do self.trace:mark("candidate_sources", { source = source }) end
+    self.trace:mark("framework_evidence", { source = "window_filter", framework_evidence = "source_inspection_unknown" }); self.trace:mark("framework_evidence", { source = "direct_ax", framework_evidence = "source_inspection_global_cleanup_watcher" })
+    self:_start_application_watcher(); self:_bootstrap_existing_apps(); self:_start_filter(); self:_start_spaces_watcher()
+  end)
+  if not ok then
+    self:_fact("observer_start_failed", { source = "poc001", reason = "startup_error", error_class = "startup_error" })
+    self:stop()
+    return false, "startup_failed: " .. tostring(startup_error)
+  end
   return true, self.trace:status().run_id
 end
 
