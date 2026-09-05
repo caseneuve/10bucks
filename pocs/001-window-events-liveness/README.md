@@ -7,11 +7,12 @@ stopped in an isolated Hammerspoon Console session.
 
 ## Do not run live actions yet
 
-This checkpoint implements **step 2A only**: install/start/trace/cleanup/export.
-Do **not** create, focus, close, minimize, hide, fullscreen, move, quit, reload,
-or otherwise manipulate an application for this harness yet. The guided action
-matrix and any action driver belong to later POC-001 slices. In particular, do
-not reload Hammerspoon for this checkpoint.
+This checkpoint implements **step 2B only**: source subscriptions, targeted
+read-only metadata observation, and pure lifecycle correlation. **Do not run
+live actions yet.** Do not create, focus, close, minimize, hide, fullscreen,
+move, quit, reload, or otherwise manipulate an application for this harness.
+In particular, do not reload Hammerspoon. The guided matrix remains a later,
+explicitly operator-directed POC slice.
 
 ## Console commands
 
@@ -66,27 +67,49 @@ it is reported separately in [`EVIDENCE.md`](EVIDENCE.md).
 
 ## Sources compared
 
-- `hs.window.filter`: `windowCreated`, `windowFocused`, `windowDestroyed`.
-  The observer constructs it with `hs.window.filter.new(true, ...)`: installed
-  Hammerspoon source defines `true` as an empty allow-all filter, while `false`
-  is reject-all and would suppress this comparison.
-- `hs.application.watcher`: launch/termination (and recorded other app events).
+- `hs.window.filter`: `windowCreated`, `windowFocused`, `windowDestroyed`,
+  `windowMinimized`, `windowUnminimized`, `windowFullscreened`, and
+  `windowUnfullscreened`. The observer constructs it with
+  `hs.window.filter.new(true, ...)`: installed Hammerspoon source defines
+  `true` as an empty allow-all filter, while `false` is reject-all and would
+  suppress this comparison.
+- `hs.application.watcher`: launch/termination plus `hidden`/`unhidden`.
+  Hide/unhide updates every already-known redacted alias for that app; it never
+  clears that window's minimize or fullscreen fact.
 - Direct per-application `hs.uielement.watcher`: `AXWindowCreated` and
-  `AXFocusedWindowChanged`; each identified AX window gets an
-  `AXUIElementDestroyed` watcher.
+  `AXFocusedWindowChanged`; each identified AX window gets
+  `AXUIElementDestroyed`, `AXWindowMiniaturized`, `AXWindowDeminiaturized`,
+  `AXWindowMoved`, and `AXWindowResized` watchers. The direct source has no
+  selected fullscreen notification: move/resize causes a **targeted observed
+  property** read of `AXFullScreen`; it is not inferred from visibility or
+  Space membership.
 
 Direct attachment is attempted once for every application returned by the
 explicit startup scan and for later `launched` apps. Bootstrap also attaches
 per-window destruction watchers to that app's already-existing windows; an app
 termination stops/removes all POC-owned app and window watchers for its PID.
-Failure/unavailability is a trace fact, not a retry or an inference. There is
-deliberately no readiness, minimize/hide/fullscreen/Space/liveness correlation,
-target check, or permanent poll in this slice.
+Failure/unavailability is a trace fact, not a retry or an inference. Each
+relevant direct callback reads only `AXMinimized`, `AXFullScreen`, `AXRole`,
+`AXSubrole`, and `AXVisible` for its attributed redacted alias. Query begin/end
+timestamps and unavailable/error outcomes are traced. `metadata_ready` is
+emitted only when all five safe fields are available. It deliberately does
+**not** emit `window_ready_eligible`: actual regular-Space ownership is Step 2C.
+
+Lifecycle facts are tri-state observations: absent is unknown, never false.
+`app_hidden` starts unknown and changes only on an attributed hide/unhide event;
+this checkpoint has selected no targeted app-hidden property read. Filter and
+direct-AX minimize/fullscreen observations remain in separate candidate records.
+Each candidate is unavailable if any observed condition is true, available only
+when app-hidden, minimize, and fullscreen are all explicitly false, and unknown
+otherwise. A contradictory candidate fact emits `lifecycle_source_conflict`; no
+candidate callback overwrites the other. The POC still has no
+liveness/removal/admission behavior, window effect, or permanent poll.
 
 ## Pure checks
 
 ```sh
 lua pocs/001-window-events-liveness/run-tests.lua
 luac -p pocs/001-window-events-liveness/trace.lua
+luac -p pocs/001-window-events-liveness/lifecycle.lua
 luac -p pocs/001-window-events-liveness/observer.lua
 ```

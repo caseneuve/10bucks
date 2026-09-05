@@ -1,7 +1,7 @@
-# POC-001 API/source evidence (step 2A)
+# POC-001 API/source evidence (steps 2A–2B)
 
-**Status:** source-inspection evidence only. No Hammerspoon reload, live POC
-load, or live action was performed for this checkpoint.
+**Status:** source-inspection and pure-fake evidence only. No Hammerspoon
+reload, live POC load, or live action was performed for this checkpoint.
 
 ## Verified local host/API facts
 
@@ -18,11 +18,20 @@ load, or live action was performed for this checkpoint.
   alias cache for the **hypothesis** that a destruction callback can retain its
   native ID when a separate `window:application()` lookup is unavailable; this
   is harness correlation logic, not a claim about live callback ordering.
+- **Verified:** installed `Resources/extensions/hs/window_filter.lua` exposes
+  `windowMinimized`, `windowUnminimized`, `windowFullscreened`, and
+  `windowUnfullscreened`. Its implementation derives fullscreen changes while
+  handling a window move; this is source evidence for comparison only, not
+  proof of live callback ordering.
 - **Verified:** installed `Resources/extensions/hs/uielement.lua` documents
   application-level `windowCreated` (`AXWindowCreated`) and
   `focusedWindowChanged` (`AXFocusedWindowChanged`) events, and says those
-  callbacks receive the relevant child element. It documents
-  `elementDestroyed` (`AXUIElementDestroyed`) for a window-level watcher.
+  callbacks receive the relevant child element. It defines direct window
+  notifications `windowMoved` (`AXWindowMoved`), `windowResized`
+  (`AXWindowResized`), `windowMinimized` (`AXWindowMiniaturized`),
+  `windowUnminimized` (`AXWindowDeminiaturized`), and `elementDestroyed`
+  (`AXUIElementDestroyed`). It exposes no selected direct fullscreen
+  notification.
 - **Verified:** the inspected local Hammerspoon source at
   `/Users/piotr/Git/external/hammerspoon` commit `23e387e` has
   `extensions/application/libapplication_watcher.m`, whose watcher subscribes
@@ -41,6 +50,34 @@ load, or live action was performed for this checkpoint.
   `bootstrap.attach_existing_apps` scan, then attaches a direct destruction
   watcher to each identified existing window. It does not call either method
   from a steady callback.
+
+## Step 2B correlation and metadata hypotheses
+
+- **Target:** the pure `lifecycle.lua` correlator is keyed exclusively by
+  per-run redacted `app-NNN`/`win-NNN` aliases. Every lifecycle fact is
+  tri-state: absent is unknown, never false. `app_hidden` starts unknown and
+  changes only from the shared attributed application hide/unhide source;
+  no targeted app-hidden property read is selected at this checkpoint.
+  Filter and direct-AX minimize/fullscreen facts live in isolated candidate
+  records, so a late contradictory callback cannot overwrite the other. Each
+  candidate derives availability false when any condition is true, true only
+  when all three are explicitly false, and otherwise unknown. Conflicts are
+  traced. The correlator has no removal, liveness, or admission operation.
+  Fake sequence coverage includes both prescribed minimize/hide orderings,
+  duplicates/stale facts, fullscreen overlap, and competing-source conflicts.
+- **Hypothesis:** on a relevant direct AX callback, the five per-window AX
+  attributes `AXMinimized`, `AXFullScreen`, `AXRole`, `AXSubrole`, and
+  `AXVisible` can be read cheaply and consistently enough to mark
+  `metadata_ready`. Every unavailable attribute or read error is recorded as
+  uncertainty; no live result has established availability or latency.
+- **Hypothesis:** because the inspected direct event constants contain no
+  fullscreen notification, a direct move/resize callback can trigger a
+  targeted `AXFullScreen` observation. The trace labels this
+  `targeted_observed_property`; it does not infer fullscreen from visibility,
+  onscreen state, or Space membership.
+- **Target:** `metadata_ready` requires all five privacy-safe fields. The
+  harness does not emit `window_ready_eligible`; actual Space ownership is
+  deliberately deferred to Step 2C.
 
 ## Framework-internal query/lifecycle caveats
 
@@ -66,7 +103,8 @@ load, or live action was performed for this checkpoint.
 
 ## Implication
 
-This observer is suitable only to collect comparison evidence. It proves no
-liveness/destruction authority, lifecycle distinction, Space behavior, latency,
-or query-gate result. In particular, it must not be used to claim zero
-framework-internal global refreshes.
+This observer is suitable only to collect comparison evidence. The pure fake
+suite proves its bookkeeping and cleanup, not macOS behavior. It proves no
+liveness/destruction authority, live lifecycle distinction, Space behavior,
+metadata readiness, latency, or query-gate result. In particular, it must not
+be used to claim zero framework-internal global refreshes.

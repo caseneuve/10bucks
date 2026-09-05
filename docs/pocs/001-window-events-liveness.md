@@ -3,8 +3,10 @@
 ## Status
 hypothesis
 
-This is a pre-run protocol. No POC harness or runtime change exists at this
-checkpoint, and no live POC action has been run.
+This is a pre-run protocol. A disposable POC-only observer currently exists
+through step 2B (source comparison, targeted metadata reads, and pure
+correlation); no production runtime changed and no live POC action has been
+run. Live actions remain forbidden until an explicitly approved operator slice.
 
 ## Decision enabled
 Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,
@@ -23,8 +25,10 @@ A POC-only Hammerspoon observer can, without permanent polling or a global AX
 enumeration from a steady-state callback, correlate application and window
 callbacks plus bounded event-triggered targeted observations so that each
 covered lifecycle condition (minimized, application-hidden, native-fullscreen,
-and inactive regular Space) remains independently represented, permanent
-removal has authoritative evidence or a bounded targeted check, and a manual
+and inactive regular Space) remains independently represented as a tri-state
+observation. Candidate filter/direct-AX facts remain isolated while they are
+compared; only app hide is shared. Permanent removal has authoritative evidence
+or a bounded targeted check, and a manual
 regular-Space move is detected within its bound.
 
 This is falsified by any false death in the covered matrix; by lifecycle facts
@@ -101,10 +105,14 @@ Use these markers exactly:
   per-window/per-Space check, including trigger callback sequence.
 - `normalized_event_enqueued`, `lifecycle_fact_committed` (POC model only),
   `destruction_confirmed`, `space_move_confirmed`, `readiness_confirmed`, and
-  `window_ready_eligible`: POC correlation outcomes; `window_ready_eligible`
-  means metadata plus confirmed ownership are sufficient to emit a future
-  `WindowReady`, not that an effect was requested. None performs production
-  state mutation or any window effect.
+  `metadata_ready`, and `lifecycle_source_conflict`: POC correlation outcomes.
+  Lifecycle facts are tri-state: unknown is not false. Filter/direct-AX
+  minimize/fullscreen candidates are emitted separately; a conflict records
+  uncertainty rather than overwriting either source. `metadata_ready` means
+  only the agreed privacy-safe metadata fields were available; it makes no
+  ownership/admission claim. Step 2B MUST NOT emit `window_ready_eligible`,
+  because actual Space ownership is reserved for step 2C. None performs
+  production state mutation or any window effect.
 - `global_ax_enumeration_begin` / `global_ax_enumeration_end`: every broad AX
   or all-application/window enumeration attributable to POC harness calls.
   That counter must remain zero in steady callbacks. Candidate-source internals
@@ -124,10 +132,10 @@ never as callback duration. **Harness processing duration** is
 as `targeted_check_end - targeted_check_begin`. The destruction deadline is
 `destruction_confirmed - native_action_completed`; manual timing is explicitly
 not substituted for this controlled marker. Readiness is
-`window_ready_eligible - readiness_trigger` for warm creation, and
+`metadata_ready - readiness_trigger` for warm metadata observation, and
 `readiness_confirmed - cold_trigger` for cold discovery; each trigger is named
-in the trace. `window_ready_eligible` is a non-effecting eligibility marker;
-POC-001 issues zero frame effects.
+in the trace. `metadata_ready` is a non-effecting metadata marker, not an
+eligibility/admission marker; POC-001 issues zero frame effects.
 
 ### 3. Guided matrix
 
@@ -138,8 +146,8 @@ retain every event order, including failures and late callbacks:
 1. Mark `create_first`, then create a first and an additional standard window;
    exercise focus/unfocus and rapid create → focus → close. Run warm creation
    samples and controlled cold launches. Observe readiness metadata, actual
-   regular-Space ownership, the non-effecting `window_ready_eligible` marker,
-   and duplicate/delayed readiness.
+   regular-Space ownership, the non-effecting `metadata_ready` marker (without
+   `window_ready_eligible` until step 2C), and duplicate/delayed readiness.
 2. Mark `close_foreground`, `close_background`, and `close_last`; at explicit
    human direction, use the separate controlled action driver where available
    to close those windows. Repeat with a background/covered window. Correlate
@@ -258,18 +266,22 @@ All thresholds are fixed before the run:
    the path rather than being discarded.
 3. **Independent lifecycle facts:** minimized, app-hidden, native-fullscreen,
    and inactive-Space facts are independently distinguishable under every
-   tested overlap/order. Clearing one never reports availability while another
-   observed unavailable fact remains. Any unavailable condition prevents
-   availability; membership/liveness is retained.
+   tested overlap/order. Every unobserved condition remains unknown; it MUST
+   NOT become false because a callback is absent. Filter/direct-AX candidates
+   remain separate and contradictory observations emit uncertainty. For each
+   candidate, clearing one never reports availability while another observed
+   unavailable fact remains. Any unavailable condition prevents availability;
+   membership/liveness is retained.
 4. **Manual regular-Space move:** an event-triggered targeted observation
    confirms source removal/destination ownership within 2,000 ms of the
    controlled `native_action_completed` marker. There is no permanent polling;
    after settling, targeted-check count remains unchanged until another trigger.
 5. **Creation/readiness:** for each meaningful warm creation/readiness path,
-   `readiness_trigger → window_ready_eligible` has p95 <= 100 ms.
-   `window_ready_eligible` is solely the non-effecting finding that metadata
-   plus confirmed ownership suffice for a future `WindowReady`; POC-001 issues
-   zero frame effects. A cold path reaches `readiness_confirmed` or an explicit
+   `readiness_trigger → metadata_ready` has p95 <= 100 ms when all agreed safe
+   fields are available. `metadata_ready` is solely a non-effecting metadata
+   finding; actual ownership and `window_ready_eligible` are deferred to step
+   2C. POC-001 issues zero frame effects. A cold path reaches
+   `readiness_confirmed` or an explicit
    deferred-uncertainty result within <= 3,000 ms. An uncertain cold window is retained/deferred, not
    admitted or destroyed on guesswork; uncertainty beyond that bound is
    reported as deferred/unresolved, never claimed ready.
@@ -305,7 +317,9 @@ check; it does not justify treating absence from `_orderedwinids()` or a global
 snapshot as death.
 
 ## Cleanup
-No POC code exists at this checkpoint. Any later POC-only harness, isolated
-Hammerspoon configuration, traces, and temporary timers/watchers are deleted
-before a production replacement unless a named reusable diagnostic has an
-ongoing owner, a documented use, and measured negligible idle cost.
+The step-2B POC-only observer is intentionally retained for the remaining
+POC-001 operator matrix; it is not production code and live actions remain
+forbidden until approved. Its isolated Hammerspoon configuration, traces, and
+any temporary timers/watchers used by later runs are deleted before a
+production replacement unless a named reusable diagnostic has an ongoing owner,
+a documented use, and measured negligible idle cost.

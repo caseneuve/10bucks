@@ -1,0 +1,74 @@
+local source = debug.getinfo(1, "S").source:sub(2)
+local root = source:match("(.*/)pocs/") or "./"
+package.path = root .. "pocs/001-window-events-liveness/?.lua;" .. package.path
+
+local Lifecycle = require("lifecycle")
+local function equal(actual, expected) assert(actual == expected, string.format("expected %s, got %s", tostring(expected), tostring(actual))) end
+
+return {
+  ["STATE-008 POC newly observed windows remain availability-unknown"] = function()
+    local model = Lifecycle.new()
+    model:observe_window("app-001", "win-001", "direct_ax", {})
+    local window = model:window("win-001")
+    equal(window.app_hidden, nil)
+    equal(window.candidates.direct_ax.minimized, nil)
+    equal(window.candidates.direct_ax.native_fullscreen, nil)
+    equal(window.candidates.direct_ax.available, nil)
+  end,
+  ["STATE-008 POC one true candidate condition forces unavailable despite unknown facts"] = function()
+    local model = Lifecycle.new()
+    model:observe_window("app-001", "win-001", "direct_ax", { minimized = true })
+    equal(model:window("win-001").candidates.direct_ax.available, false)
+  end,
+  ["STATE-008 POC availability is true only after every condition is explicitly false"] = function()
+    local model = Lifecycle.new()
+    model:observe_window("app-001", "win-001", "direct_ax", { minimized = false, native_fullscreen = false })
+    equal(model:window("win-001").candidates.direct_ax.available, nil)
+    model:observe_app_hidden("app-001", false)
+    equal(model:window("win-001").candidates.direct_ax.available, true)
+  end,
+  ["LIFE-002 POC correlator preserves minimize hide unhide restore ordering without inventing false"] = function()
+    local model = Lifecycle.new()
+    model:observe_window("app-001", "win-001", "direct_ax", { minimized = true })
+    model:observe_app_hidden("app-001", true)
+    model:observe_app_hidden("app-001", false)
+    model:observe_window("app-001", "win-001", "direct_ax", { minimized = false })
+    equal(model:window("win-001").candidates.direct_ax.available, nil)
+  end,
+  ["LIFE-002 POC correlator preserves hide minimize restore unhide ordering without clearing unknown fullscreen"] = function()
+    local model = Lifecycle.new()
+    model:observe_window("app-001", "win-001", "direct_ax", {})
+    model:observe_app_hidden("app-001", true)
+    model:observe_window("app-001", "win-001", "direct_ax", { minimized = true })
+    model:observe_window("app-001", "win-001", "direct_ax", { minimized = false })
+    equal(model:window("win-001").candidates.direct_ax.available, false)
+    model:observe_app_hidden("app-001", false)
+    equal(model:window("win-001").candidates.direct_ax.available, nil)
+  end,
+  ["STATE-008 POC duplicate and delayed competing source facts remain isolated"] = function()
+    local model = Lifecycle.new()
+    model:observe_window("app-001", "win-001", "filter", { minimized = true, native_fullscreen = false })
+    model:observe_window("app-001", "win-001", "direct_ax", { minimized = false, native_fullscreen = true })
+    local changed = model:observe_window("app-001", "win-001", "filter", { minimized = true })
+    equal(changed, false)
+    local window = model:window("win-001")
+    equal(window.candidates.filter.minimized, true)
+    equal(window.candidates.filter.native_fullscreen, false)
+    equal(window.candidates.direct_ax.minimized, false)
+    equal(window.candidates.direct_ax.native_fullscreen, true)
+    equal(window.candidates.filter.available, false)
+    equal(window.candidates.direct_ax.available, false)
+  end,
+  ["LIFE-002 POC app hide updates all known aliases without changing candidate facts"] = function()
+    local model = Lifecycle.new()
+    model:observe_window("app-001", "win-001", "filter", { minimized = true })
+    model:observe_window("app-001", "win-002", "direct_ax", { native_fullscreen = true })
+    model:observe_app_hidden("app-001", true)
+    model:observe_app_hidden("app-001", false)
+    local one, two = model:window("win-001"), model:window("win-002")
+    assert(one.candidates.filter.minimized)
+    assert(two.candidates.direct_ax.native_fullscreen)
+    equal(one.candidates.filter.available, false)
+    equal(two.candidates.direct_ax.available, false)
+  end,
+}

@@ -4,7 +4,8 @@ package.path = root .. "pocs/001-window-events-liveness/?.lua;" .. package.path
 
 local trace_suite = require("test_trace")
 local observer_suite = require("test_observer")
-local suites = { trace_suite, observer_suite }
+local lifecycle_suite = require("test_lifecycle")
+local suites = { trace_suite, lifecycle_suite, observer_suite }
 local passed, failed = 0, 0
 for _, suite in ipairs(suites) do
   for name, test in pairs(suite) do

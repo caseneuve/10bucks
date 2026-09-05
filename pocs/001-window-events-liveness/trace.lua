@@ -15,6 +15,11 @@ local allowed_keys = {
   result = true, reason = true, error_class = true, lifecycle = true,
   duration_ms = true, count = true, timer_id = true, watcher_kind = true,
   framework_evidence = true, framework_version = true, blind_spot = true,
+  minimized = true, app_hidden = true, native_fullscreen = true, available = true,
+  role = true, subrole = true, visibility = true, metadata_ready = true,
+  metadata_status = true, field = true, query_phase = true,
+  candidate_source = true, candidate_minimized = true,
+  candidate_native_fullscreen = true, candidate_available = true,
 }
 
 local function safe_token(value)
@@ -188,6 +193,27 @@ function Trace:query(query, call_site, scope, fields)
     event_fields.source = current.source
   end
   return self:emit("query_attempt", event_fields)
+end
+
+function Trace:targeted_check_begin(query, call_site, scope, fields)
+  local event_fields = fields or {}
+  event_fields.query_phase = "begin"
+  self:query(query, call_site, scope, event_fields)
+  return self:emit("targeted_check_begin", event_fields)
+end
+
+function Trace:targeted_check_end(query, call_site, scope, fields)
+  local event_fields = fields or {}
+  event_fields.query_phase = "end"
+  event_fields.query = query
+  event_fields.call_site = call_site
+  event_fields.scope = scope
+  local current = self.callback_stack[#self.callback_stack]
+  if current then
+    event_fields.callback_sequence = current.sequence
+    event_fields.source = current.source
+  end
+  return self:emit("targeted_check_end", event_fields)
 end
 
 function Trace:lifecycle(action)
