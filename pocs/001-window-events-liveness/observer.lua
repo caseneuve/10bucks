@@ -479,7 +479,7 @@ function Observer:status()
 end
 function Observer:export(path)
   assert(self.trace, "start the POC before exporting")
-  self.trace:mark("export_requested", { source = "operator" })
+  assert(not self.running and self.trace:status().lifecycle == "stopped", "stop the POC before exporting")
   return PrivateExport.write(path, Trace.encode_json(self.trace:export_table()), self.export_ops)
 end
 return Observer.new()

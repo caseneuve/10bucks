@@ -17,16 +17,18 @@ local function owner_private(attributes, uid)
     and attributes.permissions:sub(4, 9) == "------"
 end
 
-local function default_ops()
+local function default_ops(dependencies)
+  dependencies = dependencies or {}
+  local execute = dependencies.execute or hs.execute
   local function command_ok(command)
-    local _, status = hs.execute(command, true)
+    local _, status = execute(command, true)
     return status == true
   end
   local function current_uid()
-    local environment_uid = tonumber(os.getenv("UID"))
-    if environment_uid then return environment_uid end
-    local output, status = hs.execute("/usr/bin/id -u", true)
-    return status == true and tonumber(output:match("%d+")) or nil
+    local output, status = execute("/usr/bin/id -u", false)
+    if status ~= true or type(output) ~= "string" then return nil end
+    local uid = output:match("^%s*(%d+)%s*$")
+    return uid and tonumber(uid) or nil
   end
   return {
     attributes = function(path) return hs.fs.attributes(path) end,
@@ -40,6 +42,9 @@ local function default_ops()
     end,
   }
 end
+
+-- Exposed for pure tests of the fixed-command/non-user-shell UID lookup.
+PrivateExport.default_ops = default_ops
 
 function PrivateExport.write(path, content, supplied_ops)
   assert(type(path) == "string" and path:sub(1, 1) == "/", "export path must be an explicitly chosen absolute path")

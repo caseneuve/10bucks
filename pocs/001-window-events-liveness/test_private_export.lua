@@ -36,6 +36,26 @@ end
 local function private_directory() return { mode = "directory", uid = 501, permissions = "rwx------" } end
 
 return {
+  ["POC-001 export UID lookup uses id without user shell and rejects contaminated output"] = function()
+    local calls = {}
+    local function ops_for_output(output)
+      return PrivateExport.default_ops({
+        execute = function(command, with_user_env)
+          calls[#calls + 1] = { command = command, with_user_env = with_user_env }
+          return output, true
+        end,
+      })
+    end
+
+    local contaminated = ops_for_output("\27]0;10bucks\7\n502\n")
+    assert(contaminated.current_uid() == nil)
+    assert(#calls == 1 and calls[1].command == "/usr/bin/id -u" and calls[1].with_user_env == false)
+
+    calls = {}
+    local clean = ops_for_output(" \t502\r\n")
+    assert(clean.current_uid() == 502)
+    assert(#calls == 1 and calls[1].command == "/usr/bin/id -u" and calls[1].with_user_env == false)
+  end,
   ["POC-001 export rejects missing or non-private destination directories before creating a file"] = function()
     for _, attributes in ipairs({ {}, { ["/private"] = { mode = "directory", uid = 501, permissions = "rwxr-xr-x" } } }) do
       local ops, files = ops_for(attributes)

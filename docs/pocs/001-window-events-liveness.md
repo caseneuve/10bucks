@@ -347,6 +347,22 @@ All thresholds are fixed before the run:
   This is harness bookkeeping evidence only; no Hammerspoon/live run was
   performed for this checkpoint.
 
+### Interrupted Terminal lifecycle sample — export pending
+
+- The minimize action completed. The user then hid Terminal and manually
+  returned by unhiding it because hiding Terminal also hid the conversation/
+  session window.
+- The orchestrator initially interpreted the user's message as inability to
+  continue, marked the sample aborted, stopped the observer, and restored
+  legacy 10bucks.
+- The private export then failed closed because `current_uid` parsed terminal-
+  title escape-sequence output before the actual UID. The stopped trace remains
+  in Hammerspoon memory pending export through the corrected private-export
+  module.
+
+This is neither a clean hide/unhide marker sequence nor a pass/fail result.
+It makes no lifecycle, timing, or source-authority claim.
+
 ### First Terminal calibration — calibration-only observations
 
 This is **not a pass/fail result** and does not advance the pending matrix or

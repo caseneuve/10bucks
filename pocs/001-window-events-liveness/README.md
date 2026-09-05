@@ -11,7 +11,8 @@ this handoff does not replace that history.
 
 - The orchestrator alone stops/loads the runtimes, emits all markers, stops and
   exports the trace, and restores legacy 10bucks. The human performs only the
-  individually announced UI action, then waits.
+  individually announced UI action (or the explicitly announced combined
+  hide→wait→unhide action), then waits.
 - Use **exactly two** blank, non-sensitive Terminal windows, named **A** and
   **B** by their on-screen positions before the sample starts. Both are on the
   current regular Space. A is frontmost and B is visible behind it. Terminal is
@@ -95,18 +96,24 @@ Do not continue if any assertion fails.
 ## Guided lifecycle sample
 
 Use sample ID `terminal-lifecycle-002`. For each row, the orchestrator emits
-`action_begin`, the human performs **only** that one action, confirms the
+`action_begin`, the human performs **only** the announced action, confirms the
 listed visible state, and the orchestrator emits `manual_visual_complete`.
 There is no prescribed wait or timing measurement.
+
+Before the hide row begins, the orchestrator must announce the entire combined
+operation: **hide Terminal → wait briefly → click Terminal in the Dock to
+unhide it**. Because hiding Terminal also hides the communication terminal,
+the human must not be asked to reply while Terminal is hidden; they reply only
+after Terminal has returned. The combined operation has one begin/completion
+marker and is not a claim about a clean hide/unhide marker sequence.
 
 | Order | Marker action token | Human action | Expected visible state before completion marker |
 |---:|---|---|---|
 | 1 | `terminal_minimize_front_A` | Minimize front window **A** once using its yellow window control. | A is minimized. B is still visible, unminimized, and frontmost on the current regular Space. |
-| 2 | `terminal_hide_with_B_nonminimized` | With B visible and unminimized, choose **Terminal → Hide Terminal** once. | Terminal is hidden. A remains minimized; B is hidden but remains non-minimized. |
-| 3 | `terminal_unhide_via_Dock` | Click the Terminal application icon in the Dock once to unhide Terminal. | B is visible and frontmost on the current regular Space. A is still minimized. |
-| 4 | `terminal_restore_A_via_Dock` | Click **A's minimized-window item** in the Dock once. Do not click B or use a Terminal menu. | A is restored and visible on the current regular Space. B remains visible. |
-| 5 | `terminal_enter_native_fullscreen_A` | With A frontmost, press **Control-Command-F** once to enter Terminal's native fullscreen. | A is in its native fullscreen Space. B remains on the original regular Space. |
-| 6 | `terminal_exit_native_fullscreen_A` | In A's native fullscreen Space, press **Control-Command-F** once to exit native fullscreen. | A has exited native fullscreen and is visible again on the regular Space; B remains visible there. |
+| 2 | `terminal_hide_wait_unhide_via_Dock` | With B visible and unminimized, perform the pre-announced combined operation: choose **Terminal → Hide Terminal** once, wait briefly, then click the Terminal application icon in the Dock once to unhide it. Reply only after Terminal returns. | B is visible and frontmost on the current regular Space. A remains minimized. |
+| 3 | `terminal_restore_A_via_Dock` | Click **A's minimized-window item** in the Dock once. Do not click B or use a Terminal menu. | A is restored and visible on the current regular Space. B remains visible. |
+| 4 | `terminal_enter_native_fullscreen_A` | With A frontmost, press **Control-Command-F** once to enter Terminal's native fullscreen. | A is in its native fullscreen Space. B remains on the original regular Space. |
+| 5 | `terminal_exit_native_fullscreen_A` | In A's native fullscreen Space, press **Control-Command-F** once to exit native fullscreen. | A has exited native fullscreen and is visible again on the regular Space; B remains visible there. |
 
 For every row, the orchestrator uses exactly these marker calls, replacing only
 `ACTION` with that row's token:
@@ -119,7 +126,7 @@ poc001:mark("terminal-lifecycle-002", "manual_visual_complete", "ACTION")
 
 ## Stop, export, and restore
 
-After row 6, the orchestrator inspects the status, stops the observer, exports
+After row 5, the orchestrator inspects the status, stops the observer, exports
 only after it is stopped, then restores legacy bindings and runtime:
 
 ```lua
@@ -136,6 +143,32 @@ assert(exported, "private POC export failed: " .. tostring(export_error))
 
 The status and local export are diagnostic-only. They are not a pass/fail
 result and do not authorize another POC action.
+
+### Recovery export of an already-stopped in-memory trace
+
+If export failed after the observer was confirmed stopped, do **not** restart
+it, call `start`, emit a marker, or reload the runtime. With `poc001` still in
+Hammerspoon memory and its original `poc001_root`/`package.path` intact, load
+only the corrected pure exporter and serialize the existing trace directly:
+
+```lua
+assert(poc001 ~= nil and poc001:status().lifecycle == "stopped", "trace is not safely stopped")
+local load_exporter, load_error = loadfile(poc001_root .. "/private_export.lua")
+assert(load_exporter, load_error)
+local CorrectedPrivateExport = load_exporter()
+local Trace = require("trace")
+local path = "/tmp/poc-001-lifecycle-002/terminal-lifecycle-calibration-002.json"
+local exported = CorrectedPrivateExport.write(
+  path,
+  Trace.encode_json(poc001.trace:export_table()),
+  poc001.export_ops
+)
+print(exported)
+```
+
+This reads the stopped trace via `export_table()` and invokes only the
+corrected file-writing module; it neither restarts the observer nor changes
+POC/runtime state. Review the resulting local private export before sharing.
 
 ## Cancellation and abort
 
