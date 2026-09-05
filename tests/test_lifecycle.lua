@@ -11,6 +11,11 @@ local function engineStub(overrides)
     windowDestroyed = function() end,
     windowMinimized = function() end,
     windowUnminimized = function() end,
+    isFullscreenPending = function() return false end,
+    fullscreenTransitionTimedOut = function() end,
+    fullscreenCompleted = function() end,
+    windowUnfullscreened = function() end,
+    cancelFullscreenTransitions = function() end,
     focusRecovery = function() return false end,
     reconcileActiveWorkspace = function() end,
   }
@@ -19,9 +24,11 @@ local function engineStub(overrides)
 end
 
 local function lifecycleHarness(engine)
-  local events, delayed, recurring = nil, {}, {}
+  local subscriptions, delayed, recurring = {}, {}, {}
   local filter = {
-    subscribe = function(_, registered) events = registered end,
+    subscribe = function(_, registered, _, immediate)
+      table.insert(subscriptions, { events = registered, immediate = immediate })
+    end,
     delete = function() end,
   }
   local hs = {
@@ -33,6 +40,8 @@ local function lifecycleHarness(engine)
         windowDestroyed = "destroyed",
         windowMinimized = "minimized",
         windowUnminimized = "unminimized",
+        windowFullscreened = "fullscreened",
+        windowUnfullscreened = "unfullscreened",
       },
     },
     timer = {
@@ -50,7 +59,13 @@ local function lifecycleHarness(engine)
       end,
     },
   }
-  return Lifecycle.new(hs, engine):start(), function() return events end, delayed, recurring
+  return Lifecycle.new(hs, engine):start(), function()
+    local events = {}
+    for _, subscription in ipairs(subscriptions) do
+      for event, callback in pairs(subscription.events) do events[event] = callback end
+    end
+    return events
+  end, delayed, recurring, subscriptions
 end
 
 return {
@@ -166,6 +181,123 @@ return {
     delayed[1].callback()
     assert(calls == 0)
     assert(#delayed == 1)
+  end,
+
+  ["normal window creation does not schedule fullscreen verification"] = function()
+    local lifecycle, getEvents, delayed = lifecycleHarness(engineStub())
+
+    getEvents().created(fakeWindow(42))
+    assert(#delayed == 0)
+    lifecycle:stop()
+  end,
+
+  ["pending fullscreen creation schedules one bounded verification"] = function()
+    local timedOut = nil
+    local engine = engineStub({
+      windowCreated = function() return true, "fullscreen-pending" end,
+      isFullscreenPending = function() return true end,
+      fullscreenTransitionTimedOut = function(_, window) timedOut = window end,
+    })
+    local lifecycle, getEvents, delayed = lifecycleHarness(engine)
+    local window = fakeWindow(42)
+
+    getEvents().created(window)
+    getEvents().created(window)
+    assert(#delayed == 1 and delayed[1].delay == 2)
+    delayed[1].callback()
+    assert(timedOut == window)
+    assert(lifecycle.fullscreenTimers[42] == nil)
+    lifecycle:stop()
+  end,
+
+  ["fullscreen completion cancels verification and forwards the window"] = function()
+    local completed = nil
+    local engine = engineStub({
+      windowCreated = function() return true, "fullscreen-pending" end,
+      isFullscreenPending = function() return true end,
+      fullscreenCompleted = function(_, window) completed = window end,
+    })
+    local lifecycle, getEvents, delayed = lifecycleHarness(engine)
+    local window = fakeWindow(42)
+
+    getEvents().created(window)
+    getEvents().fullscreened(window)
+    assert(delayed[1].stopped)
+    assert(completed == window)
+    assert(lifecycle.fullscreenTimers[42] == nil)
+    lifecycle:stop()
+  end,
+
+  ["unfullscreen cancels verification and forwards the window"] = function()
+    local unfullscreened = nil
+    local engine = engineStub({
+      windowCreated = function() return true, "fullscreen-pending" end,
+      isFullscreenPending = function() return true end,
+      windowUnfullscreened = function(_, window) unfullscreened = window end,
+    })
+    local lifecycle, getEvents, delayed = lifecycleHarness(engine)
+    local window = fakeWindow(42)
+
+    getEvents().created(window)
+    getEvents().unfullscreened(window)
+    assert(delayed[1].stopped)
+    assert(unfullscreened == window)
+    assert(lifecycle.fullscreenTimers[42] == nil)
+    lifecycle:stop()
+  end,
+
+  ["unavailable windows cancel verification but retain delayed handling"] = function()
+    local minimized = nil
+    local engine = engineStub({
+      windowCreated = function() return true, "fullscreen-pending" end,
+      isFullscreenPending = function() return true end,
+      windowMinimized = function(_, id) minimized = id end,
+    })
+    local lifecycle, getEvents, delayed = lifecycleHarness(engine)
+    local window = fakeWindow(42)
+
+    getEvents().created(window)
+    getEvents().minimized(window)
+    assert(delayed[1].stopped)
+    assert(#delayed == 2 and delayed[2].delay == 0.05)
+    delayed[2].callback()
+    assert(minimized == 42)
+    lifecycle:stop()
+  end,
+
+  ["lifecycle stop cancels fullscreen verification and clears engine state"] = function()
+    local cancellations = 0
+    local engine = engineStub({
+      windowCreated = function() return true, "fullscreen-pending" end,
+      isFullscreenPending = function() return true end,
+      cancelFullscreenTransitions = function() cancellations = cancellations + 1 end,
+    })
+    local lifecycle, getEvents, delayed = lifecycleHarness(engine)
+
+    getEvents().created(fakeWindow(42))
+    lifecycle:stop()
+    assert(delayed[1].stopped)
+    assert(next(lifecycle.fullscreenTimers) == nil)
+    assert(cancellations == 1)
+  end,
+
+  ["lifecycle preserves immediate replay only for original events"] = function()
+    local lifecycle, _, _, _, subscriptions = lifecycleHarness(engineStub())
+    local original, fullscreen = subscriptions[1], subscriptions[2]
+
+    assert(#subscriptions == 2)
+    assert(original.immediate == true)
+    assert(type(original.events.created) == "function")
+    assert(type(original.events.focused) == "function")
+    assert(type(original.events.destroyed) == "function")
+    assert(type(original.events.minimized) == "function")
+    assert(type(original.events.unminimized) == "function")
+    assert(original.events.fullscreened == nil)
+    assert(original.events.unfullscreened == nil)
+    assert(fullscreen.immediate == nil)
+    assert(type(fullscreen.events.fullscreened) == "function")
+    assert(type(fullscreen.events.unfullscreened) == "function")
+    lifecycle:stop()
   end,
 
   ["lifecycle periodically reconciles missed window teardown events"] = function()

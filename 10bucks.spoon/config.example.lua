@@ -57,6 +57,21 @@ return {
     -- "^Picture in Picture$",
     -- "^Downloads$",
   },
+  -- Replacement list of rules for automatically placing matching newly created
+  -- windows into native macOS fullscreen. Rules are ORed; supplied selectors
+  -- within a rule are ANDed. bundleID is exact (Hammerspoon Console:
+  -- hs.window.focusedWindow():application():bundleID()); applicationName and
+  -- windowTitle are Lua patterns; predicate receives an hs.window. Matching
+  -- applies only to windows 10bucks would otherwise tile. Windows already
+  -- present when 10bucks starts or reloads are not forced. Native fullscreen
+  -- creates a dedicated fullscreen Space. Manually exiting fullscreen returns
+  -- the window to normal management, and a fullscreen failure falls back to tiling.
+  fullscreenRules = {
+    -- { bundleID = "com.apple.Safari" },
+    -- { applicationName = "^iTerm2$", windowTitle = "^Terminal$" },
+    -- { predicate = function(window) return window:title() == "Focus" end },
+  },
+
   -- Optional function called for an otherwise eligible standard window.
   -- Return false to leave the window unmanaged.
   -- windowFilter = function(window)
@@ -81,6 +96,16 @@ return {
     focusPreviousWorkspace = { hyper, "p" },
     focusNextWorkspace = { hyper, "n" },
     chooseWorkspace = { hyper, "u" },
+    -- Focus desktop 1-9 directly; create it when it does not exist yet.
+    focusWorkspace1 = { hyper, "1" },
+    focusWorkspace2 = { hyper, "2" },
+    focusWorkspace3 = { hyper, "3" },
+    focusWorkspace4 = { hyper, "4" },
+    focusWorkspace5 = { hyper, "5" },
+    focusWorkspace6 = { hyper, "6" },
+    focusWorkspace7 = { hyper, "7" },
+    focusWorkspace8 = { hyper, "8" },
+    focusWorkspace9 = { hyper, "9" },
     chooseWindow = { hyper, "w" },
     deleteWorkspace = { hyper, "delete" },
     reflow = { hyper, "r" },

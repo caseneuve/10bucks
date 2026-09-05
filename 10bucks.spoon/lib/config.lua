@@ -33,6 +33,8 @@ Config.defaults = {
   excludedBundleIDs = { "org.hammerspoon.Hammerspoon", "com.apple.SecurityAgent" },
   -- Lua patterns matched against the complete Accessibility window title.
   excludedWindowTitles = {},
+  -- Rules for requesting native macOS fullscreen when eligible windows open.
+  fullscreenRules = {},
   -- Optional final eligibility check: return false to leave an otherwise
   -- standard window unmanaged.
   windowFilter = nil,
@@ -51,6 +53,15 @@ Config.defaults = {
     focusPreviousWorkspace = { { "cmd", "alt", "ctrl", "shift" }, "p" },
     focusNextWorkspace = { { "cmd", "alt", "ctrl", "shift" }, "n" },
     chooseWorkspace = { { "cmd", "alt", "ctrl", "shift" }, "u" },
+    focusWorkspace1 = { { "cmd", "alt", "ctrl", "shift" }, "1" },
+    focusWorkspace2 = { { "cmd", "alt", "ctrl", "shift" }, "2" },
+    focusWorkspace3 = { { "cmd", "alt", "ctrl", "shift" }, "3" },
+    focusWorkspace4 = { { "cmd", "alt", "ctrl", "shift" }, "4" },
+    focusWorkspace5 = { { "cmd", "alt", "ctrl", "shift" }, "5" },
+    focusWorkspace6 = { { "cmd", "alt", "ctrl", "shift" }, "6" },
+    focusWorkspace7 = { { "cmd", "alt", "ctrl", "shift" }, "7" },
+    focusWorkspace8 = { { "cmd", "alt", "ctrl", "shift" }, "8" },
+    focusWorkspace9 = { { "cmd", "alt", "ctrl", "shift" }, "9" },
     chooseWindow = { { "cmd", "alt", "ctrl", "shift" }, "w" },
     deleteWorkspace = { { "cmd", "alt", "ctrl", "shift" }, "delete" },
     reflow = { { "cmd", "alt", "ctrl", "shift" }, "r" },
@@ -103,7 +114,7 @@ local function merge(override)
     elseif key == "hotkeys" and type(value) == "table" then
       result.hotkeys = mergeHotkeys(value)
     else
-      -- Lists (bundle IDs and window titles) are intentional replacements.
+      -- Lists (bundle IDs, window titles, and fullscreen rules) are intentional replacements.
       result[key] = copy(value)
     end
   end
@@ -114,6 +125,31 @@ local function validateStringArray(values, name)
   assert(isArray(values), name .. " must be a list of strings")
   for _, value in ipairs(values) do
     assert(type(value) == "string", name .. " must be a list of strings")
+  end
+end
+
+local function validateFullscreenRules(rules)
+  assert(isArray(rules), "fullscreenRules must be a list of rules")
+  for _, rule in ipairs(rules) do
+    assert(type(rule) == "table", "fullscreenRules must contain rule tables")
+    local selectorCount = 0
+    for selector, value in pairs(rule) do
+      assert(selector == "bundleID" or selector == "applicationName"
+        or selector == "windowTitle" or selector == "predicate",
+        "fullscreenRules contains an unknown selector: " .. tostring(selector))
+      selectorCount = selectorCount + 1
+      if selector == "predicate" then
+        assert(type(value) == "function", "fullscreenRules predicate must be a function")
+      else
+        assert(type(value) == "string" and value ~= "",
+          "fullscreenRules " .. selector .. " must be a non-empty string")
+        if selector == "applicationName" or selector == "windowTitle" then
+          assert(pcall(string.match, "", value),
+            "fullscreenRules " .. selector .. " contains an invalid Lua pattern: " .. value)
+        end
+      end
+    end
+    assert(selectorCount > 0, "fullscreenRules rules must specify at least one selector")
   end
 end
 
@@ -149,6 +185,7 @@ function Config.build(override)
   for _, pattern in ipairs(config.excludedWindowTitles) do
     assert(pcall(string.match, "", pattern), "excludedWindowTitles contains an invalid Lua pattern: " .. pattern)
   end
+  validateFullscreenRules(config.fullscreenRules)
   assert(config.windowFilter == nil or type(config.windowFilter) == "function",
     "windowFilter must be a function or nil")
   assert(type(config.bar.enabled) == "boolean", "bar.enabled must be a boolean")

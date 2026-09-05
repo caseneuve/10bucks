@@ -1,7 +1,6 @@
 local WindowRepository = {}
 WindowRepository.__index = WindowRepository
 
-local FOCUS_SPACE_START_DELAY = 0.01
 local FOCUS_SPACE_RETRY_DELAY = 0.05
 local FOCUS_SPACE_SETTLE_DELAY = 0.15
 local MAX_FOCUS_SPACE_RETRIES = 40
@@ -139,6 +138,73 @@ end
 
 function WindowRepository:isEligible(window)
   return self:isWorkspaceWindow(window) and attempt(window, "isVisible", false)
+end
+
+-- Fullscreen rules are evaluated independently of normal window eligibility.
+-- Callers decide when a matching window should be requested to enter native
+-- fullscreen; this repository only provides the matching and safe primitives.
+function WindowRepository:shouldSpawnFullscreen(window)
+  if not window then return false end
+  local rules = self.config and self.config.fullscreenRules
+  if type(rules) ~= "table" then return false end
+
+  for _, rule in ipairs(rules) do
+    if type(rule) == "table" then
+      local application
+      local applicationQueried = false
+      local function getApplication()
+        if not applicationQueried then
+          application = attempt(window, "application", nil)
+          applicationQueried = true
+        end
+        return application
+      end
+
+      local hasSelector = false
+      local matches = true
+      if rule.bundleID ~= nil then
+        hasSelector = true
+        local bundleID = attempt(getApplication(), "bundleID", nil)
+        matches = bundleID ~= nil and bundleID == rule.bundleID
+      end
+      if matches and rule.applicationName ~= nil then
+        hasSelector = true
+        local applicationName = attempt(getApplication(), "name", nil)
+        matches = applicationName ~= nil and applicationName:match(rule.applicationName) ~= nil
+      end
+      if matches and rule.windowTitle ~= nil then
+        hasSelector = true
+        local title = attempt(window, "title", nil)
+        matches = title ~= nil and title:match(rule.windowTitle) ~= nil
+      end
+      -- Predicates may be expensive or have side effects, so only invoke them
+      -- after every declarative selector in the rule has matched.
+      if matches and rule.predicate ~= nil then
+        hasSelector = true
+        matches = rule.predicate(window) and true or false
+      end
+      if hasSelector and matches then return true end
+    end
+  end
+  return false
+end
+
+-- This only confirms that Hammerspoon accepted the request. Native fullscreen
+-- transitions are asynchronous, so it deliberately does not imply completion.
+function WindowRepository:requestFullscreen(window)
+  if not window then return false end
+  local methodAvailable, setFullScreen = pcall(function() return window.setFullScreen end)
+  if not methodAvailable or type(setFullScreen) ~= "function" then return false end
+  local issued = pcall(setFullScreen, window, true)
+  return issued
+end
+
+function WindowRepository:isFullscreen(window)
+  if not window then return false end
+  local methodAvailable, isFullScreen = pcall(function() return window.isFullScreen end)
+  if not methodAvailable or type(isFullScreen) ~= "function" then return false end
+  local queried, fullscreen = pcall(isFullScreen, window)
+  return queried and fullscreen == true
 end
 
 function WindowRepository:eligibleWindows()
@@ -394,14 +460,10 @@ function WindowRepository:focus(window)
     self.focusTimer = timer.doAfter(FOCUS_SPACE_RETRY_DELAY, pollDestination)
   end
 
-  self.focusTimer = timer.doAfter(FOCUS_SPACE_START_DELAY, function()
-    if generation ~= self.focusGeneration then return end
-    self.focusTimer = nil
-    if not self:startAsyncSpaceSwitch(window, destination, generation, waitForDestination)
-      and type(self.hs.printf) == "function" then
-      self.hs.printf("10bucks: asynchronous Space switching is unavailable")
-    end
-  end)
+  if not self:startAsyncSpaceSwitch(window, destination, generation, waitForDestination)
+    and type(self.hs.printf) == "function" then
+    self.hs.printf("10bucks: asynchronous Space switching is unavailable")
+  end
   return true
 end
 

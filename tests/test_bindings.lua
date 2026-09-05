@@ -34,6 +34,22 @@ return {
     assert(dispatches == 1)
   end,
 
+  ["numbered workspace hotkeys focus or create their desktop"] = function()
+    local hs, calls = fakeHs()
+    local selected
+    local engine = {
+      focusOrCreateWorkspaceNumber = function(_, index) selected = index end,
+    }
+
+    Bindings.bind(hs, engine, {
+      focusWorkspace4 = { { "cmd", "alt" }, "4" },
+    })
+
+    assert(#calls == 1)
+    calls[1].callback()
+    assert(selected == 4)
+  end,
+
   ["false hotkey bindings are skipped"] = function()
     local hs, calls = fakeHs()
     local bindings = Bindings.bind(hs, {}, { deleteWorkspace = false })

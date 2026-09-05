@@ -23,7 +23,14 @@ local function repositoryWith(ids)
   end
   return {
     windows = windows,
-    eligibleWindows = function() return order end,
+    eligibleWindows = function()
+      local ids = {}
+      for id in pairs(windows) do table.insert(ids, id) end
+      table.sort(ids)
+      local eligible = {}
+      for _, id in ipairs(ids) do table.insert(eligible, windows[id]) end
+      return eligible
+    end,
     workspaceWindows = function() return order end,
     activeContexts = function() return { context } end,
     contextForWindow = function() return context end,
@@ -42,6 +49,9 @@ local function repositoryWith(ids)
     focusedWindow = function(self) return self.windows[self.focusedId] end,
     isEligible = function(_, window) return window ~= nil end,
     isFocusHistoryWindow = function(_, window) return window ~= nil end,
+    shouldSpawnFullscreen = function() return false end,
+    requestFullscreen = function() return false end,
+    isFullscreen = function() return false end,
   }
 end
 
@@ -81,6 +91,7 @@ local function build(ids, options)
     maximumColumnRatio = 0.8,
   }
   local repository = repositoryWith(ids)
+  for name, method in pairs(options and options.repository or {}) do repository[name] = method end
   repository.focusedId = ids[1]
   local engine = Engine.new({
     config = config,
@@ -106,6 +117,7 @@ local function deletionFixture(options)
   engine.state:addWindow(destinationContext, 42, 1)
   repository.currentContext = function() return currentContext end
   repository.activeContexts = function() return { currentContext } end
+  repository.contextForWindow = function() return destinationContext end
   repository.screenForContext = function() return screen end
   repository.setFrame = function(_, window, frame)
     window:setFrame(frame)
@@ -157,6 +169,24 @@ return {
     equal(repository.windows[2].lastFrame.w, 480)
     equal(repository.windows[1].lastFrame.x, 10)
     equal(repository.windows[2].lastFrame.x, 510)
+  end,
+
+  ["reflow uses one eligible snapshot without per-window lookups"] = function()
+    local engine, repository = build({ 1, 2 }, { initialLayout = "columns" })
+    local snapshots = 0
+    repository.eligibleWindows = function()
+      snapshots = snapshots + 1
+      return { repository.windows[1] }
+    end
+    repository.windowForId = function()
+      error("reflow must not resolve individual Accessibility windows")
+    end
+
+    assert(engine:reflow(context))
+    equal(snapshots, 1)
+    equal(engine.state:windowCount(context), 1)
+    equal(repository.windows[1].lastFrame.x, 10)
+    equal(repository.windows[1].lastFrame.w, 980)
   end,
 
   ["engine refuses to move a focused window between columns when fewer than three windows are managed"] = function()
@@ -635,6 +665,231 @@ return {
     })
     assert(not engine:deleteWorkspace())
     assert(not queued)
+  end,
+
+  ["fullscreen rules are not evaluated for startup windows"] = function()
+    local matches, requests = 0, 0
+    local engine, repository = build({ 1 }, {
+      repository = {
+        shouldSpawnFullscreen = function() matches = matches + 1 return true end,
+        requestFullscreen = function() requests = requests + 1 return true end,
+      },
+    })
+
+    assert(engine.state:contains(context, 1))
+    equal(matches, 0)
+    equal(requests, 0)
+    assert(engine:windowMinimized(1))
+    assert(engine:windowUnminimized(repository.windows[1]))
+    assert(engine.state:contains(context, 1))
+    equal(matches, 0)
+    equal(requests, 0)
+  end,
+
+  ["a matching created window requests fullscreen and remains outside layout state"] = function()
+    local matches, requests = 0, 0
+    local engine, repository = build({ 1 }, {
+      repository = {
+        shouldSpawnFullscreen = function(_, window)
+          matches = matches + 1
+          return window:id() == 2
+        end,
+        requestFullscreen = function(_, window)
+          requests = requests + 1
+          return window:id() == 2
+        end,
+      },
+    })
+    local originalFrame = repository.windows[1].lastFrame
+    repository.windows[2] = fakeWindow(2)
+
+    local handled, transition = engine:windowCreated(repository.windows[2])
+
+    assert(handled)
+    equal(transition, "fullscreen-pending")
+    equal(matches, 1)
+    equal(requests, 1)
+    assert(engine:isFullscreenPending(2))
+    assert(not engine.state:contains(context, 2))
+    assert(not repository.windows[2].lastFrame)
+    assert(repository.windows[1].lastFrame == originalFrame)
+  end,
+
+  ["a synchronous fullscreen request failure immediately falls back to tiling"] = function()
+    local matches, requests = 0, 0
+    local engine, repository = build({ 1 }, {
+      repository = {
+        shouldSpawnFullscreen = function() matches = matches + 1 return true end,
+        requestFullscreen = function() requests = requests + 1 return false end,
+      },
+    })
+    repository.windows[2] = fakeWindow(2)
+
+    assert(engine:windowCreated(repository.windows[2]))
+    equal(matches, 1)
+    equal(requests, 1)
+    assert(not engine:isFullscreenPending(2))
+    assert(engine.state:contains(context, 2))
+    assert(repository.windows[2].lastFrame)
+  end,
+
+  ["pending fullscreen windows cannot enter through focus workspace or hotkey admission"] = function()
+    local matches, requests = 0, 0
+    local engine, repository = build({ 1 }, {
+      repository = {
+        shouldSpawnFullscreen = function(_, window)
+          matches = matches + 1
+          return window:id() == 2
+        end,
+        requestFullscreen = function()
+          requests = requests + 1
+          return true
+        end,
+      },
+    })
+    repository.windows[2] = fakeWindow(2)
+    assert(engine:windowCreated(repository.windows[2]))
+    repository.focusedId = 2
+
+    assert(engine:windowFocused(repository.windows[2]))
+    assert(not engine:managedFocusedWindow())
+    assert(not engine:toggleManaged())
+    repository.eligibleWindows = function() return { repository.windows[1], repository.windows[2] } end
+    assert(engine:workspaceChanged())
+    assert(engine:isFullscreenPending(2))
+    assert(not engine.state:contains(context, 2))
+    equal(matches, 1)
+    equal(requests, 1)
+  end,
+
+  ["fullscreen completion and a successful timeout clear pending without admission"] = function()
+    local engine, repository = build({ 1 }, {
+      repository = {
+        shouldSpawnFullscreen = function(_, window) return window:id() ~= 1 end,
+        requestFullscreen = function() return true end,
+        isFullscreen = function() return true end,
+      },
+    })
+    repository.windows[2] = fakeWindow(2)
+    assert(engine:windowCreated(repository.windows[2]))
+    assert(engine:fullscreenCompleted(repository.windows[2]))
+    assert(not engine:fullscreenCompleted(repository.windows[2]))
+    assert(not engine:isFullscreenPending(2))
+    assert(not engine.state:contains(context, 2))
+
+    repository.windows[3] = fakeWindow(3)
+    assert(engine:windowCreated(repository.windows[3]))
+    assert(engine:fullscreenTransitionTimedOut(repository.windows[3]))
+    assert(not engine:fullscreenTransitionTimedOut(repository.windows[3]))
+    assert(not engine:isFullscreenPending(3))
+    assert(not engine.state:contains(context, 3))
+  end,
+
+  ["a failed fullscreen transition times out into ordinary tiling without rematching"] = function()
+    local matches = 0
+    local engine, repository = build({ 1 }, {
+      repository = {
+        shouldSpawnFullscreen = function()
+          matches = matches + 1
+          return true
+        end,
+        requestFullscreen = function() return true end,
+        isFullscreen = function() return false end,
+      },
+    })
+    repository.windows[2] = fakeWindow(2)
+    assert(engine:windowCreated(repository.windows[2]))
+
+    assert(engine:fullscreenTransitionTimedOut(repository.windows[2]))
+    equal(matches, 1)
+    assert(not engine:isFullscreenPending(2))
+    assert(engine.state:contains(context, 2))
+    assert(repository.windows[2].lastFrame)
+  end,
+
+  ["destroying or minimizing a pending fullscreen window only clears transition state"] = function()
+    local engine, repository = build({ 1 }, {
+      repository = {
+        shouldSpawnFullscreen = function(_, window) return window:id() == 2 end,
+        requestFullscreen = function() return true end,
+      },
+    })
+    repository.windows[2] = fakeWindow(2)
+    assert(engine:windowCreated(repository.windows[2]))
+    repository.windows[2] = nil
+
+    assert(engine:windowDestroyed(2))
+    assert(not engine:isFullscreenPending(2))
+    assert(not repository.windows[1].focused)
+
+    repository.windows[3] = fakeWindow(3)
+    engine.pendingFullscreen[3] = repository.windows[3]
+    assert(engine:windowMinimized(3))
+    assert(not engine:isFullscreenPending(3))
+    assert(not repository.windows[1].focused)
+  end,
+
+  ["unfullscreened windows use ordinary admission without rerunning spawn rules"] = function()
+    local matches, requests = 0, 0
+    local engine, repository = build({ 1 }, {
+      repository = {
+        shouldSpawnFullscreen = function()
+          matches = matches + 1
+          return true
+        end,
+        requestFullscreen = function() requests = requests + 1 return true end,
+      },
+    })
+    repository.windows[2] = fakeWindow(2)
+    assert(engine:windowCreated(repository.windows[2]))
+    assert(engine:fullscreenCompleted(repository.windows[2]))
+
+    assert(engine:windowUnfullscreened(repository.windows[2]))
+    equal(matches, 1)
+    equal(requests, 1)
+    assert(engine.state:contains(context, 2))
+  end,
+
+  ["ordinary created windows retain normal admission behavior"] = function()
+    local matches, requests = 0, 0
+    local engine, repository = build({ 1 }, {
+      repository = {
+        shouldSpawnFullscreen = function()
+          matches = matches + 1
+          return false
+        end,
+        requestFullscreen = function() requests = requests + 1 return true end,
+      },
+    })
+    repository.windows[2] = fakeWindow(2)
+
+    assert(engine:windowCreated(repository.windows[2]))
+    equal(matches, 1)
+    equal(requests, 0)
+    assert(engine.state:contains(context, 2))
+  end,
+
+  ["workspace reconciliation reuses its eligible snapshot"] = function()
+    local engine, repository = build({ 1 })
+    repository.windows[2] = fakeWindow(2)
+    local snapshots, contextLookups = 0, 0
+    repository.eligibleWindows = function()
+      snapshots = snapshots + 1
+      return { repository.windows[1], repository.windows[2] }
+    end
+    repository.contextForWindow = function(_, window)
+      assert(window)
+      contextLookups = contextLookups + 1
+      return context
+    end
+    repository.windowForId = function()
+      error("workspace reflow must reuse the eligible snapshot")
+    end
+
+    assert(engine:workspaceChanged())
+    equal(snapshots, 1)
+    equal(contextLookups, 2)
+    assert(engine.state:contains(context, 2))
   end,
 
   ["engine never reflows a fullscreen scratchpad scope"] = function()

@@ -20,25 +20,42 @@ end
 
 return {
   ["configuration deep-merges action maps but replaces lists"] = function()
+    local predicate = function() return true end
     local config = Config.build({
       excludedBundleIDs = { "example.bundle" },
+      fullscreenRules = {
+        { bundleID = "com.example.App" },
+        {
+          applicationName = "^Terminal$",
+          windowTitle = "^Focus$",
+          predicate = predicate,
+        },
+      },
       hotkeys = { toggleLayout = { { "cmd" }, "t" } },
     })
     assert(config.excludedBundleIDs[1] == "example.bundle")
     assert(#config.excludedBundleIDs == 1)
     assert(#config.excludedWindowTitles == 0)
+    assert(#config.fullscreenRules == 2)
+    assert(config.fullscreenRules[1].bundleID == "com.example.App")
+    assert(config.fullscreenRules[2].applicationName == "^Terminal$")
+    assert(config.fullscreenRules[2].windowTitle == "^Focus$")
+    assert(config.fullscreenRules[2].predicate == predicate)
     assert(config.hotkeys.toggleLayout[1][1] == "cmd")
     assert(config.hotkeys.toggleLayout[2] == "t")
     assert(config.hotkeys.reflow ~= nil)
     assert(config.hotkeys.focusPreviousWindow[2] == ";")
     assert(config.hotkeys.swapColumns[2] == "g")
     assert(config.hotkeys.chooseWorkspace[2] == "u")
+    assert(config.hotkeys.focusWorkspace1[2] == "1")
+    assert(config.hotkeys.focusWorkspace9[2] == "9")
     assert(config.hotkeys.chooseWindow[2] == "w")
     assert(config.hotkeys.newWorkspace == nil)
     assert(config.hotkeys.deleteWorkspace[2] == "delete")
     assert(config.hotkeys.moveFocusedToOtherColumn[2] == "o")
     assert(config.hotkeys.toggleManaged == nil)
     assert(Config.build({}).initialLayout == "stack")
+    assert(#Config.build({}).fullscreenRules == 0)
     assert(Config.build({ initialLayout = "columns" }).initialLayout == "columns")
   end,
 
@@ -76,12 +93,30 @@ return {
     assert(not pcall(Config.build, { bar = { menuBarHideDelay = 0.05, menuBarFadeDuration = 0.10 } }))
   end,
 
+  ["fullscreen rules reject malformed selectors"] = function()
+    assert(not pcall(Config.build, { fullscreenRules = true }))
+    assert(not pcall(Config.build, { fullscreenRules = { "not a rule" } }))
+    assert(not pcall(Config.build, { fullscreenRules = { {} } }))
+    assert(not pcall(Config.build, {
+      fullscreenRules = { [2] = { bundleID = "com.example.App" } },
+    }))
+
+    for _, selector in ipairs({ "bundleID", "applicationName", "windowTitle" }) do
+      assert(not pcall(Config.build, { fullscreenRules = { { [selector] = "" } } }))
+    end
+    assert(not pcall(Config.build, { fullscreenRules = { { applicationName = "[" } } }))
+    assert(not pcall(Config.build, { fullscreenRules = { { windowTitle = "[" } } }))
+    assert(not pcall(Config.build, { fullscreenRules = { { predicate = true } } }))
+    assert(not pcall(Config.build, { fullscreenRules = { { bundleID = "com.example.App", unknown = true } } }))
+  end,
+
   ["shipped configuration example returns a complete valid table"] = function()
     local config = Config.build(Config.loadFile("10bucks.spoon/config.example.lua"))
     assert(config.initialLayout == "stack")
     assert(config.bar.rightInset == 24)
     assert(config.bar.menuBarHideDelay == 0.20)
     assert(config.bar.menuBarFadeDuration == 0.10)
+    assert(#config.fullscreenRules == 0)
     assert(config.hotkeys.chooseWindow[2] == "w")
     assert(config.hotkeys.deleteWorkspace[2] == "delete")
   end,

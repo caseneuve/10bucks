@@ -19,6 +19,7 @@ function Engine.new(dependencies)
   assert(dependencies.state and dependencies.repository and dependencies.workspaces and dependencies.config,
     "10bucks engine requires state, repository, workspaces, and config")
   dependencies.focusHistory = dependencies.focusHistory or FocusHistory.new()
+  dependencies.pendingFullscreen = dependencies.pendingFullscreen or {}
   return setmetatable(dependencies, Engine)
 end
 
@@ -32,12 +33,16 @@ function Engine:isDesktopContext(context)
   return self.workspaces:isDesktopSpace(context.spaceId)
 end
 
-function Engine:reflow(context)
+function Engine:reflow(context, eligibleWindows)
   context = context or self.repository:currentContext()
   if not self:isDesktopContext(context) then return false end
 
+  eligibleWindows = eligibleWindows or self.repository:eligibleWindows()
+  local windowsById = {}
+  for _, window in ipairs(eligibleWindows) do windowsById[window:id()] = window end
+
   local scope = self.state:scope(context)
-  self.state:prune(context, function(id) return self.repository:windowForId(id) ~= nil end)
+  self.state:prune(context, function(id) return windowsById[id] ~= nil end)
   local screenFrame = self.repository:screenFrame(context)
   if not screenFrame then return false end
 
@@ -52,7 +57,7 @@ function Engine:reflow(context)
   local columns = scope.layout == "stack" and 1 or 2
   for columnIndex = 1, columns do
     for _, id in ipairs(scope.columns[columnIndex].windows) do
-      local window = self.repository:windowForId(id)
+      local window = windowsById[id]
       local frame = useTwoColumns and frames[columnIndex] or frames[1]
       if window then self.repository:setFrame(window, frame, self.config.animationDuration) end
     end
@@ -60,12 +65,14 @@ function Engine:reflow(context)
   return true
 end
 
-function Engine:reflowAll()
-  for _, scope in pairs(self.state.scopes) do self:reflow(scope.context) end
+function Engine:reflowAll(eligibleWindows)
+  eligibleWindows = eligibleWindows or self.repository:eligibleWindows()
+  for _, scope in pairs(self.state.scopes) do self:reflow(scope.context, eligibleWindows) end
 end
 
 function Engine:start()
-  for _, window in ipairs(self.repository:eligibleWindows()) do
+  local eligibleWindows = self.repository:eligibleWindows()
+  for _, window in ipairs(eligibleWindows) do
     local context = self.repository:contextForWindow(window)
     if self:isDesktopContext(context) then
       -- Seed columns evenly so the initial two-column mode is useful immediately.
@@ -81,7 +88,7 @@ function Engine:start()
     and self.repository:isEligible(focused) then
     self.state:selectId(focusedContext, focused:id())
   end
-  self:reflowAll()
+  self:reflowAll(eligibleWindows)
   for _, context in ipairs(self.repository:activeContexts()) do
     local screen = self.repository:screenForContext(context)
     if screen then self.workspaces:rememberActiveDesktop(screen) end
@@ -113,29 +120,65 @@ function Engine:historyWindowForId(id)
   return self.repository:historyWindowForId(id)
 end
 
+function Engine:pendingFullscreenId(windowOrId)
+  if type(windowOrId) == "number" or type(windowOrId) == "string" then return windowOrId end
+  return windowOrId and windowOrId:id()
+end
+
+function Engine:isFullscreenPending(windowOrId)
+  local id = self:pendingFullscreenId(windowOrId)
+  return id ~= nil and self.pendingFullscreen[id] ~= nil
+end
+
+-- The ordinary admission path intentionally has no fullscreen policy. It is
+-- used for focus, restore, and Space reconciliation, where a window may have
+-- existed long before the callback arrived.
+function Engine:admitOrdinaryWindow(window, reflow)
+  if not window or not self.repository:isEligible(window) then return false end
+  local context = self.repository:contextForWindow(window)
+  if not self:isDesktopContext(context) then return false end
+  local id = window:id()
+  if self:isFullscreenPending(id) then return false, context end
+
+  -- State:addNewWindow owns the single unmanaged/membership check. Returning
+  -- the desktop context even when it declines insertion lets Space changes
+  -- collect their batched reflow scopes without another window lookup.
+  local admitted = self.state:addNewWindow(context, id)
+  if admitted and reflow ~= false then self:reflow(context) end
+  return admitted, context
+end
+
 function Engine:managedFocusedWindow()
   local window, context = self:focusedContext()
   if not window or not self:isDesktopContext(context) or not self.repository:isEligible(window) then return nil, context end
+  if self:isFullscreenPending(window) then return nil, context end
 
   local scope = self.state:scope(context)
   if scope.unmanaged[window:id()] then return nil, context end
-  self.state:addNewWindow(context, window:id())
+  self:admitOrdinaryWindow(window, false)
   self.state:selectId(context, window:id())
   return window, context
 end
 
+-- Creation is the single policy boundary for fullscreen spawn rules. Other
+-- lifecycle callbacks use admitOrdinaryWindow(), so an existing window can
+-- never be reconsidered for fullscreen merely because it gained focus.
 function Engine:windowCreated(window)
   if not window or not self.repository:isEligible(window) then return false end
   local context = self.repository:contextForWindow(window)
   if not self:isDesktopContext(context) then return false end
+  local id = window:id()
+  if self:isFullscreenPending(id) then return false end
   local scope = self.state:scope(context)
-  if scope.unmanaged[window:id()] or self.state:contains(context, window:id()) then return false end
+  if scope.unmanaged[id] or self.state:contains(context, id) then return false end
 
-  -- A second window always opens on the physical right. Once both columns are
-  -- populated, later windows join the stack the user currently has focused.
-  self.state:addNewWindow(context, window:id())
-  self:reflow(context)
-  return true
+  if self.repository:shouldSpawnFullscreen(window) then
+    -- Set this first: setFullScreen() can synchronously cause other callbacks.
+    self.pendingFullscreen[id] = window
+    if self.repository:requestFullscreen(window) then return true, "fullscreen-pending" end
+    self.pendingFullscreen[id] = nil
+  end
+  return self:admitOrdinaryWindow(window)
 end
 
 function Engine:windowFocused(window)
@@ -159,7 +202,9 @@ function Engine:windowFocused(window)
     return true
   end
 
-  self:windowCreated(window)
+  if self:isFullscreenPending(id) then return true end
+
+  self:admitOrdinaryWindow(window, false)
   self.state:selectId(context, id)
   -- Focus normally changes after a close. Reflow here as a recovery path for
   -- apps that tear down the old Accessibility window before its destroy event
@@ -235,6 +280,13 @@ function Engine:focusRecovery(recovery)
 end
 
 function Engine:windowUnavailable(id, destroyed)
+  if self.pendingFullscreen[id] then
+    self.pendingFullscreen[id] = nil
+    if destroyed then self.focusHistory:forget(id) end
+    -- A pending native transition has never joined the layout, so neither a
+    -- close nor a minimize may trigger focus recovery for it.
+    return true
+  end
   if destroyed then self.focusHistory:forget(id) end
   local removal = self.state:forgetWindow(id)
   if not removal then return false end
@@ -256,9 +308,46 @@ function Engine:windowMinimized(id)
 end
 
 function Engine:windowUnminimized(window)
-  -- A restored managed window returns through the normal admission path. This
-  -- restores the two-column split when it was the missing peer.
-  return self:windowCreated(window)
+  -- A restored managed window returns through ordinary admission. This restores
+  -- the two-column split when it was the missing peer without rerunning any
+  -- creation-only fullscreen policy.
+  return self:admitOrdinaryWindow(window)
+end
+
+-- Called by Lifecycle after native fullscreen completion. A completed window
+-- belongs to its fullscreen Space, not the desktop layout, so clearing the
+-- transition marker is sufficient.
+function Engine:fullscreenCompleted(window)
+  local id = self:pendingFullscreenId(window)
+  if not id or not self.pendingFullscreen[id] then return false end
+  self.pendingFullscreen[id] = nil
+  return true
+end
+
+-- Called once by Lifecycle's future transition timeout. A successful native
+-- transition needs no layout work; a failed one falls back to ordinary tiling
+-- only if this is still the same pending request.
+function Engine:fullscreenTransitionTimedOut(window)
+  local id = self:pendingFullscreenId(window)
+  if not id or not self.pendingFullscreen[id] then return false end
+  self.pendingFullscreen[id] = nil
+  if self.repository:isFullscreen(window) then return true end
+  return self:admitOrdinaryWindow(window)
+end
+
+-- A window leaving native fullscreen resumes ordinary desktop management. It
+-- intentionally bypasses shouldSpawnFullscreen(), otherwise manual exits
+-- would immediately request fullscreen again.
+function Engine:windowUnfullscreened(window)
+  self:fullscreenCompleted(window)
+  return self:admitOrdinaryWindow(window)
+end
+
+-- Lifecycle owns future timers; this lets stop/restart invalidate their engine
+-- state without adding any lifecycle subscriptions in this slice.
+function Engine:cancelFullscreenTransitions()
+  self.pendingFullscreen = {}
+  return self
 end
 
 function Engine:focus(id, context)
@@ -412,6 +501,7 @@ end
 
 function Engine:toggleManaged()
   local window, context = self:focusedContext()
+  if self:isFullscreenPending(window) then return false end
   if not window or not self:isDesktopContext(context) or not self.repository:isEligible(window) then
     self:notify("Focused window cannot be managed")
     return false
@@ -629,14 +719,15 @@ function Engine:workspaceChanged()
     end
     if self:isDesktopContext(context) then contexts[self.state:scopeKey(context)] = context end
   end
-  for _, window in ipairs(self.repository:eligibleWindows()) do
-    local context = self.repository:contextForWindow(window)
-    if self:isDesktopContext(context) then
-      self.state:addNewWindow(context, window:id())
-      contexts[self.state:scopeKey(context)] = context
-    end
+  local eligibleWindows = self.repository:eligibleWindows()
+  for _, window in ipairs(eligibleWindows) do
+    -- Reconcile through ordinary admission only: a Space switch must never
+    -- evaluate creation-only fullscreen rules. It resolves context once, and
+    -- reflow remains batched below even when State declines an insertion.
+    local _, context = self:admitOrdinaryWindow(window, false)
+    if context then contexts[self.state:scopeKey(context)] = context end
   end
-  for _, context in pairs(contexts) do self:reflow(context) end
+  for _, context in pairs(contexts) do self:reflow(context, eligibleWindows) end
   for _, pending in ipairs(returnFocuses) do self:focus(pending.id, pending.context) end
   return next(contexts) ~= nil
 end

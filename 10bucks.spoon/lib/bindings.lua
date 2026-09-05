@@ -22,6 +22,13 @@ local actions = {
   toggleManaged = function(engine) return engine:toggleManaged() end,
 }
 
+for index = 1, 9 do
+  local workspace = index
+  actions["focusWorkspace" .. workspace] = function(engine)
+    return engine:focusOrCreateWorkspaceNumber(workspace)
+  end
+end
+
 local modifierRanks = {
   cmd = 1,
   alt = 2,

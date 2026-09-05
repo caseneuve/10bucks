@@ -13,6 +13,7 @@ for $10.  Works, all things considered.
 - Tabbed stacks and two-column window layouts.
 - Keyboard-driven focus, layout, and divider controls.
 - Native macOS Space navigation, creation, and removal.
+- Configurable rules to open matching new windows in native macOS fullscreen.
 - A per-display status bar with workspace and layout state.
 - A fuzzy window picker and global previous-window focus.
 
@@ -58,10 +59,24 @@ All defaults use `Hyper` (`cmd` + `alt` + `ctrl` + `shift`).
 | `g`               | Swap the columns                                 |
 | `o`               | Move the focused window to the other stack       |
 | `n` / `p`         | Focus next / previously focused desktop          |
-| `u`, then `1`–`9` | Focus or create a numbered desktop               |
+| `1`–`9`           | Focus or create the corresponding numbered desktop |
+| `u`, then `1`–`9` | Choose a numbered desktop in selection mode     |
 | `w`               | Find and focus a window                          |
 | `delete`          | Remove the empty current desktop                 |
 | `r`               | Reflow the current screen/Space                  |
+
+## Rewrite design
+
+The current runtime is undergoing a POC-first selective redesign. The target contracts and replacement plan are documented in:
+
+- [`docs/invariants.md`](docs/invariants.md)
+- [`docs/architecture.md`](docs/architecture.md)
+- [`docs/rewrite-plan.md`](docs/rewrite-plan.md)
+- [`docs/performance.md`](docs/performance.md)
+- [`docs/macos-settings.md`](docs/macos-settings.md)
+- [`docs/pocs/`](docs/pocs/)
+
+These documents describe the approved target, not behavior already implemented by the legacy runtime.
 
 ## Development
 

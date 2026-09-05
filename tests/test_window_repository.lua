@@ -89,20 +89,34 @@ local function crossSpaceFocusFixture(options)
   return repository, target, state, scheduled, runNext
 end
 
-local function window(visible, title, bundleID, frame)
+local function window(visible, title, bundleID, frame, applicationName)
   return {
     id = function() return 1 end,
     frame = function() return frame end,
     isVisible = function() return visible end,
     isFullScreen = function() return false end,
     application = function()
-      return { bundleID = function() return bundleID or "com.example.App" end }
+      return {
+        bundleID = function() return bundleID or "com.example.App" end,
+        name = function() return applicationName or "Example App" end,
+      }
     end,
     role = function() return "AXWindow" end,
     subrole = function() return "AXStandardWindow" end,
     isStandard = function() return true end,
     title = function() return title end,
   }
+end
+
+local function fullscreenRepository(rules)
+  return WindowRepository.new({
+    window = { filter = requiredWindowFilter() },
+    screen = {},
+  }, {
+    excludedBundleIDs = {},
+    excludedWindowTitles = {},
+    fullscreenRules = rules,
+  })
 end
 
 return {
@@ -306,6 +320,103 @@ return {
     assert(#repository:allLiveWindows() == 0)
   end,
 
+  ["fullscreen spawn rules OR rules while ANDing their selectors"] = function()
+    local repository = fullscreenRepository({
+      { bundleID = "com.example.Other", windowTitle = "^Editor" },
+      {
+        bundleID = "com.example.Editor",
+        applicationName = "^Acme Editor$",
+        windowTitle = "^Editor %-% .+$",
+      },
+    })
+    local candidate = window(true, "Editor - notes", "com.example.Editor", nil, "Acme Editor")
+    assert(repository:shouldSpawnFullscreen(candidate))
+
+    local wrongTitle = window(true, "Editor", "com.example.Editor", nil, "Acme Editor")
+    assert(not repository:shouldSpawnFullscreen(wrongTitle))
+  end,
+
+  ["fullscreen bundle selectors are exact matches"] = function()
+    local repository = fullscreenRepository({ { bundleID = "com.example.App" } })
+    assert(repository:shouldSpawnFullscreen(window(true, "Document", "com.example.App")))
+    assert(not repository:shouldSpawnFullscreen(window(true, "Document", "com.example.App.beta")))
+  end,
+
+  ["fullscreen application names and titles use Lua patterns"] = function()
+    local repository = fullscreenRepository({
+      { applicationName = "^Terminal %d+$", windowTitle = "^Build %d+%%$" },
+    })
+    assert(repository:shouldSpawnFullscreen(window(true, "Build 100%", "com.example.Terminal", nil, "Terminal 2")))
+    assert(not repository:shouldSpawnFullscreen(window(true, "Build done", "com.example.Terminal", nil, "Terminal 2")))
+  end,
+
+  ["fullscreen predicates receive matching windows after declarative selectors"] = function()
+    local calls, received = 0, nil
+    local candidate = window(true, "Focus", "com.example.App")
+    local repository = fullscreenRepository({
+      {
+        bundleID = "com.example.Other",
+        predicate = function() error("predicate must be short-circuited") end,
+      },
+      {
+        windowTitle = "^Not Focus$",
+        predicate = function() error("predicate must be short-circuited") end,
+      },
+      {
+        bundleID = "com.example.App",
+        predicate = function(value)
+          calls = calls + 1
+          received = value
+          return true
+        end,
+      },
+    })
+
+    assert(repository:shouldSpawnFullscreen(candidate))
+    assert(calls == 1 and received == candidate)
+  end,
+
+  ["fullscreen selectors do not match absent window metadata"] = function()
+    local repository = fullscreenRepository({
+      { bundleID = "com.example.App" },
+      { applicationName = "^Example App$" },
+      { windowTitle = "^Document$" },
+    })
+    local missingMetadata = {
+      application = function() return nil end,
+      title = function() return nil end,
+    }
+
+    assert(not repository:shouldSpawnFullscreen(missingMetadata))
+    assert(not fullscreenRepository({}):shouldSpawnFullscreen(window(true, "Document")))
+    assert(not WindowRepository.new({ window = { filter = requiredWindowFilter() }, screen = {} }, {
+      excludedBundleIDs = {}, excludedWindowTitles = {},
+    }):shouldSpawnFullscreen(window(true, "Document")))
+  end,
+
+  ["fullscreen requests safely report whether they were issued"] = function()
+    local calls = 0
+    local repository = fullscreenRepository({})
+    local successful = {
+      setFullScreen = function(_, enabled)
+        assert(enabled == true)
+        calls = calls + 1
+      end,
+    }
+    assert(repository:requestFullscreen(successful))
+    assert(calls == 1)
+    assert(not repository:requestFullscreen({}))
+    assert(not repository:requestFullscreen({ setFullScreen = function() error("unavailable") end }))
+  end,
+
+  ["fullscreen state queries safely preserve boolean state"] = function()
+    local repository = fullscreenRepository({})
+    assert(repository:isFullscreen({ isFullScreen = function() return true end }))
+    assert(repository:isFullscreen({ isFullScreen = function() return false end }) == false)
+    assert(repository:isFullscreen({}) == false)
+    assert(repository:isFullscreen({ isFullScreen = function() error("unavailable") end }) == false)
+  end,
+
   ["title patterns exclude matching ordinary windows"] = function()
     local pictureInPicture = window(true, "Picture in Picture")
     local repository = WindowRepository.new({ window = { filter = requiredWindowFilter() }, screen = {} }, {
@@ -352,9 +463,9 @@ return {
     local repository, target, state, scheduled, runNext = crossSpaceFocusFixture()
 
     assert(repository:focus(target))
-    assert(not state.focused and state.toggles == 0)
-    assert(runNext() == 0.01)
-    assert(state.toggles == 1 and not state.focused)
+    assert(not state.focused and state.toggles == 1)
+    assert(#scheduled == 1 and scheduled[1].delay == 0.025)
+    assert(scheduled[1].delay ~= 0.01)
     assert(runNext() == 0.025)
     assert(runNext() == 0.3)
     assert(state.pressed and not state.focused)
@@ -368,7 +479,8 @@ return {
     local repository, target, state, scheduled, runNext = crossSpaceFocusFixture({ transientPressFailure = true })
 
     assert(repository:focus(target))
-    assert(runNext() == 0.01)
+    assert(state.toggles == 1 and #scheduled == 1)
+    assert(scheduled[1].delay == 0.025 and scheduled[1].delay ~= 0.01)
     assert(runNext() == 0.025)
     assert(runNext() == 0.3)
     assert(not state.focused and state.pressAttempts == 1 and state.toggles == 1)
@@ -383,8 +495,8 @@ return {
     local repository, target, state, scheduled, runNext = crossSpaceFocusFixture({ noMissionControlTree = true })
 
     assert(repository:focus(target))
-    assert(runNext() == 0.01)
     assert(state.toggles == 1 and #scheduled == 1)
+    assert(scheduled[1].delay == 0.025 and scheduled[1].delay ~= 0.01)
     local stale = scheduled[1]
     repository:stop()
     assert(stale.stopped and state.toggles == 2)

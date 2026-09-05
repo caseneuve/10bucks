@@ -8,6 +8,10 @@ on the same date appends `.N`, for example `2026.08.22.2`.
 
 ## [Unreleased]
 
+### Added
+
+- Added `fullscreenRules` to open newly created matching windows in native macOS fullscreen.
+
 ## [2026.08.26-alpha.1] - 2026-08-26
 
 ### Added
