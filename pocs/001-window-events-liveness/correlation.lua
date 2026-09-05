@@ -57,11 +57,10 @@ function Correlation:alias_for_window(raw_window_id)
   return self.aliases_by_window[tostring(raw_window_id)]
 end
 
-function Correlation:destroy(raw_window_id)
-  local key, alias = tostring(raw_window_id), self.aliases_by_window[tostring(raw_window_id)]
-  self.aliases_by_window[key] = nil
-  if alias then self.armed_generation, self.consumed = nil, false end
-  return alias
+function Correlation:count()
+  local count = 0
+  for _ in pairs(self.aliases_by_window) do count = count + 1 end
+  return count
 end
 
 function Correlation:clear()

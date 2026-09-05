@@ -117,10 +117,11 @@ pure tests, static checks, and build verification:
    have the frozen prefix/length. A missing peer, duplicate alias, malformed
    alias, or unequal aliases is a failure. Timing is reported only as a
    separate performance observation and cannot form or repair a join.
-4. **Cleanup:** fixture close/shutdown and observer stop/startup failure/sample
-   timeout clear raw token/value references, alias/native mappings, armed
-   generation, and the callback subscription. There is no timer, poll, global
-   scan, or production state.
+4. **Cleanup:** destruction callbacks remain candidate-only and do not clear
+   correlation mappings. After close analysis, explicit observer sample
+   cleanup (and observer stop/startup failure) clears raw token/value
+   references, alias/native mappings, armed generation, and the callback
+   subscription. There is no timer, poll, global scan, or production state.
 
 **Hypothesis:** the public AppKit identifier appears as the same callback
 window's `AXIdentifier`, allowing the two independently calculated aliases to

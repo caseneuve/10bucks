@@ -27,6 +27,8 @@ local allowed_keys = {
   target_relation = true, action_target_status = true, active_generation = true,
   fullscreen_status = true,
   correlation_alias = true,
+  correlation_map_count = true,
+  correlation_armed = true,
 }
 
 local function safe_token(value)

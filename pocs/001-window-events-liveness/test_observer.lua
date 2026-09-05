@@ -439,8 +439,11 @@ return {
     state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
     state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
     equal(constructions, 1); equal(reads, 1)
+    equal(observer:status().query_counters.steady.correlation_fixture_bundle_scope, 1)
     equal(observer:status().query_counters.steady.correlation_window_element_construction, 1)
     equal(observer:status().query_counters.steady.correlation_ax_identifier_read, 1)
+    local scoped = events(observer, "correlation_fixture_bundle_scoped")[1]
+    equal(scoped.result, "matched"); assert(type(scoped.duration_ms) == "number")
     local matched = events(observer, "correlation_observed"); equal(#matched, 1)
     equal(matched[1].correlation_alias, "poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac")
     local rendered = require("trace").encode_json(observer.trace:export_table())
@@ -462,7 +465,30 @@ return {
     state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
     state.filter.subscriptions.windowDestroyed(window, nil, "windowDestroyed")
     local destroyed = events(observer, "destruction_candidate"); equal(destroyed[#destroyed].correlation_alias, "poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac")
-    assert(not observer.correlation:alias_for_window("991")); observer:stop(); assert(not observer.correlation:alias_for_window("991"))
+    equal(observer:status().correlation.map_count, 1); assert(observer:finish_fixture_correlation())
+    equal(observer:status().correlation.map_count, 0); equal(observer:status().correlation.armed, false)
+    observer:stop(); equal(observer:status().correlation.map_count, 0)
+  end,
+  ["POC-001 direct-first and filter-first destruction candidates retain the same correlation alias until finish"] = function()
+    for _, first in ipairs({ "direct", "filter" }) do
+      local window = fake_window(first == "direct" and 993 or 994, complete_metadata())
+      local application = fake_application(93, {}, "local.poc001.fixture")
+      window.application = function() return application end
+      local state = install_fake_hs({ application }); package.loaded.observer = nil
+      hs.hash = { SHA256 = function() return "83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac" end }
+      hs.axuielement = { windowElement = function() return { attributeValue = function() return "corr-AAAAAAAAAAAAAAAA" end } end }
+      local observer = require("observer").new(); assert(observer:start())
+      application.watcher.callback(window, "AXWindowCreated")
+      assert(observer:arm_fixture_correlation(1)); state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
+      if first == "direct" then window.watcher.callback(window, "AXUIElementDestroyed"); state.filter.subscriptions.windowDestroyed(window, nil, "windowDestroyed")
+      else state.filter.subscriptions.windowDestroyed(window, nil, "windowDestroyed"); window.watcher.callback(window, "AXUIElementDestroyed") end
+      local candidates, paired = events(observer, "destruction_candidate"), events(observer, "destruction_paired_candidate")
+      equal(#candidates, 2); equal(#paired, 1)
+      for _, candidate in ipairs(candidates) do equal(candidate.correlation_alias, "poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac") end
+      equal(paired[1].correlation_alias, "poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac")
+      equal(observer:status().correlation.map_count, 1); observer:finish_fixture_correlation(); equal(observer:status().correlation.map_count, 0)
+      observer:stop()
+    end
   end,
   ["POC-001 fixture correlation unresolved callbacks consume the generation without prohibited fallback reads"] = function()
     local window = fake_window(992, complete_metadata())

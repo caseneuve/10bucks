@@ -47,10 +47,10 @@ return {
     joined, reason = Correlation.join_aliases("poc001-corr-sha256-not-a-digest", local_alias)
     equal(joined, false); equal(reason, "malformed_alias")
   end,
-  ["POC-001 correlation destruction and stop clear in-memory aliases"] = function()
+  ["POC-001 correlation candidates retain aliases until explicit cleanup"] = function()
     local model = Correlation.new(sha256); assert(model:arm(1)); model:consume("101", "corr-AAAAAAAAAAAAAAAA")
-    equal(model:destroy("101"), local_alias); assert(not model:alias_for_window("101"))
-    assert(model:arm(2)); model:consume("102", "corr-7777777777777777"); model:clear()
-    assert(not model:alias_for_window("102")); equal(model:state().armed_generation, nil)
+    equal(model:alias_for_window("101"), local_alias); equal(model:count(), 1)
+    model:clear()
+    assert(not model:alias_for_window("101")); equal(model:count(), 0); equal(model:state().armed_generation, nil)
   end,
 }

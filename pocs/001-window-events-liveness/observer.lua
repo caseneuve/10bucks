@@ -259,19 +259,18 @@ function Observer:_stop_window_watcher(key, reason)
   self.window_watchers[key] = nil
 end
 
-function Observer:_destruction_candidate(app, window, source, event)
+function Observer:_destruction_candidate(app, window, source, event, raw_window)
   if not window then return end
   local candidates = self.destruction_candidates[window] or {}
   if candidates[source] then return end
   candidates[source], self.destruction_candidates[window] = true, candidates
   local relation = "no_active_target"
   if self.active_target_action then relation = self.active_target_action.window == window and "target" or "non_target" end
-  local raw_window = self.window_raw_by_alias[window]
-  local correlation_alias = raw_window and self.correlation:destroy(raw_window) or nil
+  local correlation_alias = raw_window and self.correlation:alias_for_window(raw_window) or nil
   self.trace:emit("destruction_candidate", { source = source, app = app, window = window, raw_event = event, target_relation = relation, correlation_alias = correlation_alias, result = "candidate_only" })
   if candidates.direct_ax and candidates.filter and not candidates.paired then
     candidates.paired = true
-    self.trace:emit("destruction_paired_candidate", { source = "poc001", app = app, window = window, raw_event = event, target_relation = relation, result = "paired_candidate_only" })
+    self.trace:emit("destruction_paired_candidate", { source = "poc001", app = app, window = window, raw_event = event, target_relation = relation, correlation_alias = correlation_alias, result = "paired_candidate_only" })
   end
 end
 
@@ -312,7 +311,7 @@ function Observer:_observe_direct_window(app_key, app_alias, element, raw_event,
             end
           end
         end
-        if event == "AXUIElementDestroyed" then self:_destruction_candidate(app_alias, window_alias, "direct_ax", event); self:_forget_window_identity(raw_key); self:_stop_window_watcher(key, "element_destroyed") end
+        if event == "AXUIElementDestroyed" then self:_destruction_candidate(app_alias, window_alias, "direct_ax", event, raw_key); self:_forget_window_identity(raw_key); self:_stop_window_watcher(key, "element_destroyed") end
       end)
       if not callback_ok then self:_fact("callback_error", { source = "direct_ax_window", error_class = "runtime_error" }) end
       self.trace:callback_exit("direct_ax_window", event, { app = app_alias, window = window_alias, reason = "window_watcher_callback" })
@@ -409,17 +408,21 @@ function Observer:_start_application_watcher()
 end
 
 function Observer:_fixture_bundle_matches(application)
-  if not application or type(application.bundleID) ~= "function" then return false end
-  local ok, bundle_id = protected(function() return application:bundleID() end)
-  return ok and bundle_id == FIXTURE_BUNDLE_ID
+  local began = monotonic_ms()
+  self.trace:query("correlation_fixture_bundle_scope", "correlation.fixture_bundle_scope", "steady")
+  local ok, bundle_id = false, nil
+  if application and type(application.bundleID) == "function" then ok, bundle_id = protected(function() return application:bundleID() end) end
+  local matches = ok and bundle_id == FIXTURE_BUNDLE_ID
+  self.trace:emit("correlation_fixture_bundle_scoped", { source = "window_filter", duration_ms = monotonic_ms() - began, result = matches and "matched" or "unmatched" })
+  return matches
 end
 
 function Observer:_observe_fixture_correlation(raw_id, application, callback_window)
   if not self.correlation or self.correlation:state().armed_generation == nil then return end
+  if self.correlation:state().consumed then return end
   -- The exact fixture bundle merely scopes this already-delivered callback. It
   -- is not correlation evidence and is never traced or exported.
   if not self:_fixture_bundle_matches(application) then return end
-  if self.correlation:state().consumed then return end
   local began = monotonic_ms()
   self.trace:query("correlation_window_element_construction", "correlation.windowElement", "steady")
   local constructed, element = protected(function() return hs.axuielement.windowElement(callback_window) end)
@@ -464,7 +467,7 @@ function Observer:_start_filter()
         local trigger = event == "windowMoved" and "window_filter_window_move" or "window_filter_readiness"
         self:_read_space_ownership(app_alias, window_alias, tostring(raw_id), event, "steady", trigger)
       end
-      if event == "windowDestroyed" then self:_destruction_candidate(app_alias, window_alias, "filter", event); self:_forget_window_identity(raw_id) end
+      if event == "windowDestroyed" then self:_destruction_candidate(app_alias, window_alias, "filter", event, raw_id); self:_forget_window_identity(raw_id) end
     end)
     if not callback_ok then self:_fact("callback_error", { source = "window_filter", error_class = "runtime_error" }) end
     self.trace:callback_exit("window_filter", event)
@@ -557,6 +560,13 @@ function Observer:arm_fixture_correlation(generation)
   return armed, reason
 end
 
+function Observer:finish_fixture_correlation()
+  assert(self.trace, "start the POC before finishing correlation")
+  self.correlation:clear()
+  self.trace:emit("correlation_finished", { source = "operator", correlation_armed = false, correlation_map_count = 0, result = "cleaned" })
+  return true
+end
+
 function Observer:stop()
   if not self.running then return false, "already_stopped" end
   self:_delete_target_binding_hotkey("observer_stop")
@@ -647,6 +657,8 @@ end
 function Observer:status()
   if not self.trace then return { lifecycle = "not_started", target_binding_armed = false } end
   local status = self.trace:status(); status.active_timers, status.window_effects, status.direct_application_watchers, status.direct_window_watchers, status.spaces_watcher_active, status.target_binding_armed = self.active_timers, self.window_effects, 0, 0, self.spaces_watcher ~= nil, self.target_binding_hotkey ~= nil
+  local correlation_state = self.correlation and self.correlation:state() or {}
+  status.correlation = { armed = correlation_state.armed_generation ~= nil, map_count = self.correlation and self.correlation:count() or 0 }
   for _ in pairs(self.app_watchers) do status.direct_application_watchers = status.direct_application_watchers + 1 end; for _ in pairs(self.window_watchers) do status.direct_window_watchers = status.direct_window_watchers + 1 end
   return status
 end
