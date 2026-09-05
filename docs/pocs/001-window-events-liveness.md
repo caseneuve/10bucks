@@ -6,10 +6,13 @@ hypothesis
 This remains a pre-run protocol. A disposable POC-only observer currently
 exists through step 2C (source comparison, targeted metadata/Space reads, and
 pure correlation); no production runtime changed. Terminal manual regular-Space
-move retry 005 is recorded below as narrow evidence only. The next authorized
-action is the human-gated Chromium creation/focus/destruction sample 006 in
-[`pocs/001-window-events-liveness/README.md`](../../pocs/001-window-events-liveness/README.md).
-It does not authorize the remaining live matrix.
+move retry 005 and Chromium sample 006 are recorded below as narrow evidence
+only. POC-001 remains `hypothesis`: neither sample selects a source or
+destruction authority, establishes an action-to-detection latency result, or
+advances the remaining live matrix. The companion
+[`pocs/001-window-events-liveness/README.md`](../../pocs/001-window-events-liveness/README.md)
+now records a separately gated fixture proposal; **this documentation checkpoint
+authorizes no fixture implementation or live action**.
 
 ## Decision enabled
 Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,
@@ -43,13 +46,18 @@ below being missed.
 ## Environment
 
 The following are **observed environment values**, not stable detection
-contracts. They identify the next human-gated sample only.
+contracts. Except where a result explicitly records its run-start values, they
+provide host context only and do not identify a sample's execution environment.
 
 - **Observed** (`sw_vers`): macOS 26.5, build `25F71`.
 - **Observed** (`uname`; `hs.screen`): `arm64`; one Built-in Retina Display.
 - **Observed** (`hs.processInfo`): Hammerspoon 1.1.1.
-- **Observed** (`git rev-parse --short HEAD`; `git branch --show-current`):
-  10bucks commit `5a03f04` on `dev-poc-001-window-events-liveness`.
+- **Observed, earlier pre-sample capture** (`git rev-parse --short HEAD`; `git
+  branch --show-current`): 10bucks commit `5a03f04` on
+  `dev-poc-001-window-events-liveness`. This is not asserted to be the
+  Chromium sample 006 execution revision; its retained aggregate below does
+  not include a commit field. Every future live sample must record its actual
+  execution commit and branch at run start.
 - **Observed** (`csrutil status`): SIP enabled.
 - **Observed** (`defaults`): menu auto-hide value `1`; `mru-spaces` value `0`;
   separate Spaces `true`.
@@ -164,17 +172,16 @@ eligibility/admission marker; POC-001 issues zero frame effects.
 ### 3. Guided matrix
 
 The full matrix below remains **pending**. The first Terminal-only calibration
-was diagnostic-only and retry 005 is narrow move evidence only. The operator
-guide separately authorizes exactly one next human-gated Chromium-only sample
-006: create two new blank temporary windows as unmeasured setup, bind/focus/
-cover them, and close only the bound temporary windows. Do not advance to
-minimize/hide/restore, fullscreen, Space movement, cold bootstrap/reload, rapid
-repetitions, another app, or the representative-app matrix without a new
-approved handoff. Existing Chrome windows/tabs remain untouched and true
-Chromium last-window behavior is not authorized. For Terminal and the Chromium
-representative first, then each remaining representative app where its UI
-supports the action, run the following and retain every event order, including
-failures and late callbacks:
+was diagnostic-only, retry 005 is narrow move evidence only, and Chromium
+sample 006 is the completed narrow create/focus/covered/two-temporary-close
+sample recorded in Results. Do not infer authorization for minimize/hide/
+restore, fullscreen, Space movement, cold bootstrap/reload, rapid repetitions,
+another app, true Chromium last-window behavior, or the representative-app
+matrix. The next possible fixture experiment is only a proposal in the POC
+README and requires a separate approval before implementation or any live run.
+For Terminal and the Chromium representative first, then each remaining
+representative app where its UI supports the action, run the following and
+retain every event order, including failures and late callbacks:
 
 1. Mark `create_first`, then create a first and an additional standard window;
    exercise focus/unfocus and rapid create → focus → close. Run warm creation
@@ -520,9 +527,62 @@ or broad POC pass/fail result.
   duplicate-callback coalescing, a production algorithm, or detection for a
   move where neither source nor destination activates. That inactive/no-
   activation case remains unknown.
-- The next authorized live action is Chromium-only sample 006 in the POC
-  README. It uses new blank temporary windows only; existing Chrome state is
-  untouched, and true Chromium last-window behavior remains pending.
+- Chromium sample 006 is recorded below. Its two temporary closes do not make
+  a true Chromium last-window result; that behavior remains pending. No next
+  live action is authorized by this document.
+
+### Chromium create/focus/destruction sample 006 — redacted aggregates
+
+**Observed, narrow only:** the private, schema-valid
+`chromium-create-focus-destroy-006` export was analyzed locally and is not
+committed. It contains no raw IDs, titles, URLs, or AX values in this document.
+The observer stopped cleanly, no callbacks remained open, and its final
+`cleanup_complete` count was zero.
+
+- The two destructive binds resolved two distinct temporary-window aliases
+  (called **first bound temporary window** and **second bound temporary
+  window** here). The retained regular owner at each bind was confirmed. No
+  application alias is retained in this result.
+- Both temporary closes produced one filter `windowDestroyed` candidate and
+  one direct `AXUIElementDestroyed` candidate for the bound target. Filter was
+  first in both pairs; direct followed by **0.278 ms** and **0.507 ms**,
+  respectively. The filter missed neither observed close. These remain paired
+  candidates only: there was no `destruction_confirmed`, authority selection,
+  or general delivery guarantee.
+- The protocol's covered-window marker did not name an alias. For the eventual
+  first bound close target, no destruction candidate appeared before its close
+  pair. That is no false-destruction observation for this eventual target, not
+  proof that every covered window is safe.
+- There is no controlled native-close completion marker, so there is no
+  confirmation/latency result. The sample intentionally excluded a true
+  last-Chromium-window close.
+- Completed callback processing duration was **n=230**, median **3.862 ms**,
+  nearest-rank p95 **33.013 ms**, maximum **91.586 ms**. These are harness
+  processing durations, not callback-arrival or next-key-service latency.
+- The 130-callback `AXWindowResized` burst produced 650 direct-window query
+  attempts (five per callback). Fourteen non-coalesced active-Space,
+  known-window-only sweeps occurred on the prescribed chat-switch path; each
+  covered 6–8 known aliases and used 10–14 ownership queries (181 total).
+- The export reports zero POC-issued steady global queries; it contains no
+  timer creation/cancellation/fire, permanent poll, or POC window effect.
+  This does not settle the separately recorded framework-internal filter
+  refresh caveat.
+
+**Target instrumentation correction, evidence-driven:** the observed resize
+amplification justifies narrowing only the direct `AXWindowResized` ownership
+path. Resize still reads targeted minimized/fullscreen properties. It probes
+Space ownership only when `native_fullscreen` is newly known or changes from
+its cached value; unchanged successful reads emit
+`ownership_check_skipped` with `reason=resize_fullscreen_unchanged`.
+`AXWindowMoved` continues to probe ownership on every event. If the fullscreen
+method is unavailable, the observer records `metadata_uncertain` and an
+explicit non-effecting skipped record (the same reason with
+`fullscreen_status=unavailable`); it intentionally retains prior confirmed
+ownership rather than inferring a move, liveness change, or destruction. This
+is POC instrumentation only, not a production adapter decision. Pure-fake
+coverage verifies repeated same-fullscreen resize skips, both fullscreen
+transitions probe, moved always probes, and unavailable resize is
+non-destructive.
 
 ## Conclusion
 Pending. This protocol proves no macOS/Hammerspoon behavior yet.
@@ -536,11 +596,13 @@ check; it does not justify treating absence from `_orderedwinids()` or a global
 snapshot as death.
 
 ## Cleanup
-The step-2C POC-only observer is intentionally retained for the approved
-pending Terminal calibration and the remaining POC-001 operator matrix; it is
-not production code. The calibration must stop the observer, export locally,
-and restore legacy bindings before legacy starts; later matrix actions remain
-unapproved until separately handed off. Its isolated traces and any temporary
-timers/watchers used by later runs are deleted before a production replacement
-unless a named reusable diagnostic has an ongoing owner, a documented use, and
-measured negligible idle cost.
+The step-2C POC-only observer is retained for evidence already collected and
+for any separately approved future POC-001 run; it is not production code.
+There is no currently authorized live operator action. Every future run must
+stop the observer, export locally, and restore legacy bindings before legacy
+starts. Its isolated traces and any temporary timers/watchers used by later
+runs are deleted before a production replacement unless a named reusable
+diagnostic has an ongoing owner, a documented use, and measured negligible idle
+cost. The proposed standalone fixture in the POC README has no implementation
+in this checkpoint and, if later approved, must be removed with its POC-only
+artifacts unless separately retained under the same gate.

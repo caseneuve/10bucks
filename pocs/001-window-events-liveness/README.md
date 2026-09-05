@@ -1,178 +1,137 @@
-# POC-001 observer — Chromium create/focus/destruction handoff
+# POC-001 — proposed AppKit timing fixture (separately gated)
 
-This is a **human-gated, disposable, read-only comparison harness**, not
-10bucks runtime code. It authorizes only sample
-`chromium-create-focus-destroy-006`; it does not authorize the remaining
-POC-001 matrix, source selection, true last-window testing, or a latency claim.
+**Status: proposal only.** Chromium sample 006 is complete and its narrow,
+redacted aggregates are now in the canonical
+[`docs/pocs/001-window-events-liveness.md`](../../docs/pocs/001-window-events-liveness.md).
+POC-001 remains `hypothesis`. **This documentation checkpoint authorizes no
+fixture implementation, build, launch, Hammerspoon reload, observer load, or
+live action.** A later explicit handoff must approve the implementation and
+live procedure separately.
 
-## Safety and setup — unmeasured
+## Decision the proposal would inform
 
-**Do not touch existing Chrome windows or tabs.** Before the observer starts,
-the human—not the harness—must create two new, visibly distinguishable blank
-Incognito windows. If Incognito is unavailable, create two new, visibly
-distinguishable blank temporary Chrome windows instead. Keep at least one
-pre-existing Chrome window open and untouched, so neither temporary close is a
-true Chromium last-window case. Abort if existing Chrome state cannot remain
-untouched or the two temporary windows cannot be distinguished.
+The current Chromium result has paired destruction candidates but no controlled
+native close-completion marker and no pending-work service measurement. This
+proposal would provide a small, controlled timestamp source for *a fixture's
+own* native AppKit create/close lifecycle, plus a probe that establishes when
+its queued pending work is serviced. It would only make a later timing
+experiment possible; it does not select an event source, destruction authority,
+production adapter, or native replacement.
 
-No setup action is measured. Do not quit Chrome; close an existing Chrome
-window; test a true last-app-window; minimize, hide, fullscreen, or move a
-window between Spaces; or use app hide. The observer issues no window effects.
+## Frozen scope
 
-Create the private destination before loading the observer:
+If separately approved, create one standalone, disposable macOS AppKit fixture
+under `pocs/001-window-events-liveness/fixture/` (or an equally POC-local path
+named in that approval). Its entire scope is:
 
-```sh
-umask 077
-mkdir -p /tmp/poc-001-chromium-create-focus-destroy-006
-chmod 700 /tmp/poc-001-chromium-create-focus-destroy-006
-test "$(stat -f '%Sp' /tmp/poc-001-chromium-create-focus-destroy-006)" = "drwx------"
-```
+1. create a uniquely labelled temporary native fixture window on explicit
+   operator request;
+2. close that fixture window on explicit operator request;
+3. emit monotonic timestamps for the fixture's request, native create
+   completion, close request, and native close completion; and
+4. accept one explicit pending-work probe and emit its request and service
+   timestamps.
 
-Export path:
+The fixture may use public AppKit/Foundation APIs only unless a later approval
+names and justifies a narrower exception. Timestamps must use one documented
+monotonic native clock, with its units and conversion recorded in the trace.
+"Completion" must name the exact AppKit callback/hook observed; it must not be
+substituted with a visual guess, a sleep, window ordering, or an Accessibility
+snapshot.
 
-```text
-/tmp/poc-001-chromium-create-focus-destroy-006/chromium-create-focus-destroy-006.json
-```
+The fixture must expose a machine-readable, privacy-safe trace with a run ID,
+sample ID, event name, sequence, monotonic timestamp, and a fixture-local
+window token. It may also print a concise operator status line. The pending-work
+probe must identify the explicit queue/run-loop mechanism and record both its
+request and actual service point. It must not claim to measure Hammerspoon
+hotkey service unless a separately approved integration delivers and records
+that exact boundary.
 
-## Orchestrator start
+## Explicit exclusions and isolation
 
-Use Hammerspoon Console Lua. Do not edit `~/.hammerspoon/init.lua` or call
-`hs.reload`.
+This is not production code and must never be loaded, packaged, installed, or
+called by `10bucks.spoon`, its configuration, tests, release artifact, or
+runtime startup path. It must not be a shadow/compatibility implementation of
+window observation, liveness, destruction, Space ownership, focus, layout, or
+any production effect.
 
-```lua
-spoon["10bucks"]:stop()
-assert(spoon["10bucks"].started == false, "legacy 10bucks is still started; abort")
-if poc001 ~= nil then pcall(function() poc001:stop() end) end
-poc001 = nil
-package.loaded["observer"] = nil
-poc001_root = "/Users/piotr/Git/10bucks/pocs/001-window-events-liveness"
-package.path = poc001_root .. "/?.lua;" .. package.path
-poc001 = require("observer")
-assert(poc001:start())
-assert(poc001:status().lifecycle == "running", "observer did not start")
-assert(poc001:status().active_timers == 0, "observer unexpectedly has timers")
-assert(poc001:status().window_effects == 0, "observer issued a window effect")
-assert(poc001:status().target_binding_armed == false, "binder unexpectedly armed")
-```
+The fixture must not:
 
-`⌃⌥⌘B` means hold physical Control, Option/Alt, and Command, then tap **B**
-once. The one-shot binder deletes itself before its one focus read. It can be
-armed again only after the prior bound action is marked complete; it rejects
-while armed or while a target action remains active.
+- observe, enumerate, attach to, move, focus, minimize, hide, fullscreen,
+  resize, close, or otherwise affect a non-fixture window;
+- use `hs`, Accessibility APIs, private Spaces APIs, polling, a privileged
+  helper, root access, disabled SIP, login items, background agents, or
+  persistent services;
+- modify Hammerspoon configuration or reload Hammerspoon;
+- make a Chromium, Terminal, or representative-app claim; or
+- add a production dependency, feature flag, fallback, or second runtime path.
 
-## Exact measured actions — return to chat after each action
+A later integration experiment with the POC observer, if needed, is a distinct
+gate and must retain these restrictions unless its approval explicitly changes
+them. The fixture's own timestamps cannot validate callback delivery or
+liveness for another application.
 
-Sample ID: `chromium-create-focus-destroy-006`. The user returns to chat after
-each numbered action. Do not improvise or combine steps.
+## Separately gated implementation handoff
 
-1. **Bind front temporary blank (non-destructive).** The orchestrator runs:
+Before any code is written, an approver must freeze all of the following in a
+new handoff (not by editing this proposal during a run):
 
-   ```lua
-   assert(poc001:arm_target_action("chromium-create-focus-destroy-006", "bind_front_temporary_blank"))
-   ```
+- fixture language/toolchain, supported macOS build, signing/quarantine
+  handling, and the exact public completion hooks;
+- the exact command/operator sequence, sample IDs, warm/cold definitions, and
+  stop conditions;
+- trace schema, monotonic-clock conversion, output directory, and the precise
+  pending-work queue/run-loop mechanism;
+- whether and how a later POC-only observer correlation receives fixture
+  tokens, without exposing raw native IDs; and
+- fixed acceptance thresholds and the planned result-document location.
 
-   The human clicks the front temporary blank Chrome window and presses
-   `⌃⌥⌘B` once, then returns to chat. The orchestrator verifies disarm and marks
-   that completed binding:
+No live run may start until that handoff also names an operator, confirms that
+legacy 10bucks is not being exercised concurrently if Hammerspoon is involved,
+and confirms a clean fixture build/output location. The current README is not
+that handoff.
 
-   ```lua
-   assert(poc001:status().target_binding_armed == false, "binder remained armed")
-   poc001:mark("chromium-create-focus-destroy-006", "manual_visual_complete", "bind_front_temporary_blank")
-   ```
+## Proposed acceptance measurements
 
-2. **Focus the other temporary blank.** The human focuses only the other
-   temporary blank Chrome window, then returns to chat. The orchestrator marks:
+These are measurement requirements for the future approval, not pass criteria
+claimed now. That approval must set numeric thresholds before collecting data.
+For each declared warm/cold create and close class, it must retain count,
+median, nearest-rank p95, maximum, timeout count, and late completion count for:
 
-   ```lua
-   poc001:mark("chromium-create-focus-destroy-006", "manual_visual_complete", "focus_other_temporary_blank")
-   ```
+- fixture create request → named native create completion;
+- fixture close request → named native close completion; and
+- pending-work probe request → named service point.
 
-3. **Cover for five seconds.** Using only the two temporary blank windows,
-   completely cover one with the other for five seconds. Do not minimize,
-   hide, fullscreen, or move Spaces. Then return to chat. The orchestrator
-   marks:
+It must also record callback/event ordering, duplicate/missing completion
+signals, fixture process exit, active timers/polls (expected zero unless the
+future approval explicitly permits a bounded timeout), and cleanup outcome.
+At least 30 warm samples and 5 cold samples are proposed for each meaningful
+non-destructive class; any smaller destructive sample count must be justified
+and cannot support a broad percentile claim. A failed, timed-out, or late
+sample remains in the aggregate. These measurements establish only the stated
+fixture behavior and service point.
 
-   ```lua
-   poc001:mark("chromium-create-focus-destroy-006", "manual_visual_complete", "cover_temporary_blank_5s")
-   ```
+## Privacy, cleanup, and failure handling
 
-4. **Bind and close the front temporary blank.** This is destructive, so it
-   requires a new target binding. The orchestrator arms:
+Use a generic fixture-local token; never commit raw window IDs, titles, document
+paths, URLs, account names, screenshots, AX dumps, or unrelated application
+information. Keep raw traces in an owner-private directory (`0700`) and output
+files owner-readable only (`0600`); commit only redacted aggregates after local
+review. A trace-export failure, unsafe permissions, unexpected non-fixture
+window interaction, or inability to identify the completion hook fails closed:
+stop the fixture, preserve/redact local diagnostics as permitted, and mark the
+sample unresolved rather than retrying ad hoc.
 
-   ```lua
-   assert(poc001:arm_target_action("chromium-create-focus-destroy-006", "close_front_temporary_blank"))
-   ```
+Every run must explicitly close every fixture window, stop any bounded timeout
+or probe work, terminate the fixture, and verify that no fixture process,
+service, login item, agent, watcher, or output remains outside the approved
+private directory. Delete the fixture source, build products, and local traces
+when the POC is concluded unless a later result document names a continuing
+POC-only diagnostic owner, use, and negligible idle cost. No artifact is
+reusable by production merely because it exists.
 
-   The human exposes/clicks only the front temporary blank, presses `⌃⌥⌘B`
-   once, and returns to chat. After the orchestrator confirms the binder is
-   disarmed, the human closes **that bound front temporary blank only**, then
-   returns to chat. The orchestrator marks completion:
+## Current action
 
-   ```lua
-   assert(poc001:status().target_binding_armed == false, "binder remained armed")
-   poc001:mark("chromium-create-focus-destroy-006", "manual_visual_complete", "close_front_temporary_blank")
-   ```
-
-5. **Bind and close the remaining temporary blank.** The pre-existing Chrome
-   window remains untouched. The orchestrator arms:
-
-   ```lua
-   assert(poc001:arm_target_action("chromium-create-focus-destroy-006", "close_remaining_temporary_blank"))
-   ```
-
-   The human clicks only the remaining temporary blank, presses `⌃⌥⌘B` once,
-   returns to chat, then closes that bound temporary blank and returns to chat.
-   The orchestrator verifies disarm and marks:
-
-   ```lua
-   assert(poc001:status().target_binding_armed == false, "binder remained armed")
-   poc001:mark("chromium-create-focus-destroy-006", "manual_visual_complete", "close_remaining_temporary_blank")
-   ```
-
-There is no controlled `native_action_completed` marker. This sample makes **no
-latency or action-to-detection timing claim**. True Chromium last-window
-behavior remains pending.
-
-## Abort — no improvisation
-
-Abort immediately for uncertain identity, unexpected Chrome UI, an existing
-window/tab that cannot remain untouched, a binding rejection, or any accidental
-forbidden action. Do not re-arm while armed/active, replace an action, hide an
-app, call `hs.reload`, or continue with another POC action.
-
-```lua
-if poc001 ~= nil and poc001:status().lifecycle == "running" then
-  poc001:mark("chromium-create-focus-destroy-006", "sample_aborted", "operator_reported_unexpected_ui")
-  pcall(function() poc001:stop() end)
-end
-assert(poc001 == nil or poc001:status().lifecycle == "stopped", "observer may still be running")
-assert(poc001 == nil or poc001:status().target_binding_armed == false, "binder survived abort")
-```
-
-## Stop, export, and restore
-
-After action 5 (or abort), stop, export, then restart legacy:
-
-```lua
-assert(poc001:stop())
-assert(poc001:status().lifecycle == "stopped", "observer did not stop")
-local exported, export_error = pcall(function()
-  return poc001:export("/tmp/poc-001-chromium-create-focus-destroy-006/chromium-create-focus-destroy-006.json")
-end)
-spoon["10bucks"]:bindHotkeys():start()
-assert(spoon["10bucks"].started == true, "legacy 10bucks did not restart")
-assert(exported, "private POC export failed: " .. tostring(export_error))
-```
-
-Review the private export locally; do not commit raw traces.
-
-## Pure checks
-
-```sh
-lua pocs/001-window-events-liveness/run-tests.lua
-luac -p pocs/001-window-events-liveness/trace.lua
-luac -p pocs/001-window-events-liveness/lifecycle.lua
-luac -p pocs/001-window-events-liveness/ownership.lua
-luac -p pocs/001-window-events-liveness/private_export.lua
-luac -p pocs/001-window-events-liveness/observer.lua
-```
+**None.** Do not implement the fixture or perform a live action from this
+README. The only authorized work in this checkpoint is documenting this proposal
+and the completed Chromium sample 006 result.
