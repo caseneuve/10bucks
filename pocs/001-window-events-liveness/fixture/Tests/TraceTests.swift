@@ -61,6 +61,37 @@ func testTraceEnforcesSequenceOrdering() throws {
     }
 }
 
+func testTraceWriterRetriesInterruptedAndPartialWrites() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let output = directory.appendingPathComponent("partial.ndjson")
+    let expected = try Trace.encode(validTraceRecord())
+    var results: [TraceWriter.WriteResult] = [.written(3), .interrupted, .written(Int.max)]
+    var written = Data()
+    let writer = try TraceWriter(createAt: output, writeChunk: { _, bytes, count in
+        let result = results.removeFirst()
+        if case let .written(requested) = result {
+            let accepted = min(requested, count)
+            written.append(bytes!.assumingMemoryBound(to: UInt8.self), count: accepted)
+            return .written(accepted)
+        }
+        return result
+    })
+    try writer.append(validTraceRecord())
+    try writer.close()
+    try expect(written == expected, "retries EINTR and writes every byte after a partial write")
+}
+
+func testTraceWriterUnlinksOutputWhenPermissionValidationFails() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let output = directory.appendingPathComponent("rejected.ndjson")
+    try expectThrows(TraceError.unsafeOutputPermissions) {
+        _ = try TraceWriter(createAt: output, writeChunk: { _, _, _ in .failed }, permissionValidator: { _ in false })
+    }
+    try expect(!FileManager.default.fileExists(atPath: output.path), "removes a newly created output after permission validation fails")
+}
+
 func testTraceOutputIsExactlyOwnerPrivate() throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -82,5 +113,7 @@ let traceTests: [(String, () throws -> Void)] = [
     ("trace emits strict NDJSON required and approved fields", testTraceEncodesOnlyRequiredAndApprovedFields),
     ("trace rejects unsafe fields and values", testTraceRejectsUnsafeValuesAndUnknownFields),
     ("trace enforces sequence ordering", testTraceEnforcesSequenceOrdering),
+    ("trace retries interrupted and partial writes", testTraceWriterRetriesInterruptedAndPartialWrites),
+    ("trace removes output after failed permission validation", testTraceWriterUnlinksOutputWhenPermissionValidationFails),
     ("trace creates only 0600 output", testTraceOutputIsExactlyOwnerPrivate),
 ]

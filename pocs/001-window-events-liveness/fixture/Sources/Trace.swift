@@ -161,11 +161,33 @@ public struct TraceBuffer {
 }
 
 public final class TraceWriter {
+    enum WriteResult {
+        case written(Int)
+        case interrupted
+        case failed
+    }
+
+    typealias WriteChunk = (Int32, UnsafeRawPointer?, Int) -> WriteResult
+    typealias PermissionValidator = (Int32) -> Bool
+
     private let descriptor: Int32
+    private let writeChunk: WriteChunk
     private var nextSequence: UInt64 = 1
     private var closed = false
 
-    public init(createAt url: URL) throws {
+    public convenience init(createAt url: URL) throws {
+        try self.init(
+            createAt: url,
+            writeChunk: TraceWriter.systemWrite,
+            permissionValidator: TraceWriter.validatePrivateOutput
+        )
+    }
+
+    init(
+        createAt url: URL,
+        writeChunk: @escaping WriteChunk,
+        permissionValidator: @escaping PermissionValidator = TraceWriter.validatePrivateOutput
+    ) throws {
         let descriptor = open(url.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
         guard descriptor >= 0 else {
             if errno == EEXIST {
@@ -177,16 +199,13 @@ public final class TraceWriter {
             }
             throw TraceError.outputOpenFailed
         }
-        guard fchmod(descriptor, 0o600) == 0 else {
+        guard permissionValidator(descriptor) else {
             Darwin.close(descriptor)
-            throw TraceError.unsafeOutputPermissions
-        }
-        var created = stat()
-        guard fstat(descriptor, &created) == 0, (created.st_mode & 0o777) == 0o600 else {
-            Darwin.close(descriptor)
+            unlink(url.path)
             throw TraceError.unsafeOutputPermissions
         }
         self.descriptor = descriptor
+        self.writeChunk = writeChunk
     }
 
     deinit { if !closed { Darwin.close(descriptor) } }
@@ -197,8 +216,21 @@ public final class TraceWriter {
             throw TraceError.invalidSequence(expected: nextSequence, received: record.sequence)
         }
         let line = try Trace.encode(record)
-        let result = line.withUnsafeBytes { write(descriptor, $0.baseAddress, line.count) }
-        guard result == line.count else { throw TraceError.outputWriteFailed }
+        try line.withUnsafeBytes { bytes in
+            guard let start = bytes.baseAddress else { throw TraceError.outputWriteFailed }
+            var offset = 0
+            while offset < line.count {
+                let remaining = line.count - offset
+                switch writeChunk(descriptor, start.advanced(by: offset), remaining) {
+                case let .written(count) where count > 0 && count <= remaining:
+                    offset += count
+                case .interrupted:
+                    continue
+                default:
+                    throw TraceError.outputWriteFailed
+                }
+            }
+        }
         nextSequence += 1
     }
 
@@ -206,5 +238,17 @@ public final class TraceWriter {
         guard !closed else { return }
         guard Darwin.close(descriptor) == 0 else { throw TraceError.outputWriteFailed }
         closed = true
+    }
+
+    private static func systemWrite(_ descriptor: Int32, _ bytes: UnsafeRawPointer?, _ count: Int) -> WriteResult {
+        let result = write(descriptor, bytes, count)
+        if result < 0 && errno == EINTR { return .interrupted }
+        return result >= 0 ? .written(result) : .failed
+    }
+
+    private static func validatePrivateOutput(_ descriptor: Int32) -> Bool {
+        guard fchmod(descriptor, 0o600) == 0 else { return false }
+        var created = stat()
+        return fstat(descriptor, &created) == 0 && (created.st_mode & 0o777) == 0o600
     }
 }

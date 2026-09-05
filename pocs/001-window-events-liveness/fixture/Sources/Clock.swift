@@ -28,31 +28,48 @@ public struct ClockReading: Equatable {
 }
 
 public enum ClockError: Error, Equatable {
+    case timebaseUnavailable
     case tickUnderflow
     case invalidTimebase
     case conversionOverflow
 }
 
 public enum Clock {
-    public static func nowTicks() -> ClockReading {
+    public static func nowTicks() throws -> ClockReading {
         var nativeTimebase = mach_timebase_info_data_t()
-        mach_timebase_info(&nativeTimebase)
+        let status = mach_timebase_info(&nativeTimebase)
         let timebase = MachTimebase(numer: UInt64(nativeTimebase.numer), denom: UInt64(nativeTimebase.denom))
 
         if #available(macOS 10.12, *) {
-            return ClockReading(kind: .machContinuous, ticks: mach_continuous_time(), timebase: timebase)
+            return try makeReading(
+                timebaseStatus: status,
+                continuousAvailable: true,
+                continuousTicks: mach_continuous_time(),
+                absoluteTicks: 0,
+                timebase: timebase
+            )
         }
-        return ClockReading(kind: .machAbsolute, ticks: mach_absolute_time(), timebase: timebase)
+        return try makeReading(
+            timebaseStatus: status,
+            continuousAvailable: false,
+            continuousTicks: 0,
+            absoluteTicks: mach_absolute_time(),
+            timebase: timebase
+        )
     }
 
-    // Keeps runtime selection testable without mocking Darwin.
+    // Keeps the raw system result and clock selection testable without mocking Darwin.
     static func makeReading(
+        timebaseStatus: kern_return_t,
         continuousAvailable: Bool,
         continuousTicks: UInt64,
         absoluteTicks: UInt64,
         timebase: MachTimebase
-    ) -> ClockReading {
-        ClockReading(
+    ) throws -> ClockReading {
+        guard timebaseStatus == KERN_SUCCESS, timebase.numer != 0, timebase.denom != 0 else {
+            throw ClockError.timebaseUnavailable
+        }
+        return ClockReading(
             kind: continuousAvailable ? .machContinuous : .machAbsolute,
             ticks: continuousAvailable ? continuousTicks : absoluteTicks,
             timebase: timebase

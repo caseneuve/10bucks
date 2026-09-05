@@ -1,7 +1,9 @@
+import Darwin
 import Foundation
 
 func testClockSelectionAndMetadata() throws {
-    let continuous = Clock.makeReading(
+    let continuous = try Clock.makeReading(
+        timebaseStatus: KERN_SUCCESS,
         continuousAvailable: true,
         continuousTicks: 101,
         absoluteTicks: 202,
@@ -11,7 +13,8 @@ func testClockSelectionAndMetadata() throws {
     try expect(continuous.ticks == 101, "retains continuous ticks")
     try expect(continuous.timebase == MachTimebase(numer: 125, denom: 3), "retains timebase metadata")
 
-    let fallback = Clock.makeReading(
+    let fallback = try Clock.makeReading(
+        timebaseStatus: KERN_SUCCESS,
         continuousAvailable: false,
         continuousTicks: 101,
         absoluteTicks: 202,
@@ -19,6 +22,29 @@ func testClockSelectionAndMetadata() throws {
     )
     try expect(fallback.kind == .machAbsolute, "falls back to absolute clock")
     try expect(fallback.ticks == 202, "retains absolute fallback ticks")
+}
+
+func testClockRejectsFailedOrZeroTimebase() throws {
+    try expectThrows(ClockError.timebaseUnavailable) {
+        _ = try Clock.makeReading(
+            timebaseStatus: KERN_FAILURE,
+            continuousAvailable: true,
+            continuousTicks: 1,
+            absoluteTicks: 2,
+            timebase: MachTimebase(numer: 1, denom: 1)
+        )
+    }
+    for timebase in [MachTimebase(numer: 0, denom: 1), MachTimebase(numer: 1, denom: 0)] {
+        try expectThrows(ClockError.timebaseUnavailable) {
+            _ = try Clock.makeReading(
+                timebaseStatus: KERN_SUCCESS,
+                continuousAvailable: true,
+                continuousTicks: 1,
+                absoluteTicks: 2,
+                timebase: timebase
+            )
+        }
+    }
 }
 
 func testElapsedTicksIsChecked() throws {
@@ -49,6 +75,7 @@ func testNanosecondConversionRejectsInvalidAndOverflowingValues() throws {
 
 let clockTests: [(String, () throws -> Void)] = [
     ("clock selects continuous and fallback metadata", testClockSelectionAndMetadata),
+    ("clock rejects failed and zero timebase metadata", testClockRejectsFailedOrZeroTimebase),
     ("clock checks elapsed tick subtraction", testElapsedTicksIsChecked),
     ("clock converts ticks with quotient and remainder", testNanosecondConversionUsesQuotientAndRemainder),
     ("clock rejects invalid and overflowing conversion", testNanosecondConversionRejectsInvalidAndOverflowingValues),
