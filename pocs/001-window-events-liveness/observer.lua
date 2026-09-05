@@ -203,6 +203,8 @@ end
 function Observer:_read_direct_metadata(app, window, element, event, scope)
   scope = scope or "steady"
   local metadata, uncertainty = {}, false
+  local cached_before = self.metadata_by_window[window] or {}
+  local native_fullscreen_before = cached_before.native_fullscreen
   local fields = (event == "AXWindowMoved" or event == "AXWindowResized") and LIFECYCLE_METADATA or READINESS_METADATA
   for _, spec in ipairs(fields) do
     local call_site = "direct_ax.metadata." .. spec.field
@@ -222,7 +224,7 @@ function Observer:_read_direct_metadata(app, window, element, event, scope)
       self:_fact("metadata_uncertain", { source = "direct_ax_window", app = app, window = window, raw_event = event, field = spec.field, result = ok and "unavailable" or "method_unavailable" })
     end
   end
-  local cached = self.metadata_by_window[window] or {}
+  local cached = cached_before
   for field, value in pairs(metadata) do cached[field] = value end
   self.metadata_by_window[window] = cached
   self:_commit_lifecycle(app, window, metadata, "direct_ax_window", event,
@@ -237,6 +239,11 @@ function Observer:_read_direct_metadata(app, window, element, event, scope)
   elseif uncertainty then
     self.trace:emit("metadata_not_ready", { source = "direct_ax_window", app = app, window = window, raw_event = event, metadata_status = "uncertain" })
   end
+  return {
+    native_fullscreen_before = native_fullscreen_before,
+    native_fullscreen = cached.native_fullscreen,
+    native_fullscreen_available = type(metadata.native_fullscreen) == "boolean",
+  }
 end
 
 function Observer:_stop_window_watcher(key, reason)
@@ -280,8 +287,24 @@ function Observer:_observe_direct_window(app_key, app_alias, element, raw_event,
         self.trace:emit("direct_window_event", { source = "direct_ax_window", app = app_alias, window = window_alias, raw_event = event })
         self:_commit_lifecycle(app_alias, window_alias, event_fact(event), "direct_ax_window", event)
         if event ~= "AXUIElementDestroyed" then
-          self:_read_direct_metadata(app_alias, window_alias, element, event, "steady")
-          if event == "AXWindowMoved" or event == "AXWindowResized" then self:_read_space_ownership(app_alias, window_alias, raw_key, event, "steady", "direct_ax_window_move") end
+          local metadata = self:_read_direct_metadata(app_alias, window_alias, element, event, "steady")
+          if event == "AXWindowMoved" then
+            -- A move remains an ownership trigger regardless of lifecycle-read uncertainty.
+            self:_read_space_ownership(app_alias, window_alias, raw_key, event, "steady", "direct_ax_window_move")
+          elseif event == "AXWindowResized" then
+            if metadata.native_fullscreen_available and metadata.native_fullscreen_before ~= metadata.native_fullscreen then
+              self:_read_space_ownership(app_alias, window_alias, raw_key, event, "steady", "direct_ax_window_resize_fullscreen_changed")
+            else
+              -- An unavailable read is traced by metadata_uncertain.  Do not turn it
+              -- into a move/liveness inference; retain prior ownership non-destructively.
+              self.trace:emit("ownership_check_skipped", {
+                source = "direct_ax_window", app = app_alias, window = window_alias, raw_event = event,
+                reason = "resize_fullscreen_unchanged",
+                fullscreen_status = metadata.native_fullscreen_available and "unchanged" or "unavailable",
+                result = "non_effecting",
+              })
+            end
+          end
         end
         if event == "AXUIElementDestroyed" then self:_destruction_candidate(app_alias, window_alias, "direct_ax", event); self:_forget_window_identity(raw_key); self:_stop_window_watcher(key, "element_destroyed") end
       end)

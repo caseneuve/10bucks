@@ -154,6 +154,59 @@ reload, live POC load, or live action was performed for this checkpoint.
   effect a window. While bound, destruction candidates are classified as target
   or non-target and remain candidates only.
 
+## Chromium sample 006 — redacted result
+
+**Observed, narrow only:** the private, schema-valid
+`chromium-create-focus-destroy-006` export was analyzed locally and is not
+committed. It contains no raw IDs, titles, URLs, or AX values in this document.
+The observer stopped cleanly, no callbacks remained open, and its final
+`cleanup_complete` count was zero.
+
+- The two destructive binds resolved two distinct temporary-window aliases
+  (called **first bound temporary window** and **second bound temporary
+  window** here). The retained regular owner at each bind was confirmed. No
+  application alias is retained in this result.
+- Both temporary closes produced one filter `windowDestroyed` candidate and
+  one direct `AXUIElementDestroyed` candidate for the bound target. Filter was
+  first in both pairs; direct followed by **0.278 ms** and **0.507 ms**,
+  respectively. The filter missed neither observed close. These remain paired
+  candidates only: there was no `destruction_confirmed`, authority selection,
+  or general delivery guarantee.
+- The protocol's covered-window marker did not name an alias. For the eventual
+  first bound close target, no destruction candidate appeared before its close
+  pair. That is no false-destruction observation for this eventual target, not
+  proof that every covered window is safe.
+- There is no controlled native-close completion marker, so there is no
+  confirmation/latency result. The sample intentionally excluded a true
+  last-Chromium-window close.
+- Completed callback processing duration was **n=230**, median **3.862 ms**,
+  nearest-rank p95 **33.013 ms**, maximum **91.586 ms**. These are harness
+  processing durations, not callback-arrival or next-key-service latency.
+- The 130-callback `AXWindowResized` burst produced 650 direct-window query
+  attempts (five per callback). Fourteen non-coalesced active-Space,
+  known-window-only sweeps occurred on the prescribed chat-switch path; each
+  covered 6–8 known aliases and used 10–14 ownership queries (181 total).
+- The export reports zero POC-issued steady global queries; it contains no
+  timer creation/cancellation/fire, permanent poll, or POC window effect.
+  This does not settle the separately recorded framework-internal filter
+  refresh caveat.
+
+**Target instrumentation correction, evidence-driven:** the observed resize
+amplification justifies narrowing only the direct `AXWindowResized` ownership
+path. Resize still reads targeted minimized/fullscreen properties. It probes
+Space ownership only when `native_fullscreen` is newly known or changes from
+its cached value; unchanged successful reads emit
+`ownership_check_skipped` with `reason=resize_fullscreen_unchanged`.
+`AXWindowMoved` continues to probe ownership on every event. If the fullscreen
+method is unavailable, the observer records `metadata_uncertain` and an
+explicit non-effecting skipped record (the same reason with
+`fullscreen_status=unavailable`); it intentionally retains prior confirmed
+ownership rather than inferring a move, liveness change, or destruction. This
+is POC instrumentation only, not a production adapter decision. Pure-fake
+coverage verifies repeated same-fullscreen resize skips, both fullscreen
+transitions probe, moved always probes, and unavailable resize is
+non-destructive.
+
 ## Implication
 
 The observer also records direct-AX and filter destruction candidates

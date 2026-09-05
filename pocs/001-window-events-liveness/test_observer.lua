@@ -131,6 +131,54 @@ return {
     assert(inferred); equal(inferred.candidate_source, "direct_ax"); equal(inferred.candidate_native_fullscreen, true); equal(inferred.result, "targeted_observed_property")
     observer:stop()
   end,
+  ["PERF-002 POC repeated same-fullscreen resize skips Space ownership"] = function()
+    local metadata, window = complete_metadata(), fake_window(302, complete_metadata())
+    local application = fake_application(881, {}); local state = install_fake_hs({ application })
+    install_fake_spaces(state, { ["302"] = { 10 }, reverse = { ["10"] = { 302 } } }); package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated")
+    window.isFullScreen = function() return metadata.native_fullscreen end
+    window.watcher.callback(window, "AXWindowResized"); window.watcher.callback(window, "AXWindowResized")
+    local checks, skipped = events(observer, "targeted_check_begin"), events(observer, "ownership_check_skipped")
+    local resize_checks = 0; for _, event in ipairs(checks) do if event.trigger == "direct_ax_window_resize_fullscreen_changed" then resize_checks = resize_checks + 1 end end
+    equal(resize_checks, 0); equal(#skipped, 2)
+    for _, event in ipairs(skipped) do equal(event.reason, "resize_fullscreen_unchanged"); equal(event.fullscreen_status, "unchanged") end
+    observer:stop()
+  end,
+  ["FS-002 POC resize fullscreen transitions each probe Space ownership"] = function()
+    local metadata, window = complete_metadata(), fake_window(303, complete_metadata())
+    local application = fake_application(882, {}); local state = install_fake_hs({ application })
+    install_fake_spaces(state, { ["303"] = { 10 }, reverse = { ["10"] = { 303 } } }); package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated")
+    window.isFullScreen = function() return metadata.native_fullscreen end
+    metadata.native_fullscreen = true; window.watcher.callback(window, "AXWindowResized")
+    metadata.native_fullscreen = false; window.watcher.callback(window, "AXWindowResized")
+    local checks, resize_checks = events(observer, "targeted_check_begin"), 0
+    for _, event in ipairs(checks) do if event.query == "spaces_window_spaces" and event.trigger == "direct_ax_window_resize_fullscreen_changed" then resize_checks = resize_checks + 1 end end
+    equal(resize_checks, 2); observer:stop()
+  end,
+  ["WIN-006 POC moved always probes ownership despite fullscreen-read uncertainty"] = function()
+    local window = fake_window(304, complete_metadata())
+    local application = fake_application(883, {}); local state = install_fake_hs({ application })
+    install_fake_spaces(state, { ["304"] = { 10 }, reverse = { ["10"] = { 304 } } }); package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated")
+    window.isFullScreen = nil; window.watcher.callback(window, "AXWindowMoved")
+    local checks, uncertain, moved = events(observer, "targeted_check_begin"), events(observer, "observation_fact"), 0
+    for _, event in ipairs(checks) do if event.query == "spaces_window_spaces" and event.trigger == "direct_ax_window_move" then moved = moved + 1 end end
+    equal(moved, 1); local found = false; for _, event in ipairs(uncertain) do if event.fact == "metadata_uncertain" and event.field == "native_fullscreen" then found = true end end; assert(found)
+    observer:stop()
+  end,
+  ["STATE-005 POC unavailable resize records uncertainty and retains ownership non-destructively"] = function()
+    local window = fake_window(305, complete_metadata())
+    local application = fake_application(884, {}); local state = install_fake_hs({ application })
+    install_fake_spaces(state, { ["305"] = { 10 }, reverse = { ["10"] = { 305 } } }); package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); application.watcher.callback(window, "AXWindowCreated")
+    window.isFullScreen = nil; window.watcher.callback(window, "AXWindowResized")
+    local ownership = observer.ownership:window("win-001")
+    equal(ownership.confirmed_regular, "space-001")
+    local skipped = events(observer, "ownership_check_skipped"); equal(#skipped, 1); equal(skipped[1].reason, "resize_fullscreen_unchanged"); equal(skipped[1].fullscreen_status, "unavailable")
+    local resize_checks = 0; for _, event in ipairs(events(observer, "targeted_check_begin")) do if event.trigger == "direct_ax_window_resize_fullscreen_changed" then resize_checks = resize_checks + 1 end end; equal(resize_checks, 0)
+    observer:stop()
+  end,
   ["POC-001 delayed competing filter and direct facts remain isolated and report conflict"] = function()
     local window, application = fake_window(350, complete_metadata()), fake_application(89, {})
     local state = install_fake_hs({ application }); package.loaded.observer = nil
