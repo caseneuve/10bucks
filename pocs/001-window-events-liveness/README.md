@@ -8,7 +8,9 @@ The source/test checkpoint is complete. One separately human-gated
 and recorded as a one-sample observation. It did **not** authorize Hammerspoon,
 an observer, or fixture--observer correlation, and it authorizes no repeat.
 A distinct approval is still required for any future build/launch or the later
-fixture--observer correlation experiment.
+fixture--observer correlation experiment. The separately frozen
+[correlation research/implementation gate](CORRELATION-HANDOFF.md) defines the
+only candidate and authorizes neither implementation nor a live action.
 
 ## Decision boundary
 
@@ -218,20 +220,27 @@ no command in this handoff is authorized now.
 
 ### Pending-work and observer correlation boundaries
 
+The [separately gated correlation handoff](CORRELATION-HANDOFF.md) is the
+normative plan for the public Accessibility identifier candidate, precise
+observer read, tests, privacy/query limits, and stop rule. This fixture handoff
+does not authorize that source slice or a live run.
+
 `probe_pending_work` emits `pending_work_requested` then enqueues one
 `DispatchQueue.main.async` closure. That closure emits
 `pending_work_serviced`; it schedules no timer, recurring work, polling, or
 secondary queue. This measures service of this fixture's main dispatch queue
 only, not Hammerspoon hotkey service or general OS responsiveness.
 
-Each accepted `create` response carries the per-window `correlation_token`.
-The fixture exports that token only in its trace/IPC response; it never exports
-a native window identity. A separately approved observer integration may copy
-the token and sample ID into its own redacted `fixture_correlation_armed`
-marker, then retain any native-ID association in memory only. It must not merge
-traces by title, PID, window number, focus, visibility, or timing proximity.
-Until that gate, correlation is **Hypothesis** and the fixture has no
-Hammerspoon dependency.
+The checked-in fixture source still carries `correlation_token` in its private
+create response; that is a **current source fact**, not an approved correlation
+interface. The separately gated correlation handoff replaces it for its future
+experiment: the correlation token is removed from fixture trace/IPC output and
+exposed only through public fixture-local Accessibility metadata. The observer
+then derives only a redacted alias from its one targeted callback-window read
+and retains any native-ID association in memory. It must not merge traces by
+title, PID, window number, focus, visibility, or timing proximity. Until that
+gate passes, correlation is **Hypothesis** and the fixture has no Hammerspoon
+dependency.
 
 ## Fixed measurements, counts, and stop rules
 

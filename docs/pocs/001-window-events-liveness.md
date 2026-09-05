@@ -14,7 +14,10 @@ advances the remaining live matrix. The companion
 now freezes the separately gated AppKit fixture **implementation handoff**.
 Its approved narrow source/test revision measures
 `fixture_create_visible_completed` from `create_requested` using the public
-AppKit occlusion callback and visible bit. One approved
+AppKit occlusion callback and visible bit. The separately frozen
+[fixture--observer correlation research/implementation gate](../../pocs/001-window-events-liveness/CORRELATION-HANDOFF.md)
+defines the public-AX candidate and explicitly authorizes no implementation or
+live action. One approved
 [fixture-only one-sample live-calibration](../../pocs/001-window-events-liveness/fixture/LIVE-CALIBRATION.md)
 has now been recorded below. **POC-001 remains `hypothesis`; this observation
 authorizes neither another fixture action nor a POC-001 live action.**

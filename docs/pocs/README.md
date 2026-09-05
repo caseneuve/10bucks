@@ -58,7 +58,7 @@ Screenshots may support a visual finding, but must not replace event/latency dat
 
 ### Decision
 
-Choose `hs.window.filter`, direct `hs.application.watcher` + `hs.uielement.watcher`, or a narrower combination. Define authoritative destruction and manual Space-move detection.
+Choose `hs.window.filter`, direct `hs.application.watcher` + `hs.uielement.watcher`, or a narrower combination. Define authoritative destruction and manual Space-move detection. The POC-only fixture's separately gated [fixture--observer correlation handoff](../../pocs/001-window-events-liveness/CORRELATION-HANDOFF.md) defines a candidate public-AX identity experiment only; it authorizes no implementation or live action.
 
 ### Instrumentation
 
