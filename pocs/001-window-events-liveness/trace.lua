@@ -26,10 +26,17 @@ local allowed_keys = {
   reciprocal_confirmed_count = true, retained_prior_regular = true,
   target_relation = true, action_target_status = true, active_generation = true,
   fullscreen_status = true,
+  correlation_alias = true,
 }
 
 local function safe_token(value)
   return type(value) == "string" and value:match("^[A-Za-z0-9_.:-]+$") ~= nil
+end
+
+local function valid_correlation_alias(value)
+  local prefix = "poc001-corr-sha256-"
+  return type(value) == "string" and #value == #prefix + 64
+    and value:sub(1, #prefix) == prefix and value:sub(#prefix + 1):match("^[0-9a-f]+$") ~= nil
 end
 
 local function assert_safe_token(value, label)
@@ -43,6 +50,8 @@ local function copy_redacted(fields)
     if allowed_keys[key] and not sensitive_keys[key] then
       if type(value) == "number" or type(value) == "boolean" then
         result[key] = value
+      elseif key == "correlation_alias" then
+        if valid_correlation_alias(value) then result[key] = value end
       elseif safe_token(value) then
         result[key] = value
       end

@@ -71,6 +71,16 @@ return {
     contains(Trace.encode_json(trace:export_table()), "window_created")
   end,
 
+  ["POC-001 trace exports only frozen full correlation aliases"] = function()
+    local trace = Trace.new(function() return 1 end, "run-005")
+    local alias = "poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac"
+    trace:emit("correlation_observed", { correlation_alias = alias, raw_ax = "corr-AAAAAAAAAAAAAAAA" })
+    local event = trace:export_table().events[1]
+    equal(event.correlation_alias, alias); equal(event.raw_ax, nil)
+    trace:emit("correlation_observed", { correlation_alias = "poc001-corr-sha256-not-a-digest" })
+    equal(trace:export_table().events[2].correlation_alias, nil)
+  end,
+
   ["POC-001 trace lifecycle remains idempotent in pure bookkeeping"] = function()
     local trace = Trace.new(function() return 1 end, "run-004")
     equal(trace:lifecycle("start"), true)

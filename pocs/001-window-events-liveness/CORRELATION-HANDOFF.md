@@ -1,12 +1,11 @@
 # POC-001 fixture--observer correlation gate
 
-**Status: fixture source/test/build slice implemented, pending approval; live
-correlation remains unapproved.** POC-001 remains a **Hypothesis**. The
-fixture-only source slice below is implemented for source/tests/build
-verification, but is not an approved fixture half. It does **not** authorize an
-app launch, IPC request against the app, Hammerspoon call/load, observer
-implementation, or any live action. It is linked from the
-[canonical POC result](../../docs/pocs/001-window-events-liveness.md) and the
+**Status: fixture and observer source/test slices implemented, pending review;
+live correlation remains unapproved.** POC-001 remains a **Hypothesis**. The
+source slices below are implemented for pure/source-test verification only.
+They do **not** authorize an app launch, IPC request against the app,
+Hammerspoon call/load, observer live action, or any other live action. It is
+linked from the [canonical POC result](../../docs/pocs/001-window-events-liveness.md) and the
 [fixture handoff](README.md).
 
 ## Decision boundary
@@ -103,12 +102,15 @@ pure tests, static checks, and build verification:
    and IPC records emit only `correlation_alias`; they omit
    `correlation_token`, raw AX values, PID, and native ID. The existing
    `fixture_token` remains the separate private close-control capability.
-2. **Observer (not implemented or authorized):** on one armed fixture create callback that already supplies its
-   `hs.window`, call `hs.axuielement.windowElement(callback_window)` once and
-   `:attributeValue("AXIdentifier")` once. Validate the exact raw-token
-   grammar, compute `alias(T)` with `hs.hash.SHA256`, emit the alias, retain
+2. **Observer source/test slice (implemented; not live-authorized):** an
+   explicit one-generation arm scopes only an already-delivered `windowCreated`
+   callback from the exact fixture bundle. The bundle check is not association
+   evidence and is not exported. That callback calls
+   `hs.axuielement.windowElement(callback_window)` once and
+   `:attributeValue("AXIdentifier")` once. It validates the exact raw-token
+   grammar, computes `alias(T)` with `hs.hash.SHA256`, emits the alias, retains
    only `native-window-id -> correlation_alias` in memory, and immediately
-   clear its raw Lua value/reference. It must not emit the raw token or AX
+   clears its raw Lua value/reference. It emits neither the raw token nor AX
    value.
 3. **Join:** later local analysis accepts exactly one fixture record and one
    observer record only when their full aliases are byte-for-byte equal and
@@ -200,6 +202,6 @@ not exactly match, record failure and **stop**. Do not invent a private AX
 attribute, bridge `NSWindow.identifier`, expose raw correlation data through
 IPC/trace, or add a fallback.
 
-**Current authorized action: documentation review only.** No code change,
-build, app launch, IPC request, Hammerspoon call, observer load, or live action
-is authorized by this draft.
+**Current authorized action: source and pure-test review only.** No app launch,
+IPC request, Hammerspoon call, observer load, or live action is authorized by
+this handoff.

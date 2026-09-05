@@ -4,6 +4,7 @@ local Trace = require("trace")
 local Lifecycle = require("lifecycle")
 local Ownership = require("ownership")
 local PrivateExport = require("private_export")
+local Correlation = require("correlation")
 
 local Observer = {}
 Observer.__index = Observer
@@ -14,6 +15,8 @@ local FILTER_EVENTS = {
   "windowFullscreened", "windowUnfullscreened", "windowMoved",
 }
 local DIRECT_APP_EVENTS = { "AXWindowCreated", "AXFocusedWindowChanged" }
+local FIXTURE_BUNDLE_ID = "local.poc001.fixture"
+
 local DIRECT_WINDOW_EVENTS = {
   "AXUIElementDestroyed", "AXWindowMiniaturized", "AXWindowDeminiaturized",
   "AXWindowMoved", "AXWindowResized",
@@ -70,6 +73,7 @@ function Observer:_new_run()
   self.lifecycle, self.ownership = Lifecycle.new(), Ownership.new()
   self.app_watchers, self.window_watchers, self.window_identity_cache = {}, {}, {}
   self.window_raw_by_alias, self.ready_emitted, self.metadata_by_window = {}, {}, {}
+  self.correlation = Correlation.new(function(value) return hs.hash.SHA256(value) end)
   self.destruction_candidates, self.active_target_action, self.target_binding_hotkey = {}, nil, nil
   self.space_trigger_generation, self.last_active_space, self.last_active_generation = 0, nil, nil
   self.filter, self.application_watcher, self.spaces_watcher = nil, nil, nil
@@ -262,7 +266,9 @@ function Observer:_destruction_candidate(app, window, source, event)
   candidates[source], self.destruction_candidates[window] = true, candidates
   local relation = "no_active_target"
   if self.active_target_action then relation = self.active_target_action.window == window and "target" or "non_target" end
-  self.trace:emit("destruction_candidate", { source = source, app = app, window = window, raw_event = event, target_relation = relation, result = "candidate_only" })
+  local raw_window = self.window_raw_by_alias[window]
+  local correlation_alias = raw_window and self.correlation:destroy(raw_window) or nil
+  self.trace:emit("destruction_candidate", { source = source, app = app, window = window, raw_event = event, target_relation = relation, correlation_alias = correlation_alias, result = "candidate_only" })
   if candidates.direct_ax and candidates.filter and not candidates.paired then
     candidates.paired = true
     self.trace:emit("destruction_paired_candidate", { source = "poc001", app = app, window = window, raw_event = event, target_relation = relation, result = "paired_candidate_only" })
@@ -402,6 +408,43 @@ function Observer:_start_application_watcher()
   self:_fact("application_watcher_attached", { source = "application_watcher", watcher_kind = "application_lifecycle", reason = "observer_start" })
 end
 
+function Observer:_fixture_bundle_matches(application)
+  if not application or type(application.bundleID) ~= "function" then return false end
+  local ok, bundle_id = protected(function() return application:bundleID() end)
+  return ok and bundle_id == FIXTURE_BUNDLE_ID
+end
+
+function Observer:_observe_fixture_correlation(raw_id, application, callback_window)
+  if not self.correlation or self.correlation:state().armed_generation == nil then return end
+  -- The exact fixture bundle merely scopes this already-delivered callback. It
+  -- is not correlation evidence and is never traced or exported.
+  if not self:_fixture_bundle_matches(application) then return end
+  if self.correlation:state().consumed then return end
+  local began = monotonic_ms()
+  self.trace:query("correlation_window_element_construction", "correlation.windowElement", "steady")
+  local constructed, element = protected(function() return hs.axuielement.windowElement(callback_window) end)
+  self.trace:emit("correlation_window_element_constructed", { source = "window_filter", duration_ms = monotonic_ms() - began, result = constructed and element and "available" or "unavailable" })
+  if not constructed or not element then
+    local result = self.correlation:unresolved("window_element_unavailable")
+    self.trace:emit("correlation_unresolved", { source = "window_filter", reason = result.reason, result = "unresolved" })
+    return
+  end
+  began = monotonic_ms()
+  self.trace:query("correlation_ax_identifier_read", "correlation.AXIdentifier", "steady")
+  local read, raw = protected(function() return element:attributeValue("AXIdentifier") end)
+  self.trace:emit("correlation_ax_identifier_read", { source = "window_filter", duration_ms = monotonic_ms() - began, result = read and "available" or "unavailable" })
+  local outcome
+  if not read then outcome = self.correlation:unresolved("attribute_read_error"); raw = nil
+  elseif raw_id == nil then outcome = self.correlation:unresolved("window_id_unavailable")
+  else outcome = self.correlation:consume(raw_id, raw) end
+  raw = nil -- Do not retain a Lua reference to the raw AX identifier.
+  if outcome.alias then
+    self.trace:emit("correlation_observed", { source = "window_filter", correlation_alias = outcome.alias, result = "matched" })
+  else
+    self.trace:emit("correlation_unresolved", { source = "window_filter", reason = outcome.reason, result = "unresolved" })
+  end
+end
+
 function Observer:_start_filter()
   self.filter = hs.window.filter.new(true, "poc001-window-events")
   self:_fact("filter_watcher_attached", { source = "window_filter", watcher_kind = "filter", reason = "observer_start" })
@@ -414,6 +457,7 @@ function Observer:_start_filter()
       local app_alias, window_alias
       if application_ok and application then local app_key; app_key, _, app_alias = self:_app_alias(application); window_alias = raw_id and self.trace:window_alias(app_key, tostring(raw_id)) or nil; self:_remember_window_identity(raw_id, app_alias, window_alias)
       else local cached = self:_cached_window_identity(raw_id); if cached then app_alias, window_alias = cached.app, cached.window else self:_fact("filter_application_unavailable", { source = "window_filter" }) end end
+      if event == "windowCreated" then self:_observe_fixture_correlation(raw_id, application, window) end
       self.trace:emit("filter_window_event", { source = "window_filter", app = app_alias, window = window_alias, raw_event = event, result = window_alias and "identified" or "identity_unavailable" })
       self:_commit_lifecycle(app_alias, window_alias, event_fact(event), "window_filter", event)
       if app_alias and window_alias and raw_id and (event == "windowCreated" or event == "windowFocused" or event == "windowMoved") then
@@ -505,6 +549,14 @@ function Observer:_delete_target_binding_hotkey(reason)
   end
 end
 
+function Observer:arm_fixture_correlation(generation)
+  assert(self.trace, "start the POC before arming correlation")
+  if not self.running then return false, "not_running" end
+  local armed, reason = self.correlation:arm(generation)
+  if armed then self.trace:emit("correlation_armed", { source = "operator", result = "armed" }) end
+  return armed, reason
+end
+
 function Observer:stop()
   if not self.running then return false, "already_stopped" end
   self:_delete_target_binding_hotkey("observer_stop")
@@ -514,6 +566,7 @@ function Observer:stop()
   local window_keys, app_keys = {}, {}; for key in pairs(self.window_watchers) do window_keys[#window_keys + 1] = key end; for key in pairs(self.app_watchers) do app_keys[#app_keys + 1] = key end
   for _, key in ipairs(window_keys) do self:_stop_window_watcher(key, "observer_stop") end
   for _, key in ipairs(app_keys) do local record = self.app_watchers[key]; if record then protected(function() record.watcher:stop() end); self:_fact("application_watcher_detached", { source = "direct_ax", app = record.alias, watcher_kind = "application", reason = "observer_stop" }) end; self.app_watchers[key] = nil end
+  self.correlation:clear()
   self.filter, self.application_watcher, self.spaces_watcher, self.running = nil, nil, nil, false; self.trace:lifecycle("stop"); self.trace:mark("cleanup_complete", { source = "poc001", count = 0 }); return true
 end
 

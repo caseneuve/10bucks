@@ -22,9 +22,10 @@ local function fake_window(id, metadata)
   window.isVisible = function() return metadata and metadata.visibility end
   return window
 end
-local function fake_application(pid, windows)
+local function fake_application(pid, windows, bundle_id)
   return {
     pid = function() return pid end,
+    bundleID = function() return bundle_id end,
     allWindows = function(self) self.all_windows_calls = (self.all_windows_calls or 0) + 1; return windows end,
     newWatcher = function(self, callback) local watcher = fake_watcher(); watcher.callback = callback; self.watcher = watcher; return watcher end,
   }
@@ -419,6 +420,71 @@ return {
       if event.fact == "observer_start_failed" and event.reason == "startup_error" then failed = true end
     end
     assert(failed)
+  end,
+  ["POC-001 fixture correlation performs exactly one scoped construction and AXIdentifier read"] = function()
+    local window = fake_window(990, complete_metadata())
+    local application = fake_application(90, {}, "local.poc001.fixture")
+    window.application = function() return application end
+    local state = install_fake_hs({}); package.loaded.observer = nil
+    local reads, constructions = 0, 0
+    hs.hash = { SHA256 = function(raw)
+      equal(raw, "corr-AAAAAAAAAAAAAAAA")
+      return "83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac"
+    end }
+    hs.axuielement = { windowElement = function(callback_window)
+      equal(callback_window, window); constructions = constructions + 1
+      return { attributeValue = function(_, name) equal(name, "AXIdentifier"); reads = reads + 1; return "corr-AAAAAAAAAAAAAAAA" end }
+    end }
+    local observer = require("observer").new(); assert(observer:start()); assert(observer:arm_fixture_correlation(1))
+    state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
+    state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
+    equal(constructions, 1); equal(reads, 1)
+    equal(observer:status().query_counters.steady.correlation_window_element_construction, 1)
+    equal(observer:status().query_counters.steady.correlation_ax_identifier_read, 1)
+    local matched = events(observer, "correlation_observed"); equal(#matched, 1)
+    equal(matched[1].correlation_alias, "poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac")
+    local rendered = require("trace").encode_json(observer.trace:export_table())
+    assert(not rendered:find("corr-AAAAAAAAAAAAAAAA", 1, true)); assert(not rendered:find("990", 1, true))
+    observer:stop()
+  end,
+  ["POC-001 fixture correlation scopes by exact bundle and clears aliases on destruction stop and failed startup"] = function()
+    local window = fake_window(991, complete_metadata())
+    local foreign = fake_application(91, {}, "not.the.fixture")
+    window.application = function() return foreign end
+    local state = install_fake_hs({}); package.loaded.observer = nil
+    local constructions = 0
+    hs.hash = { SHA256 = function() return "83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac" end }
+    hs.axuielement = { windowElement = function() constructions = constructions + 1; error("must not construct") end }
+    local observer = require("observer").new(); assert(observer:start()); assert(observer:arm_fixture_correlation(1))
+    state.filter.subscriptions.windowCreated(window, nil, "windowCreated"); equal(constructions, 0)
+    foreign.bundleID = function() return "local.poc001.fixture" end
+    hs.axuielement.windowElement = function() constructions = constructions + 1; return { attributeValue = function() return "corr-AAAAAAAAAAAAAAAA" end } end
+    state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
+    state.filter.subscriptions.windowDestroyed(window, nil, "windowDestroyed")
+    local destroyed = events(observer, "destruction_candidate"); equal(destroyed[#destroyed].correlation_alias, "poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac")
+    assert(not observer.correlation:alias_for_window("991")); observer:stop(); assert(not observer.correlation:alias_for_window("991"))
+  end,
+  ["POC-001 fixture correlation unresolved callbacks consume the generation without prohibited fallback reads"] = function()
+    local window = fake_window(992, complete_metadata())
+    local application = fake_application(92, {}, "local.poc001.fixture")
+    window.application = function() return application end
+    local state = install_fake_hs({}); package.loaded.observer = nil
+    local reads = 0
+    hs.hash = { SHA256 = function() error("must not hash malformed token") end }
+    hs.axuielement = { windowElement = function() return { attributeValue = function() reads = reads + 1; return "bad" end } end }
+    local observer = require("observer").new(); assert(observer:start()); assert(observer:arm_fixture_correlation(1))
+    state.filter.subscriptions.windowCreated(window, nil, "windowCreated"); state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
+    equal(reads, 1); equal(events(observer, "correlation_unresolved")[1].reason, "malformed")
+    assert(observer:arm_fixture_correlation(2)); hs.axuielement.windowElement = function() error("construction fails") end
+    state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
+    assert(observer:arm_fixture_correlation(3)); hs.axuielement.windowElement = function() return { attributeValue = function() error("read fails") end } end
+    state.filter.subscriptions.windowCreated(window, nil, "windowCreated")
+    local unresolved = events(observer, "correlation_unresolved")
+    equal(unresolved[2].reason, "window_element_unavailable"); equal(unresolved[3].reason, "attribute_read_error")
+    local source_text = assert(io.open(root .. "pocs/001-window-events-liveness/observer.lua")):read("*a")
+    local correlation_source = assert(source_text:match("function Observer:_observe_fixture_correlation.-\nend\n\nfunction Observer:_start_filter"))
+    for _, prohibited in ipairs({ "attributeNames", "allAttributeValues", "hs.window.find", "children", "timer", "runningApplications", "focusedWindow" }) do assert(not correlation_source:find(prohibited, 1, true), prohibited .. " is prohibited in correlation observer") end
+    observer:stop()
   end,
   ["POC-001 cleanup removes observer-owned direct watchers"] = function()
     local window, application = fake_window(501, complete_metadata()), fake_application(55, {})
