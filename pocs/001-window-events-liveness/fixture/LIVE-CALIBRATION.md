@@ -1,10 +1,12 @@
 # POC-001 fixture-only live calibration — one-sample operator guide
 
-**Status: proposed; requires explicit human approval before use.** This guide
-prepares exactly one disposable **warm** fixture smoke sample. It is not an
-authorization to build, launch, send IPC, change Hammerspoon, or run any POC.
-It is intentionally outside the 30-warm/5-cold volume run and outside the
-fixture--observer correlation experiment.
+**Status: completed once; no repeat is authorized.** This guide prepared
+exactly one disposable **warm** fixture smoke sample. Its redacted result is
+recorded in the [canonical POC Results](../../../docs/pocs/001-window-events-liveness.md#results)
+and [fixture evidence](../EVIDENCE.md#fixture-only-one-sample-smokecalibration--recorded-result).
+This guide does not authorize another build, launch, IPC action, Hammerspoon
+change, or POC run. The observation remains intentionally outside the
+30-warm/5-cold volume run and the fixture--observer correlation experiment.
 
 ## Scope and frozen boundary
 
@@ -190,19 +192,23 @@ click it, close it manually, switch Spaces, or interact with another window.
 
 ## Evaluate one smoke sample only
 
-The operator may privately calculate only the named trace deltas from
-`elapsed_ticks` with the recorded timebase, or use a redacting local summary
-that outputs pass/fail/counts only. Keep tokens and raw records private.
+The operator may privately read the named duration from the corresponding
+**completion** record's `elapsed_ticks`, converting it with the timebase frozen
+by `run_started`, or use a redacting local summary that outputs only
+pass/fail/counts. Do **not** require `elapsed_ticks` on a request record and do
+**not** subtract ticks, `elapsed_ticks`, or other completion metadata from the
+completion record: the fixture has already stored the checked request-to-
+completion interval there. Keep tokens and raw records private.
 
-- `fixture_create_visible_completed - create_requested`: compare the one value
+- `fixture_create_visible_completed`: compare its completion-record duration
   with 100 ms as a diagnostic only. The frozen warm-create threshold is **p95
   <= 100 ms over n=30**; **n=1 cannot claim that p95 or a warm-create pass**.
-- `native_close_completed - close_requested`: the single value must be **<=
-  1,000 ms**. It remains a fixture-local close diagnostic, not the POC's
-  observer destruction-confirmation gate.
-- `pending_work_serviced - pending_work_requested`: the single value must be
-  **<= 100 ms max**. It does not establish the frozen p95 <= 50 ms threshold
-  or general main-thread/Hammerspoon service.
+- `native_close_completed`: its completion-record duration must be **<= 1,000
+  ms**. It remains a fixture-local close diagnostic, not the POC's observer
+  destruction-confirmation gate.
+- `pending_work_serviced`: its completion-record duration must be **<= 100 ms
+  max**. It does not establish the frozen p95 <= 50 ms threshold or general
+  main-thread/Hammerspoon service.
 
 Any missing, duplicate, late, out-of-order, wrong-sample, or user-origin close
 is an abort/failure for this smoke sample. Do not rerun it ad hoc or change a

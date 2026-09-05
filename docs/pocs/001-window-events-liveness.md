@@ -14,11 +14,10 @@ advances the remaining live matrix. The companion
 now freezes the separately gated AppKit fixture **implementation handoff**.
 Its approved narrow source/test revision measures
 `fixture_create_visible_completed` from `create_requested` using the public
-AppKit occlusion callback and visible bit. The next
-[fixture-only one-sample live-calibration guide](../../pocs/001-window-events-liveness/fixture/LIVE-CALIBRATION.md)
-is **proposed** and requires explicit human approval. **POC-001 remains
-`hypothesis`; neither a fixture build/launch nor a live action is authorized
-until that approval**.
+AppKit occlusion callback and visible bit. One approved
+[fixture-only one-sample live-calibration](../../pocs/001-window-events-liveness/fixture/LIVE-CALIBRATION.md)
+has now been recorded below. **POC-001 remains `hypothesis`; this observation
+authorizes neither another fixture action nor a POC-001 live action.**
 
 ## Decision enabled
 Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,
@@ -602,6 +601,35 @@ is POC instrumentation only, not a production adapter decision. Pure-fake
 coverage verifies repeated same-fullscreen resize skips, both fullscreen
 transitions probe, moved always probes, and unavailable resize is
 non-destructive.
+
+### Fixture-only one-sample smoke/calibration — recorded result
+
+**Observed, fixture-only:** one approved warm fixture smoke/calibration sample
+completed. All eight expected markers occurred exactly once and in the required
+order. The redacted summary reports **52.508 ms** from create request to the
+fixture-visible completion, **0.115 ms** for pending work, and **0.419 ms**
+from close request to native-close completion.
+
+- Trace schema, marker order/counts, and owner-only `0600` permissions passed.
+  Cleanup passed: the fixture socket and process were absent, and the tree was
+  clean after the sample.
+- The delegated runner initially reported **FAILED** because its ad hoc
+  evaluator incorrectly required `elapsed_ticks` on request records and then
+  subtracted completion metadata. No app, build, IPC, or Hammerspoon action was
+  rerun. The orchestrator instead performed a bounded local review against the
+  documented schema: each completion record already stores `elapsed_ticks` for
+  its request-to-completion interval, using the timebase frozen by
+  `run_started`.
+- The one close observation satisfies its fixture-local **<= 1,000 ms**
+  one-sample diagnostic limit, and the one pending-work observation satisfies
+  its **<= 100 ms maximum** diagnostic limit. The create observation is below
+  100 ms only as a diagnostic. With one sample, it establishes neither a warm
+  p95 nor any warm-create pass.
+
+This is a successful fixture-only smoke/calibration observation. It is not a
+POC-001 pass, does not prove Hammerspoon or representative-app behavior, and
+does not satisfy any observer, liveness, readiness, destruction-authority, or
+warm-p95 gate.
 
 ## Conclusion
 Pending. This protocol proves no macOS/Hammerspoon behavior yet.

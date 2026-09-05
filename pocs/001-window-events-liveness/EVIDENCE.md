@@ -207,6 +207,32 @@ coverage verifies repeated same-fullscreen resize skips, both fullscreen
 transitions probe, moved always probes, and unavailable resize is
 non-destructive.
 
+## Fixture-only one-sample smoke/calibration — recorded result
+
+**Observed, fixture-only:** one approved warm fixture smoke/calibration sample
+completed. All eight expected markers occurred exactly once and in order.
+Redacted timing aggregates were **52.508 ms** for create-visible, **0.115 ms**
+for pending work, and **0.419 ms** for close.
+
+- Trace/schema validation, marker order/counts, and owner-only `0600`
+  permissions passed. Cleanup passed: the socket and process were absent, and
+  the tree was clean.
+- The delegated runner first reported **FAILED** because its ad hoc evaluator
+  incorrectly required `elapsed_ticks` on request records and subtracted
+  completion metadata. No rerun occurred. The orchestrator performed a bounded
+  local review against the documented schema: each completion record already
+  carries `elapsed_ticks` for its request-to-completion interval, with the
+  timebase frozen by `run_started`.
+- The one close value satisfies the fixture-local **<= 1,000 ms** one-sample
+  diagnostic limit, and the one pending-work value satisfies its **<= 100 ms**
+  maximum diagnostic limit. The create value is below 100 ms only as a
+  diagnostic. This sample cannot establish a warm p95 or a warm-create pass.
+
+Classify this as a successful fixture-only smoke/calibration observation only.
+It is not a POC-001 pass, not warm-p95 evidence, and does not prove observer,
+liveness, readiness, destruction-authority, Hammerspoon, or
+representative-app behavior.
+
 ## Implication
 
 The observer also records direct-AX and filter destruction candidates
