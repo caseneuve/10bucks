@@ -108,7 +108,7 @@ git diff --quiet "$FREEZE_COMMIT" -- \
   pocs/001-window-events-liveness/private_export.lua \
   "$FIXTURE_SUBTREE/Sources" "$FIXTURE_SUBTREE/Resources" \
   "$FIXTURE_SUBTREE/scripts" "$FIXTURE_SUBTREE/Tests"
-{ sw_vers; uname -m; hs -v; git branch --show-current; git rev-parse HEAD; git rev-parse "$FREEZE_COMMIT"; git status --porcelain; } > "$RUN_DIR/environment.txt"
+{ sw_vers; uname -m; hs -c 'print(hs.processInfo.version)'; git branch --show-current; git rev-parse HEAD; git rev-parse "$FREEZE_COMMIT"; git status --porcelain; } > "$RUN_DIR/environment.txt"
 chmod 600 "$RUN_DIR/environment.txt"
 require_mode "$RUN_DIR/environment.txt" 600
 
@@ -117,8 +117,9 @@ require_mode "$RUN_DIR/environment.txt" 600
 test -x "$FIXTURE" && test -x "$FIXTURECTL"
 ```
 
-`hs -v` is only a version query. If unavailable, record that fact privately and
-abort before stopping legacy. Do not substitute a differently built artifact.
+`hs -c 'print(hs.processInfo.version)'` is only a read-only version query. If
+unavailable, record that fact privately and abort before stopping legacy. Do not
+substitute a differently built artifact.
 
 ### 2. Install abort restoration, launch without creating, then stop legacy/start observer
 
@@ -188,6 +189,12 @@ it exactly once. Do not change Hammerspoon init/load paths and do not reload:
 ```lua
 local root = "/ABSOLUTE/PATH/TO/10bucks" -- replace privately; do not print it
 package.path = root .. "/pocs/001-window-events-liveness/?.lua;" .. package.path
+-- Reload only observer dependencies from the frozen POC path, not stale console modules.
+package.loaded.trace = nil
+package.loaded.lifecycle = nil
+package.loaded.ownership = nil
+package.loaded.private_export = nil
+package.loaded.correlation = nil
 POC001_OBSERVER = assert(loadfile(root .. "/pocs/001-window-events-liveness/observer.lua"))()
 assert(POC001_OBSERVER:start())
 print("observer_started=true")

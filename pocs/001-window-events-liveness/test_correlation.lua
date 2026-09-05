@@ -14,6 +14,13 @@ end
 local local_alias = "poc001-corr-sha256-83687efb86d2554f0547e44f7790efc5cc14b07af1ad8447ebb2d270cc6d7eac"
 local remote_alias = "poc001-corr-sha256-5e5f2182c2728604b072539a13264b2ed227582defd4deaa220f8ed8cb7e178b"
 
+local function read_file(path)
+  local file = assert(io.open(path, "r"))
+  local content = assert(file:read("*a"))
+  file:close()
+  return content
+end
+
 return {
   ["POC-001 correlation uses both frozen SHA-256 vectors and retains aliases only"] = function()
     equal(Correlation.alias("corr-AAAAAAAAAAAAAAAA", sha256), local_alias)
@@ -62,6 +69,17 @@ return {
     }) do
       local value, reason = Correlation.close_latency(invalid.fixture, invalid.observer, invalid.options)
       equal(value, nil); equal(reason, invalid.reason)
+    end
+  end,
+
+  ["POC-001 correlation guide reloads only its frozen observer dependencies"] = function()
+    local guide = read_file(root .. "pocs/001-window-events-liveness/LIVE-CORRELATION.md")
+    assert(guide:find("hs %-c 'print%(hs%.processInfo%.version%)'"))
+    assert(not guide:find("hs %-v"))
+    local load_at = assert(guide:find("POC001_OBSERVER = assert%(loadfile"))
+    for _, module in ipairs({ "trace", "lifecycle", "ownership", "private_export", "correlation" }) do
+      local clear_at = assert(guide:find("package%.loaded%." .. module .. " = nil"))
+      assert(clear_at < load_at)
     end
   end,
 
