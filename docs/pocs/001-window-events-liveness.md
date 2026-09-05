@@ -627,7 +627,51 @@ The operator used bounded external status checks while awaiting callback
 delivery; the observer itself used no timer or poll. This one sample proves only
 the privacy-safe fixture--observer join and candidate alias retention. It does
 not establish p95, liveness, destruction authority, readiness, representative-
-app behavior, or POC-001 completion. No volume run is authorized.
+app behavior, or POC-001 completion. The separately approved volume attempt is
+recorded below.
+
+### Fixture--observer correlation volume — stopped warm class; five cold samples
+
+**Observed, approved volume attempt:** the warm class stopped during sample 2,
+as required by the fixed stop rule. Warm sample 1 completed exact alias
+correlation and both destruction candidates. The fixture then created and
+reported its second window, and the direct application AX watcher delivered
+`AXWindowCreated`, but no fixture-scoped `hs.window.filter` creation callback
+formed the correlation map. The observer retained uncertainty and the runner
+aborted the class without a third create. One direct callback in this sequence
+took **426.587 ms**, exceeding the 100 ms maximum. Cleanup succeeded and this
+was independently verified from the private export; it is not an analyzer-only
+failure.
+
+The separately defined cold class completed all five first-create samples:
+
+- exact full alias equality: **5/5**;
+- identifier construction/read: **1/1 per sample**;
+- direct AX destruction-candidate latency: median **1.943 ms**, p95/max
+  **4.947 ms**;
+- filter destruction-candidate latency: median **4.397 ms**, p95/max
+  **6.587 ms**;
+- all callback processing: median **3.748 ms**, p95 **46.080 ms**, maximum
+  **57.217 ms**;
+- POC-issued steady global queries: **0**.
+
+However, request-to-filter-correlation readiness was **3,945.608–4,315.023
+ms** (median **4,261.876 ms**), so every cold sample exceeded the fixed
+3,000 ms bound. In the same controlled runs, one direct `AXWindowCreated`
+callback arrived **4.970–44.283 ms** after the fixture create request, while
+the fixture-scoped filter callback arrived **3,944.859–4,314.705 ms** after
+it. The direct callback class had processing durations **23.582–57.217 ms**;
+with five samples its nearest-rank p95 exceeds the 50 ms steady-callback gate.
+These direct timings are controlled-run observations, not alias-based identity
+joins.
+
+All five cold exports had exact query counts, zero steady global queries, and
+clean observer/fixture shutdown. Legacy 10bucks was restored. The volume does
+not establish the required warm count or a passing cold readiness path. It is
+narrow evidence that the tested filter correlation path is late on fresh
+fixture creation and missed the rapid same-process second creation, while the
+direct AX creation signal arrived much earlier and requires further adapter
+comparison rather than being accepted as authority from this fixture alone.
 
 ### Fixture-only one-sample smoke/calibration — recorded result
 

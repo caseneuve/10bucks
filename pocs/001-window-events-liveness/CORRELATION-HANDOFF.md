@@ -222,12 +222,12 @@ correlation input without a new handoff.
 ## Later live sequencing (not authorized now)
 
 The one-sample correlation smoke completed under the
-[live-correlation guide](LIVE-CORRELATION.md). A separate approval is required
-before the 30 warm and 5 cold fresh-fixture-create volume. Retain every
-failure/timeout and stop the path on the first privacy, query,
-prohibited-input, or cleanup violation. Neither the completed smoke nor any
-future volume alone passes POC-001's liveness, readiness, destruction, or
-source-selection gates.
+[live-correlation guide](LIVE-CORRELATION.md). The separately approved volume
+attempt is recorded in the canonical POC result: the warm class stopped during
+sample 2 and the five cold samples completed but missed the readiness bound.
+No further correlation volume is authorized. Neither the completed smoke nor
+the partial/failing volume alone passes POC-001's liveness, readiness,
+destruction, or source-selection gates.
 
 ## Alternatives, stop rule, and authorization
 
