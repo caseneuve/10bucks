@@ -5,9 +5,18 @@ private final class CoordinatorTrace: FixtureTraceSink {
     func record(_ event: FixtureTraceEvent) { events.append(event) }
 }
 
+private enum CoordinatorInjectedFailure: Error { case afterAssignment }
+
 private final class CoordinatorWindowPort: FixtureWindowPort {
     var operations: [String] = []
+    var failAfterAssignment = false
     func createWindow() throws -> String { operations.append("create"); return "window-1" }
+    func assignCorrelationToken(_ token: String, objectID: String) throws {
+        operations.append("assignAccessibilityIdentifier:\(token):\(objectID)")
+        if failAfterAssignment { throw CoordinatorInjectedFailure.afterAssignment }
+    }
+    func clearCorrelationToken(objectID: String) { operations.append("clearAccessibilityIdentifier:\(objectID)") }
+    func abortCreatedWindow(objectID: String) { operations.append("abortCreatedWindow:\(objectID)") }
     func orderFront(objectID: String) { operations.append("orderFront:\(objectID)") }
     func performClose(objectID: String) { operations.append("performClose:\(objectID)") }
 }
@@ -20,8 +29,9 @@ func testCoordinatorCreateRegistersTracesAndOrdersFrontInFrozenOrder() throws {
 
     let response = try coordinator.handle(FixtureRequest(command: "create", fields: ["request_id": "req-001", "sample_id": "create-001"]))
     try expect(response.fixtureToken == "fixture-win-AAAA", "create returns frozen fixture token")
-    try expect(window.operations == ["create", "orderFront:window-1"], "creates then orders only the fixture window")
-    try expect(coordinator.operations == ["create", "register:window-1", "trace:create_requested", "orderFront:window-1"], "create has exact register/trace/order-front ordering")
+    try expect(response.correlationAlias == "poc001-corr-sha256-e7403107d43bc38654e730fa05da93ce573b8b9a4cb1c9ed1adf218e5d868592", "create returns only the correlation alias")
+    try expect(window.operations == ["create", "assignAccessibilityIdentifier:corr-BBBB:window-1", "orderFront:window-1"], "assigns the raw token to accessibilityIdentifier before ordering only the fixture window")
+    try expect(coordinator.operations == ["create", "assignAccessibilityIdentifier:window-1", "register:window-1", "trace:create_requested", "orderFront:window-1"], "create assigns before trace and order-front in frozen order")
 }
 
 func testCoordinatorCloseTracesThenPerformsOnlyMatchingFixtureClose() throws {
@@ -36,6 +46,21 @@ func testCoordinatorCloseTracesThenPerformsOnlyMatchingFixtureClose() throws {
     _ = try coordinator.handle(FixtureRequest(command: "close", fields: ["request_id": "req-002", "sample_id": "close-001", "fixture_token": created.fixtureToken!]))
     try expect(Array(coordinator.operations.dropFirst(beforeClose)) == ["close", "requestClose:window-1", "trace:close_requested", "performClose:window-1"], "close requests, traces, and performs close in frozen order")
     try expect(window.operations.last == "performClose:window-1", "never uses unrelated window APIs")
+    _ = coordinator.windowWillClose(objectID: "window-1")
+    try expect(window.operations.last == "clearAccessibilityIdentifier:window-1", "matching terminal close clears the exact identifier before registry removal")
+}
+
+func testCoordinatorCreateFailureAfterAssignmentClearsAndAbortsExactWindow() throws {
+    let trace = CoordinatorTrace()
+    let window = CoordinatorWindowPort()
+    window.failAfterAssignment = true
+    let coordinator = FixtureCoordinator(control: FixtureControl(tokenGenerator: DeterministicTokenGenerator(values: ["AAAA", "BBBB"])), lifecycle: FixtureLifecycleHooks(trace: trace), windows: window, trace: trace, pending: PendingWorkModel(trace: trace, enqueue: { $0() }))
+
+    try expectThrows(CoordinatorInjectedFailure.afterAssignment) {
+        _ = try coordinator.handle(FixtureRequest(command: "create", fields: ["request_id": "req-001", "sample_id": "create-001"]))
+    }
+    try expect(window.operations == ["create", "assignAccessibilityIdentifier:corr-BBBB:window-1", "clearAccessibilityIdentifier:window-1", "abortCreatedWindow:window-1"], "a post-assignment failure clears and aborts only the created fixture window")
+    try expect(!coordinator.hasActiveGeneration, "post-assignment failure retains no active raw token or lifecycle generation")
 }
 
 func testCoordinatorRejectsCloseBeforeCompletionWithoutPoisoningGeneration() throws {
@@ -77,7 +102,7 @@ func testCoordinatorShutdownClearsActiveGenerationAndPendingWorkBeforeClosingFix
     _ = try coordinator.handle(FixtureRequest(command: "probe_pending_work", fields: ["request_id": "req-002", "sample_id": "probe-001"]))
     coordinator.shutdown()
     try expect(!coordinator.hasActiveGeneration && pending.state == .shutDown, "shutdown leaves no active generation or pending work")
-    try expect(window.operations.last == "performClose:window-1", "shutdown closes only its fixture window after state cleanup")
+    try expect(Array(window.operations.suffix(2)) == ["clearAccessibilityIdentifier:window-1", "performClose:window-1"], "shutdown clears the exact fixture identifier before closing it")
 }
 
 func testCoordinatorRejectsPendingProbeWithoutCompletedMatchingGeneration() throws {
@@ -99,6 +124,7 @@ func testCoordinatorRejectsPendingProbeWithoutCompletedMatchingGeneration() thro
 let fixtureCoordinatorTests: [(String, () throws -> Void)] = [
     ("coordinator creates, registers, traces, and orders front in frozen order", testCoordinatorCreateRegistersTracesAndOrdersFrontInFrozenOrder),
     ("coordinator closes only the matching fixture in frozen order", testCoordinatorCloseTracesThenPerformsOnlyMatchingFixtureClose),
+    ("coordinator aborts a post-assignment create failure transactionally", testCoordinatorCreateFailureAfterAssignmentClearsAndAbortsExactWindow),
     ("coordinator rejects premature close without poisoning its generation", testCoordinatorRejectsCloseBeforeCompletionWithoutPoisoningGeneration),
     ("coordinator clears control for reordered will-close without a false completion", testCoordinatorClearsControlForReorderedWillCloseWithoutFalseCloseRecord),
     ("coordinator shutdown clears state before closing the fixture", testCoordinatorShutdownClearsActiveGenerationAndPendingWorkBeforeClosingFixture),

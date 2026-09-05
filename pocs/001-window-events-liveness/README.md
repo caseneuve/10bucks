@@ -7,11 +7,12 @@ The source/test checkpoint is complete. One separately human-gated
 [fixture-only live calibration](fixture/LIVE-CALIBRATION.md) has been completed
 and recorded as a one-sample observation. It did **not** authorize Hammerspoon,
 an observer, or fixture--observer correlation, and it authorizes no repeat.
-A distinct approval is still required for any future build/launch or the later
-fixture--observer correlation experiment. The unapproved draft
-[correlation research handoff](CORRELATION-HANDOFF.md) defines the candidate
-public-AX/SHA-256-alias join and authorizes neither implementation nor a live
-action.
+The correlation handoff records an implemented but approval-pending
+fixture-only source/test/build slice; it does **not** authorize a fixture
+launch, IPC request against the app, Hammerspoon action, observer
+implementation, or any live correlation action. The
+[correlation handoff](CORRELATION-HANDOFF.md) records the public-AX/SHA-256-
+alias fixture seam and the remaining unapproved observer/live gates.
 
 ## Decision boundary
 
@@ -233,16 +234,14 @@ slice or a live run.
 secondary queue. This measures service of this fixture's main dispatch queue
 only, not Hammerspoon hotkey service or general OS responsiveness.
 
-The checked-in fixture source still carries `correlation_token` in its private
-create response; that is a **current source fact**, not an approved correlation
-interface. The unapproved handoff proposes a different future experiment: the
-raw correlation token remains only in fixture memory and the live AX identifier;
-fixture IPC/trace emit a full SHA-256 `correlation_alias` only. The observer
-reads the raw AX value once, computes the identical alias, immediately clears
-the raw value, and emits only the alias. Later analysis requires exact alias
-equality, never title, PID, window number, focus, visibility, or timing
-proximity. Until an approved gate passes, correlation is **Hypothesis** and the
-fixture has no Hammerspoon dependency.
+The checked-in fixture source now keeps the raw correlation token only in its
+active in-memory generation and the live AppKit accessibility identifier;
+fixture IPC/trace emit only the full SHA-256 `correlation_alias`. The observer
+is not implemented or authorized: a future approved slice would read the raw
+AX value once, calculate the same alias, clear the raw value, and emit only the
+alias. Later analysis requires exact alias equality, never title, PID, window
+number, focus, visibility, or timing proximity. Correlation remains a
+**Hypothesis** and the fixture has no Hammerspoon dependency.
 
 ## Fixed measurements, counts, and stop rules
 

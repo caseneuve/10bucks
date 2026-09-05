@@ -1,9 +1,11 @@
 # POC-001 fixture--observer correlation gate
 
-**Status: draft research handoff — not approved.** POC-001 remains a
-**Hypothesis**. This correction freezes a proposed common, privacy-safe alias
-join, but authorizes **no** source change, build, launch, IPC request,
-Hammerspoon call/load, or live action. It is linked from the
+**Status: fixture source/test/build slice implemented, pending approval; live
+correlation remains unapproved.** POC-001 remains a **Hypothesis**. The
+fixture-only source slice below is implemented for source/tests/build
+verification, but is not an approved fixture half. It does **not** authorize an
+app launch, IPC request against the app, Hammerspoon call/load, observer
+implementation, or any live action. It is linked from the
 [canonical POC result](../../docs/pocs/001-window-events-liveness.md) and the
 [fixture handoff](README.md).
 
@@ -88,18 +90,20 @@ Missing/unavailable/malformed AX data, an alias calculation error, or an alias
 mismatch is unresolved/failed evidence, never permission to use a prohibited
 input.
 
-## Frozen minimal future source slice
+## Implemented fixture source/test/build slice
 
-This source slice requires a new approval and is not authorized now:
+The implemented, approval-pending fixture-only portion is limited to source,
+pure tests, static checks, and build verification:
 
-1. **Fixture:** generate `T` only in memory, calculate `alias(T)` with public
-   CommonCrypto, assign `window.accessibilityIdentifier = T` on the main thread
-   before `create_requested` and `orderFrontRegardless()`, then clear the
-   fixture-held raw token on close/shutdown. Fixture trace and IPC records emit
-   only `correlation_alias`; they must omit `correlation_token`, raw AX values,
-   PID, and native ID. The existing `fixture_token` remains the separate
-   private close-control capability.
-2. **Observer:** on one armed fixture create callback that already supplies its
+1. **Fixture:** generates `T` only in active fixture memory, calculates
+   `alias(T)` with public CommonCrypto, and calls public
+   `setAccessibilityIdentifier(T)` on the main thread before
+   `create_requested` and `orderFrontRegardless()`. It clears the raw active
+   token on matching close, shutdown, and create-error cleanup. Fixture trace
+   and IPC records emit only `correlation_alias`; they omit
+   `correlation_token`, raw AX values, PID, and native ID. The existing
+   `fixture_token` remains the separate private close-control capability.
+2. **Observer (not implemented or authorized):** on one armed fixture create callback that already supplies its
    `hs.window`, call `hs.axuielement.windowElement(callback_window)` once and
    `:attributeValue("AXIdentifier")` once. Validate the exact raw-token
    grammar, compute `alias(T)` with `hs.hash.SHA256`, emit the alias, retain

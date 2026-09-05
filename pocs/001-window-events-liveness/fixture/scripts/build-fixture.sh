@@ -11,7 +11,7 @@ SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
 rm -rf "$app"
 mkdir -p "$macos"
 
-swiftc -sdk "$SDKROOT" -target arm64-apple-macosx26.0 -framework AppKit \
+swiftc -sdk "$SDKROOT" -target arm64-apple-macosx26.0 -framework AppKit -framework Security \
   -o "$macos/POC001Fixture" \
   "$fixture/Sources/POC001FixtureApp.swift" \
   "$fixture/Sources/Clock.swift" \

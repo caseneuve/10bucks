@@ -17,12 +17,15 @@ public struct FixtureResponse: Equatable {
     public let requestID: String
     public let sampleID: String
     public let fixtureToken: String?
-    public let correlationToken: String?
+    public let correlationAlias: String?
 }
 
 public struct ActiveFixtureGeneration: Equatable {
     public let token: String
+    // The raw token is retained only while this generation is active, solely
+    // to assign the exact AppKit accessibilityIdentifier before ordering.
     public let correlationToken: String
+    public let correlationAlias: String
     public let generation: UInt64
     public let createSampleID: String
     public var closeRequested: Bool
@@ -63,9 +66,12 @@ public struct FixtureControl {
         case "create":
             guard activeGeneration == nil else { throw FixtureControlError.commandRejected(.createAlreadyActive) }
             guard nextGeneration != UInt64.max else { throw FixtureControlError.generationExhausted }
+            let fixtureToken = try tokenGenerator.fixtureToken()
+            let correlationToken = try tokenGenerator.correlationToken()
             let active = ActiveFixtureGeneration(
-                token: try tokenGenerator.fixtureToken(),
-                correlationToken: try tokenGenerator.correlationToken(),
+                token: fixtureToken,
+                correlationToken: correlationToken,
+                correlationAlias: CorrelationAlias.alias(for: correlationToken),
                 generation: nextGeneration,
                 createSampleID: sampleID,
                 closeRequested: false,
@@ -73,10 +79,10 @@ public struct FixtureControl {
             )
             nextGeneration += 1
             activeGeneration = active
-            return FixtureResponse(status: .accepted, requestID: requestID, sampleID: sampleID, fixtureToken: active.token, correlationToken: active.correlationToken)
+            return FixtureResponse(status: .accepted, requestID: requestID, sampleID: sampleID, fixtureToken: active.token, correlationAlias: active.correlationAlias)
         case "probe_pending_work":
             guard activeGeneration != nil else { throw FixtureControlError.commandRejected(.unknownFixtureToken) }
-            return FixtureResponse(status: .accepted, requestID: requestID, sampleID: sampleID, fixtureToken: nil, correlationToken: nil)
+            return FixtureResponse(status: .accepted, requestID: requestID, sampleID: sampleID, fixtureToken: nil, correlationAlias: nil)
         case "close":
             let token = request.fields["fixture_token"]!
             guard var active = activeGeneration, active.token == token else { throw FixtureControlError.commandRejected(.unknownFixtureToken) }
@@ -84,10 +90,13 @@ public struct FixtureControl {
             active.closeRequested = true
             active.closeSampleID = sampleID
             activeGeneration = active
-            return FixtureResponse(status: .accepted, requestID: requestID, sampleID: sampleID, fixtureToken: nil, correlationToken: nil)
+            return FixtureResponse(status: .accepted, requestID: requestID, sampleID: sampleID, fixtureToken: nil, correlationAlias: nil)
         case "shutdown":
             isShutDown = true
-            return FixtureResponse(status: .accepted, requestID: requestID, sampleID: sampleID, fixtureToken: nil, correlationToken: nil)
+            // Drop the only fixture-held raw correlation reference before the
+            // shutdown response crosses IPC.
+            activeGeneration = nil
+            return FixtureResponse(status: .accepted, requestID: requestID, sampleID: sampleID, fixtureToken: nil, correlationAlias: nil)
         default:
             throw FixtureControlError.invalidRequest
         }
@@ -98,6 +107,10 @@ public struct FixtureControl {
         guard let active = activeGeneration, active.token == token, active.generation == generation else { return false }
         activeGeneration = nil
         return true
+    }
+
+    public mutating func discardActiveGeneration() {
+        activeGeneration = nil
     }
 
     private func isValidRequest(_ request: FixtureRequest) -> Bool {

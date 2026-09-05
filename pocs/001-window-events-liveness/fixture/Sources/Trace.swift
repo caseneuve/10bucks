@@ -68,7 +68,7 @@ public enum Trace {
     // This is deliberately a small, explicit vocabulary. New trace data must be
     // reviewed here rather than allowing fixture or host identifiers by default.
     private static let approvedStringFieldNames: Set<String> = [
-        "fixture_token", "correlation_token", "request_id", "origin", "status", "reason"
+        "fixture_token", "correlation_alias", "request_id", "origin", "status", "reason"
     ]
     private static let approvedUnsignedFieldNames: Set<String> = [
         "timebase_numer", "timebase_denom", "elapsed_ticks"
@@ -132,7 +132,7 @@ public enum Trace {
         if field == "fixture_token", !value.hasPrefix("fixture-win-") {
             throw TraceError.unsafeScalar(field)
         }
-        if field == "correlation_token", !value.hasPrefix("corr-") {
+        if field == "correlation_alias", !CorrelationAlias.isValidAlias(value) {
             throw TraceError.unsafeScalar(field)
         }
     }

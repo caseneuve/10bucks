@@ -13,7 +13,8 @@ func testFixtureControlAcceptsOnlyTheFourExactCommandGrammars() throws {
     ]))
     try expect(created.status == .accepted, "accepts create with exactly request and sample IDs")
     try expect(created.fixtureToken == "fixture-win-AAAA", "returns the generated fixture token")
-    try expect(created.correlationToken == "corr-BBBB", "returns the generated correlation token")
+    try expect(created.correlationAlias == "poc001-corr-sha256-e7403107d43bc38654e730fa05da93ce573b8b9a4cb1c9ed1adf218e5d868592", "returns only the full correlation alias")
+    try expect(control.activeGeneration?.correlationToken == "corr-BBBB", "keeps the raw correlation token only in active fixture memory")
     try expect(control.activeGeneration?.createSampleID == "fixture-create-warm-001", "retains the create sample for lifecycle completion")
 
     for invalid in [
@@ -70,7 +71,7 @@ func testFixtureControlRemovesOnlyAfterMatchingWillCloseAndRejectsAfterShutdown(
     var shuttingDown = FixtureControl(tokenGenerator: DeterministicTokenGenerator(values: ["CCCC", "DDDD"]))
     _ = try shuttingDown.handle(request("create", ["request_id": "req-006", "sample_id": "sample-006"]))
     _ = try shuttingDown.handle(request("shutdown", ["request_id": "req-007", "sample_id": "sample-007"]))
-    try expect(shuttingDown.activeGeneration != nil, "shutdown rejects work but does not remove a live registry entry outside will-close")
+    try expect(shuttingDown.activeGeneration == nil, "shutdown clears the raw active correlation token and active registry")
 }
 
 func testFixtureControlRejectsGenerationCounterOverflow() throws {

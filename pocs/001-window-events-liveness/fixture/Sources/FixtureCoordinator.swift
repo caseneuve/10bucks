@@ -5,6 +5,10 @@ import Foundation
 // ordering remains pure-testable without a run loop or a real window.
 public protocol FixtureWindowPort: AnyObject {
     func createWindow() throws -> String
+    func assignCorrelationToken(_ token: String, objectID: String) throws
+    func clearCorrelationToken(objectID: String)
+    // Aborts only a just-created fixture window after its identifier is cleared.
+    func abortCreatedWindow(objectID: String)
     func orderFront(objectID: String)
     func performClose(objectID: String)
 }
@@ -49,6 +53,10 @@ public final class FixtureCoordinator {
     public func windowWillClose(objectID: String) -> LifecycleHookResult {
         precondition(Thread.isMainThread, "FixtureCoordinator must run on the main thread")
         let expected = lifecycle.active
+        if expected?.objectID == objectID {
+            windows.clearCorrelationToken(objectID: objectID)
+            operations.append("clearAccessibilityIdentifier:\(objectID)")
+        }
         let result = lifecycle.windowWillClose(objectID: objectID)
         if let expected {
             switch result {
@@ -64,7 +72,10 @@ public final class FixtureCoordinator {
     public func shutdown() {
         precondition(Thread.isMainThread, "FixtureCoordinator must run on the main thread")
         pending.shutdown()
-        guard let active = lifecycle.discardForShutdown() else { return }
+        guard let active = lifecycle.active else { return }
+        windows.clearCorrelationToken(objectID: active.objectID)
+        operations.append("clearAccessibilityIdentifier:\(active.objectID)")
+        _ = lifecycle.discardForShutdown()
         _ = control.completeClose(token: active.token, generation: active.generation)
         // A shutdown is allowed to close the sole fixture window only after its
         // generation and pending work are terminal. It never enumerates another window.
@@ -75,10 +86,26 @@ public final class FixtureCoordinator {
         let response = try control.handle(request)
         guard let active = control.activeGeneration else { throw FixtureControlError.invalidRequest }
         operations.append("create")
-        let objectID = try windows.createWindow()
-        try lifecycle.register(token: active.token, generation: active.generation, objectID: objectID, createSampleID: active.createSampleID)
+        var objectID: String?
+        do {
+            let createdObjectID = try windows.createWindow()
+            objectID = createdObjectID
+            try windows.assignCorrelationToken(active.correlationToken, objectID: createdObjectID)
+            operations.append("assignAccessibilityIdentifier:\(createdObjectID)")
+            try lifecycle.register(token: active.token, generation: active.generation, objectID: createdObjectID, createSampleID: active.createSampleID)
+        } catch {
+            if let objectID {
+                windows.clearCorrelationToken(objectID: objectID)
+                windows.abortCreatedWindow(objectID: objectID)
+                operations.append("abortCreatedWindow:\(objectID)")
+            }
+            _ = lifecycle.discardForShutdown()
+            control.discardActiveGeneration()
+            throw error
+        }
+        guard let objectID else { throw FixtureControlError.invalidRequest }
         operations.append("register:\(objectID)")
-        trace.record(.createRequested(token: active.token, generation: active.generation, sampleID: active.createSampleID))
+        trace.record(.createRequested(token: active.token, correlationAlias: active.correlationAlias, generation: active.generation, sampleID: active.createSampleID))
         operations.append("trace:create_requested")
         windows.orderFront(objectID: objectID)
         operations.append("orderFront:\(objectID)")

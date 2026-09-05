@@ -45,9 +45,9 @@ public enum FixtureCodec {
             guard token.hasPrefix("fixture-win-"), safeToken(token) else { throw IPCError.invalidResponse }
             fields["fixture_token"] = token
         }
-        if let token = response.correlationToken {
-            guard token.hasPrefix("corr-"), safeToken(token) else { throw IPCError.invalidResponse }
-            fields["correlation_token"] = token
+        if let alias = response.correlationAlias {
+            guard CorrelationAlias.isValidAlias(alias) else { throw IPCError.invalidResponse }
+            fields["correlation_alias"] = alias
         }
         return try encodeObject(fields)
     }
@@ -68,15 +68,15 @@ public enum FixtureCodec {
         }
         switch fields["status"] {
         case "accepted":
-            guard safeKeys(fields, expected: ["status", "request_id", "sample_id", "fixture_token", "correlation_token"]) else { throw IPCError.invalidResponse }
+            guard safeKeys(fields, expected: ["status", "request_id", "sample_id", "fixture_token", "correlation_alias"]) else { throw IPCError.invalidResponse }
             let fixtureToken = fields["fixture_token"]
-            let correlationToken = fields["correlation_token"]
+            let correlationAlias = fields["correlation_alias"]
             guard (fixtureToken == nil || (fixtureToken!.hasPrefix("fixture-win-") && safeToken(fixtureToken!))),
-                  (correlationToken == nil || (correlationToken!.hasPrefix("corr-") && safeToken(correlationToken!))) else { throw IPCError.invalidResponse }
-            return FixtureResponse(status: .accepted, requestID: requestID, sampleID: sampleID, fixtureToken: fixtureToken, correlationToken: correlationToken)
+                  (correlationAlias == nil || CorrelationAlias.isValidAlias(correlationAlias!)) else { throw IPCError.invalidResponse }
+            return FixtureResponse(status: .accepted, requestID: requestID, sampleID: sampleID, fixtureToken: fixtureToken, correlationAlias: correlationAlias)
         case "rejected":
             guard Set(fields.keys) == ["status", "request_id", "sample_id"] else { throw IPCError.invalidResponse }
-            return FixtureResponse(status: .rejected, requestID: requestID, sampleID: sampleID, fixtureToken: nil, correlationToken: nil)
+            return FixtureResponse(status: .rejected, requestID: requestID, sampleID: sampleID, fixtureToken: nil, correlationAlias: nil)
         default:
             throw IPCError.invalidResponse
         }

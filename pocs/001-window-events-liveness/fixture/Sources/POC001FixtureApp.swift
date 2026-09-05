@@ -21,6 +21,21 @@ private final class AppKitWindowPort: NSObject, FixtureWindowPort, NSWindowDeleg
         return objectID
     }
 
+    func assignCorrelationToken(_ token: String, objectID: String) throws {
+        precondition(Thread.isMainThread)
+        windows[objectID]?.setAccessibilityIdentifier(token)
+    }
+
+    func clearCorrelationToken(objectID: String) {
+        precondition(Thread.isMainThread)
+        windows[objectID]?.setAccessibilityIdentifier(nil)
+    }
+
+    func abortCreatedWindow(objectID: String) {
+        precondition(Thread.isMainThread)
+        windows[objectID]?.performClose(nil)
+    }
+
     func orderFront(objectID: String) {
         precondition(Thread.isMainThread)
         windows[objectID]?.orderFrontRegardless()
@@ -74,7 +89,7 @@ private final class AppTraceSink: FixtureTraceSink {
             let clock = try Clock.nowTicks()
             let mapped: (String, String, [String: TraceScalar], String?, Bool)
             switch event {
-            case let .createRequested(token, generation, sample): mapped = ("create_requested", sample, ["fixture_token": .string(token)], key(token, generation, "create_visible"), false)
+            case let .createRequested(token, correlationAlias, generation, sample): mapped = ("create_requested", sample, ["fixture_token": .string(token), "correlation_alias": .string(correlationAlias)], key(token, generation, "create_visible"), false)
             case let .createVisibleCompleted(token, generation, sample): mapped = ("fixture_create_visible_completed", sample, ["fixture_token": .string(token)], key(token, generation, "create_visible"), true)
             case let .closeRequested(token, generation, sample): mapped = ("close_requested", sample, ["fixture_token": .string(token)], key(token, generation, "close"), false)
             case let .closeCompleted(token, generation, sample, origin): mapped = ("native_close_completed", sample, ["fixture_token": .string(token), "origin": .string(origin == .ipc ? "ipc" : "user")], key(token, generation, "close"), true)
@@ -132,7 +147,7 @@ final class POC001FixtureApp: NSObject, NSApplicationDelegate {
         do {
             let runDirectory = try requiredRunDirectory()
             let writer = try TraceWriter(createAt: runDirectory.appendingPathComponent("trace.ndjson"))
-            let runID = "run-" + String(try SecureTokenGenerator().correlationToken().dropFirst(5))
+            let runID = "run-" + String(try SecureTokenGenerator().fixtureToken().dropFirst(12))
             let sink = AppTraceSink(writer: writer, runID: runID)
             let clock = try Clock.nowTicks()
             sink.append(event: "run_started", sampleID: "startup", fields: ["timebase_numer": .unsigned(clock.timebase.numer), "timebase_denom": .unsigned(clock.timebase.denom)])

@@ -25,6 +25,16 @@ func testTraceEncodesOnlyRequiredAndApprovedFields() throws {
     try expect(line.last == 0x0A, "writes one NDJSON line")
 }
 
+func testTraceEmitsOnlyFullCorrelationAliasNeverRawToken() throws {
+    let record = TraceRecord(
+        runID: "run-001", sampleID: "sample-001", sequence: 1, event: "create_requested",
+        clock: ClockReading(kind: .machContinuous, ticks: 1, timebase: MachTimebase(numer: 1, denom: 1)),
+        approvedFields: ["correlation_alias": .string("poc001-corr-sha256-e7403107d43bc38654e730fa05da93ce573b8b9a4cb1c9ed1adf218e5d868592")]
+    )
+    let object = try JSONSerialization.jsonObject(with: Trace.encode(record)) as! [String: Any]
+    try expect(object["correlation_alias"] as? String == "poc001-corr-sha256-e7403107d43bc38654e730fa05da93ce573b8b9a4cb1c9ed1adf218e5d868592", "emits the full frozen lowercase alias")
+}
+
 func testTraceRejectsUnsafeValuesAndUnknownFields() throws {
     try expectThrows(TraceError.invalidToken("run_id")) {
         _ = try Trace.encode(TraceRecord(
@@ -111,6 +121,7 @@ func testTraceOutputIsExactlyOwnerPrivate() throws {
 
 let traceTests: [(String, () throws -> Void)] = [
     ("trace emits strict NDJSON required and approved fields", testTraceEncodesOnlyRequiredAndApprovedFields),
+    ("trace emits only full correlation aliases", testTraceEmitsOnlyFullCorrelationAliasNeverRawToken),
     ("trace rejects unsafe fields and values", testTraceRejectsUnsafeValuesAndUnknownFields),
     ("trace enforces sequence ordering", testTraceEnforcesSequenceOrdering),
     ("trace retries interrupted and partial writes", testTraceWriterRetriesInterruptedAndPartialWrites),

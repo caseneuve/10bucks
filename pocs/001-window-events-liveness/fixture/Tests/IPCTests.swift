@@ -20,9 +20,9 @@ func testIPCCodecAcceptsOnlyExactStringSchemasAndProducesPrivateResponses() thro
         _ = try FixtureCodec.decodeRequestLine(Data([0x7B, 0xFF, 0x7D, 0x0A]))
     }
 
-    let accepted = try FixtureCodec.encodeResponse(FixtureResponse(status: .accepted, requestID: "req-001", sampleID: "sample-001", fixtureToken: "fixture-win-AAAA", correlationToken: "corr-BBBB"))
+    let accepted = try FixtureCodec.encodeResponse(FixtureResponse(status: .accepted, requestID: "req-001", sampleID: "sample-001", fixtureToken: "fixture-win-AAAA", correlationAlias: "poc001-corr-sha256-e7403107d43bc38654e730fa05da93ce573b8b9a4cb1c9ed1adf218e5d868592"))
     let acceptedObject = try JSONSerialization.jsonObject(with: accepted) as! [String: Any]
-    try expect(Set(acceptedObject.keys) == ["request_id", "sample_id", "status", "fixture_token", "correlation_token"], "accepted response exposes only approved fields")
+    try expect(Set(acceptedObject.keys) == ["request_id", "sample_id", "status", "fixture_token", "correlation_alias"], "accepted response exposes only approved fields and never the raw correlation token")
     let rejected = try FixtureCodec.encodeRejected(requestID: "req-001", sampleID: "sample-001")
     let rejectedObject = try JSONSerialization.jsonObject(with: rejected) as! [String: Any]
     try expect(Set(rejectedObject.keys) == ["request_id", "sample_id", "status"] && rejectedObject["status"] as? String == "rejected", "rejection does not disclose parser or control details")
@@ -96,7 +96,7 @@ func testIPCClientServerOneRequestAndDeterministicCleanup() throws {
     var handled: [FixtureRequest] = []
     let server = try FixtureSocketServer(socketPath: socket, dispatch: { request in
         handled.append(request)
-        return FixtureResponse(status: .accepted, requestID: request.fields["request_id"]!, sampleID: request.fields["sample_id"]!, fixtureToken: nil, correlationToken: nil)
+        return FixtureResponse(status: .accepted, requestID: request.fields["request_id"]!, sampleID: request.fields["sample_id"]!, fixtureToken: nil, correlationAlias: nil)
     }, execute: { try $0() })
     try expect(fileMode(socket) == 0o600, "server creates an exact owner-private socket")
 
@@ -123,7 +123,7 @@ func testIPCAfterResponseFailureDoesNotAppendARejectedResponse() throws {
     var executions = 0
     var afterResponseCalls = 0
     let server = try FixtureSocketServer(socketPath: socket, dispatch: { request in
-        FixtureResponse(status: .accepted, requestID: request.fields["request_id"]!, sampleID: request.fields["sample_id"]!, fixtureToken: nil, correlationToken: nil)
+        FixtureResponse(status: .accepted, requestID: request.fields["request_id"]!, sampleID: request.fields["sample_id"]!, fixtureToken: nil, correlationAlias: nil)
     }, execute: { work in
         executions += 1
         let response = try work()

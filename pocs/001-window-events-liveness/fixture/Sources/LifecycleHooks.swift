@@ -3,7 +3,7 @@ import Foundation
 public enum CloseOrigin: Equatable { case ipc, user }
 
 public enum FixtureTraceEvent: Equatable {
-    case createRequested(token: String, generation: UInt64, sampleID: String)
+    case createRequested(token: String, correlationAlias: String, generation: UInt64, sampleID: String)
     // Fixture-local AppKit observation only: this reports the first callback
     // for the exact registered NSWindow whose occlusion state contains .visible.
     case createVisibleCompleted(token: String, generation: UInt64, sampleID: String)

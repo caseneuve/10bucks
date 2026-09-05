@@ -1,8 +1,32 @@
+import CommonCrypto
+import Foundation
 import Security
 
 public enum TokenGenerationError: Error, Equatable {
     case randomSourceFailure
     case invalidRandomByteCount
+}
+
+// This public CommonCrypto implementation intentionally hashes the exact UTF-8
+// bytes of the raw fixture token. The alias is the only correlation value that
+// may cross the fixture's IPC or trace boundary.
+public enum CorrelationAlias {
+    public static let prefix = "poc001-corr-sha256-"
+
+    public static func alias(for rawToken: String) -> String {
+        let digest = rawToken.data(using: .utf8)!.withUnsafeBytes { bytes -> [UInt8] in
+            var output = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+            CC_SHA256(bytes.baseAddress, CC_LONG(bytes.count), &output)
+            return output
+        }
+        return prefix + digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    public static func isValidAlias(_ alias: String) -> Bool {
+        guard alias.hasPrefix(prefix), alias.utf8.count == prefix.utf8.count + 64 else { return false }
+        return alias.dropFirst(prefix.count).utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+
 }
 
 public protocol TokenGenerating {
