@@ -56,7 +56,7 @@ contracts. They identify the next human-gated sample only.
 - **Observed** (application version metadata): Chrome 152.0.7977.77; Slack
   4.52.155; Signal 8.26.0; Thunderbird 153.1.1; Claude 1.44121.4; zoom.us
   7.1.5 (84650).
-- **Pending**: Terminal version; do not record it until its source is inspected.
+- **Observed** (`/System/Applications/Utilities/Terminal.app/Contents/Info.plist`): Terminal 2.15 (build 470.2).
 
 Do not generalize these values into portable detection behavior. Values observed
 while running must be timestamped in Results and identify whether they came from
@@ -158,11 +158,10 @@ eligibility/admission marker; POC-001 issues zero frame effects.
 
 The full matrix below remains **pending**. The first Terminal-only calibration
 is diagnostic-only. The operator guide separately authorizes exactly one next
-human-gated Terminal lifecycle calibration (minimize, hide/unhide, restore, and
-native fullscreen) using two blank windows on the current regular Space. Do not
-advance from that calibration to Space movement, cold bootstrap/reload, rapid
-repetitions, other apps, or the representative-app matrix without a new approved
-handoff. For Terminal and the Chromium representative first, then each
+human-gated **fullscreen-only** Terminal calibration using two blank visible
+windows on the current regular Space. Do not advance from that calibration to
+minimize/hide/restore, Space movement, cold bootstrap/reload, rapid repetitions,
+other apps, or the representative-app matrix without a new approved handoff. For Terminal and the Chromium representative first, then each
 remaining representative app where its UI supports the action, run the
 following and retain every event order, including failures and late callbacks:
 
@@ -362,6 +361,34 @@ All thresholds are fixed before the run:
 
 This is neither a clean hide/unhide marker sequence nor a pass/fail result.
 It makes no lifecycle, timing, or source-authority claim.
+
+### Aborted Terminal lifecycle sample — redacted observer aggregates
+
+**Observed:** the previously pending stopped trace was exported privately and
+reviewed locally. This remains an aborted, read-only sample, not a clean
+hide/unhide completion and not a completed lifecycle calibration. The raw trace
+and its aliases are not copied here.
+
+- The same redacted alias received direct minimize and then filter minimize
+  callbacks **2.907 ms** later. This is one observed ordering, not a source
+  authority or timing claim.
+- Actual application `hidden` and `unhidden` callbacks were observed **17.373
+  s** apart despite the abort. The minimized alias remained unavailable after
+  unhide; source-specific unknowns were preserved rather than converted into
+  agreement or false.
+- Of 16 aliases with metadata observations, **15** became metadata-ready;
+  **4** reached the non-effecting eligible intersection; **1** remained
+  uncertain. These are harness observations, not readiness/admission results.
+- **53** completed callbacks had harness processing median/p95/maximum
+  **6.250/18.960/28.701 ms**. No comparable source timestamp exists, so this
+  makes no callback-arrival or acceptance-threshold claim.
+- Steady callbacks issued **zero POC-issued global calls**. The sample had no
+  timers or POC effects. POC-owned watcher cleanup balanced **147 attachments
+  and 147 detachments**.
+- There is explicitly no clean hide/unhide completion marker, restore action,
+  native-fullscreen action, controlled completion marker, or timing/pass claim.
+  Destruction, move, source selection, framework-internal refresh, and all
+  other source-specific unknowns remain unresolved.
 
 ### First Terminal calibration — calibration-only observations
 
