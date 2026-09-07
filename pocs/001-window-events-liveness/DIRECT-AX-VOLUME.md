@@ -1,8 +1,9 @@
 # POC-001 direct-AX volume — implemented controller procedure
 
 **Status: Verified reviewed source/test implementation at
-`81ab86bf54e44cfd1d808774d2d944e68f692aaa`; no new live action or live
-evidence has occurred.** The implemented
+`81ab86bf54e44cfd1d808774d2d944e68f692aaa`, supplemented by the recorded
+controlled-volume checkpoint below. No further live action is authorized.**
+The implemented
 `direct_ax_volume_controller.py` CLI wires the reviewed
 `direct_ax_volume_real_host.py` ports for `prepare`, `status`, `warm-start`,
 `warm-sample`, `warm-finish`, `cold-sample`, `cold-finish`, and
@@ -42,8 +43,53 @@ unlinked automatically. Safe private re-analysis confirms the retained fixture
 and observer evidence passes the per-sample gates, but it cannot count toward
 the new warm session. Semantic cleanup/restoration completed where recorded;
 the failed samples have not been retried. POC-001 remains a
-**Hypothesis** until live evidence is independently reviewed; a later docs-only
-follow-up may be at a later `HEAD` without changing this code/test freeze.
+**Hypothesis** because representative-app and remaining lifecycle/cold gates are
+pending; a later docs-only follow-up may be at a later `HEAD` without changing
+this code/test freeze.
+
+## Recorded execution checkpoint — no further live action authorized
+
+**Verified (retained controller aggregate; execution commit
+`803ed3a8ffe386d545ca3b429b8adc4aa81e2409`):** the subsequently prepared
+warm session completed **30/30** ordered direct-AX samples. Its class analyzer
+reported `complete`/`pass`: correlation median **8.049 ms**, correlation p95
+**41.660 ms**, callback-processing p95 **20.462 ms**, and callback-processing
+maximum **29.471 ms**.
+The fixed warm correlation/callback gates, exact per-sample
+alias/query/candidate/reset checks, and zero steady global-query, POC-effect,
+and permanent-poll checks passed. This is controlled-fixture evidence only; it
+does not select a production lifecycle source or destruction authority.
+
+**Verified semantic warm cleanup:** observer stopped, fixture process/socket
+were absent, and legacy restoration exactly matched the pre-stop baseline:
+started, **26/26** configured/installed hotkey bindings, lifecycle watcher,
+reconciliation timer, bar timer, and bar-canvas count.
+
+**Verified, independently reviewed cold-01 interruption:** one fresh cold
+session reached pre-close direct-AX correlation readiness (one armed
+generation, map count one, zero open callbacks, zero active timers, and zero
+POC effects), and the fixture completed its controlled native close. The
+abort-time observer export retained one direct-AX destruction candidate and no
+filter destruction candidate before cleanup. It did not produce a post-finish
+snapshot, normalizer product, sample-analyzer product, validated row, or cold
+cleanup row.
+
+**Classification:** `cold-01` is an **indeterminate controller/harness
+interruption**, not platform evidence. There is no durable controller
+correlation-timeout or terminal-sample record, so this result does **not**
+claim the fixed wait elapsed. The absent filter candidate is an abort-time
+observation only and must not be used to infer filter reliability or
+unreliability. No retained stale-session, normalizer, or analyzer failure
+explains it. The cleaned terminal controller state retained the active cold
+index; that is controller bookkeeping evidence, not a completed sample. Do
+not retry it.
+
+**Verified interruption cleanup:** abort cleanup recorded no cleanup failures,
+verified observer quiescence and fixture/socket absence, and restored the same
+full legacy baseline, including **26/26** bindings and lifecycle/reconcile/bar
+semantics. `cold-02` through `cold-05` were not run. There is no cold aggregate
+or latency result. **No live action is authorized by this document or this
+checkpoint.** POC-001 remains a **Hypothesis**.
 
 ## Frozen safety boundary
 

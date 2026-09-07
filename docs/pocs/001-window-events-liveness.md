@@ -723,6 +723,18 @@ private evidence/approval gate; that approval does not itself run a command or
 change POC-001 status. A later docs-only follow-up may be at a later `HEAD`;
 the listed code/test paths are the byte-matched implementation freeze.
 
+### Direct-AX controlled volume — warm pass; cold-01 interrupted
+
+**Verified (retained controller aggregate and independent private-evidence review):** the direct-AX controller completed its warm class at execution commit `803ed3a8ffe386d545ca3b429b8adc4aa81e2409`. All **30/30** ordered warm samples were analyzer-validated and the class result was `complete`/`pass`. Redacted aggregate measurements were: direct-correlation median **8.049 ms**, direct-correlation p95 **41.660 ms**, callback-processing p95 **20.462 ms**, and callback-processing maximum **29.471 ms**. The fixed warm correlation and callback gates passed, as did the exact per-sample alias/query/candidate/reset checks and the zero steady global-query, effect, and permanent-poll checks. This controlled fixture result does not select a production lifecycle or destruction authority.
+
+**Verified cleanup/restoration for the warm class:** the observer stopped; the fixture process and socket were absent; and legacy restoration exactly matched its captured semantic baseline. Legacy was started with **26/26** configured/installed bindings, and its lifecycle watcher, reconciliation timer, bar timer, and bar-canvas count matched the baseline. This is semantic restoration, not a started-only check.
+
+**Verified, independently reviewed cold-01 interruption:** a fresh cold fixture/observer session reached the pre-close direct-AX correlation state (one armed direct-AX generation, correlation map count one, zero open callbacks, zero active timers, and zero POC window effects), and the fixture recorded its controlled native close. The retained abort-time observer export contained one direct-AX destruction candidate and no filter destruction candidate before cleanup. No post-finish snapshot, normalizer output, sample-analyzer output, validated cold row, or cold cleanup row was produced.
+
+**Classification:** `cold-01` is an **indeterminate controller/harness interruption**, not platform evidence. The retained controller evidence does not contain a durable correlation-timeout or terminal-sample record, so it does **not** establish that the fixed wait elapsed. The absent filter candidate was observed only at abort/export time; it must not be used to infer filter reliability or unreliability. There is no retained stale-session or analyzer/normalizer failure finding. The terminal controller state was cleaned but retained the active cold index; that is controller bookkeeping evidence, not a completed sample result. Do not retry this sample.
+
+**Verified cleanup/restoration for the interruption:** abort cleanup recorded no cleanup failures. Fixture/socket absence and observer quiescence were verified by the controller, and legacy again exactly matched its semantic baseline: started, **26/26** configured/installed bindings, lifecycle watcher, reconciliation timer, bar timer, and bar-canvas count. Cold samples `cold-02` through `cold-05` were not run. **No further live action is authorized by this result.** POC-001 remains a **Hypothesis**; there is no cold aggregate, latency claim, source selection, or destruction-authority conclusion.
+
 ### Fixture--observer correlation volume — stopped warm class; five cold samples
 
 **Observed, approved volume attempt:** the warm class stopped during sample 2,
