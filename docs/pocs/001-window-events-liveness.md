@@ -681,20 +681,47 @@ This single sample proves only the privacy-safe early direct-callback
 correlation and alias retention. It does not establish p95, representative-app
 behavior, readiness/admission, liveness, or destruction authority.
 
-### Direct-AX volume analyzer/procedure checkpoint
+### Direct-AX volume controller checkpoint
 
-**Verified (source/test only):** the retained POC-only
-[`direct-AX volume analyzer and executable-next-slice procedure`](../../pocs/001-window-events-liveness/DIRECT-AX-VOLUME.md)
-freezes exactly 30 warm and 5 cold `direct_ax` samples, short owner-private
-`/tmp/p1d.XXXXXX` socket paths, exact per-generation finish/reset and
-class-final cleanup gates, and redacted aggregate analysis. It is explicitly
-**not a live runner**: the reviewed live orchestration/normalizer remains the
-next slice. Its pure analyzer distinguishes malformed or unsafe evidence as
-`analyzer_error`/`indeterminate`; that outcome is not platform evidence. It
-performs no fixture, Hammerspoon, legacy-runtime, or socket action. Human
-approval is recorded for the estimated 8–12 minute volume subject to
-orchestrator review; no live action is authorized by this checkpoint and
-POC-001 remains `hypothesis`.
+**Verified (reviewed source/test implementation at
+`81ab86bf54e44cfd1d808774d2d944e68f692aaa`):** the retained POC-only
+[`direct-AX volume controller procedure`](../../pocs/001-window-events-liveness/DIRECT-AX-VOLUME.md)
+now includes the implemented controller and real-host adapter, alongside the
+private normalizer and analyzer. The controller exposes separately invoked,
+explicitly approved commands for exactly 30 ordered warm `direct_ax` samples
+and, only after a passing warm finalization, five fresh cold samples. It uses
+one shared monotonic command deadline of **at most 120 seconds**; all work
+within that command receives only the remaining budget, and recovery is a
+separate command with its own at-most-120-second budget. It captures the legacy
+semantic baseline and restores it semantically (`start()` plus explicit
+`bindHotkeys()`), then verifies the exact configured/bound hotkey count,
+lifecycle watcher, reconciliation timer, bar timer, and canvas count.
+
+The code/test path frozen byte-for-byte to that commit is:
+
+```text
+pocs/001-window-events-liveness/direct_ax_volume_controller.py
+pocs/001-window-events-liveness/direct_ax_volume_real_host.py
+pocs/001-window-events-liveness/direct_ax_volume_normalizer.py
+pocs/001-window-events-liveness/direct_ax_volume_analyzer.py
+pocs/001-window-events-liveness/test_direct_ax_volume_controller.py
+pocs/001-window-events-liveness/test_direct_ax_volume_real_host.py
+pocs/001-window-events-liveness/test_direct_ax_volume_normalizer.py
+pocs/001-window-events-liveness/test_direct_ax_volume_analyzer.py
+```
+
+This is a documentation/freeze checkpoint only. **No new live evidence has
+occurred.** The POC remains a **Hypothesis**: source and pure tests neither
+select destruction authority nor establish the POC-001 liveness/readiness
+result. The private analyzer/normalizer classify malformed or unsafe retained
+evidence as `analyzer_error`/`indeterminate`; that classification is not
+platform evidence. Every mutating controller command remains behind both
+`--execute` and an existing absolute owner-private `0600` approval JSON file
+whose sole approval is the exact full frozen `HEAD`. The human approved the
+estimated **8–12 minute** disruption, subject to this reviewed procedure and
+private evidence/approval gate; that approval does not itself run a command or
+change POC-001 status. A later docs-only follow-up may be at a later `HEAD`;
+the listed code/test paths are the byte-matched implementation freeze.
 
 ### Fixture--observer correlation volume — stopped warm class; five cold samples
 

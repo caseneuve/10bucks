@@ -1,12 +1,37 @@
-# POC-001 direct-AX volume — analyzer and executable next slice
+# POC-001 direct-AX volume — implemented controller procedure
 
-**Status: reviewed real-host adapter and CLI are implemented; no live action was
-performed by this change.** `direct_ax_volume_analyzer.py` and
-`direct_ax_volume_normalizer.py` remain private evidence readers; **not a live runner**. `direct_ax_volume_controller.py` wires the reviewed
-`direct_ax_volume_real_host.py` ports for the explicitly approved controller
-commands: `prepare`, `status`, `warm-start`, `warm-sample`, `warm-finish`,
-`cold-sample`, `cold-finish`, and `abort-cleanup`. The controller has no autonomous batch loop: each sample is
-one separately invoked, explicitly approved command.
+**Status: Verified reviewed source/test implementation at
+`81ab86bf54e44cfd1d808774d2d944e68f692aaa`; no new live action or live
+evidence has occurred.** The implemented
+`direct_ax_volume_controller.py` CLI wires the reviewed
+`direct_ax_volume_real_host.py` ports for `prepare`, `status`, `warm-start`,
+`warm-sample`, `warm-finish`, `cold-sample`, `cold-finish`, and
+`abort-cleanup`. It is a real, explicit-command controller—not an autonomous
+batch loop—and each sample remains one separately invoked, explicitly approved
+command. `direct_ax_volume_normalizer.py` and `direct_ax_volume_analyzer.py`
+remain private evidence readers: their parsing alone is **not a live runner**.
+The old “Executable next slice” label is retired because the reviewed
+controller/host implementation is now present.
+
+This code/test freeze is byte-matched to that commit:
+
+```text
+pocs/001-window-events-liveness/direct_ax_volume_controller.py
+pocs/001-window-events-liveness/direct_ax_volume_real_host.py
+pocs/001-window-events-liveness/direct_ax_volume_normalizer.py
+pocs/001-window-events-liveness/direct_ax_volume_analyzer.py
+pocs/001-window-events-liveness/test_direct_ax_volume_controller.py
+pocs/001-window-events-liveness/test_direct_ax_volume_real_host.py
+pocs/001-window-events-liveness/test_direct_ax_volume_normalizer.py
+pocs/001-window-events-liveness/test_direct_ax_volume_analyzer.py
+```
+
+The human approved the estimated **8–12 minute** disruption subject to this
+reviewed procedure, the private exact-commit approval gate, and the retained
+private evidence review. That approval is not execution authorization by
+itself. POC-001 remains a **Hypothesis** until live evidence is independently
+reviewed; a later docs-only follow-up may be at a later `HEAD` without changing
+this code/test freeze.
 
 ## Frozen safety boundary
 
@@ -38,26 +63,75 @@ command (also at most 120 seconds), never as extra sample time. Marker waiting r
 only, rejects malformed complete records, ignores only a final incomplete
 line, and prints nothing.
 
-## Exact future operator commands — **do not run without a separate human gate**
+## Exact future operator commands — **do not run without the private gate**
 
-From the repository root, after the approving human has created the private
-approval file and confirmed the exact frozen commit:
+From the repository root, the approving human must first create an existing
+absolute owner-private (`0600`) approval file containing exactly:
+
+```json
+{"approved_commit":"81ab86bf54e44cfd1d808774d2d944e68f692aaa"}
+```
+
+The private file, a clean repository, and that exact current full `HEAD` are
+required for every mutating command below. `RUN_DIR` is the private path printed
+by `prepare`; it is written here literally as `/tmp/p1d.XXXXXX`. No shell loop,
+brace expansion, retry, or batch wrapper is authorized. The controller gives
+each individual command one shared monotonic deadline of **<=120 seconds**,
+including build, IPC, marker, status, normalizer/analyzer, shutdown, and
+process waits; only the remaining time is passed downstream. Failure cleanup is
+a separate command with its own <=120-second deadline.
 
 ```sh
-# No --execute: safe redacted inspection only.
+# Read-only redacted inspection; no approval file or --execute.
 python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py status --run-dir /tmp/p1d.XXXXXX
 
-# Each is mutating and requires a separately approved private exact-HEAD file.
 python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py prepare --execute --approval-file /absolute/private/approval.json
 python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-start --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX
-# Invoke exactly once per approved generation, 1 through 30; no retry.
+
+# Thirty separate, ordered warm commands: invoke each exactly once, with no retry.
 python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 1
-# Only after 30 analyzer-validated rows.
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 2
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 3
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 4
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 5
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 6
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 7
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 8
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 9
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 10
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 11
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 12
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 13
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 14
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 15
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 16
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 17
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 18
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 19
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 20
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 21
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 22
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 23
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 24
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 25
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 26
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 27
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 28
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 29
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 30
+
+# Only after warm-finish records `passed` after 30 analyzer-validated rows.
 python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-finish --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX
-# Cold starts only after warm-finish records `passed`. Invoke one command per
-# separately approved index; do not loop or batch these five destructive runs.
+
+# Five separate fresh cold sessions; invoke only in this order, no retry.
 python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py cold-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --index 1
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py cold-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --index 2
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py cold-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --index 3
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py cold-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --index 4
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py cold-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --index 5
 python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py cold-finish --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX
+
+# Cleanup after an interrupted/failed authorized command; no retry of that sample.
 python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py abort-cleanup --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX
 ```
 
