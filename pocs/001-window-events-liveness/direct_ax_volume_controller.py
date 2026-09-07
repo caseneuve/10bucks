@@ -714,6 +714,10 @@ class DirectAXVolumeController:
 
 def main(argv: list[str] | None = None) -> int:
     """Run only the reviewed real-host adapter through the four-command grammar."""
+    # This script imports the real host only after parsing.  Disable bytecode
+    # writes before that dynamic import: an otherwise clean repository is a
+    # hard safety precondition for every mutating command.
+    __import__("sys").dont_write_bytecode = True
     parser = argparse.ArgumentParser(description="POC-001 direct-AX controller.")
     parser.add_argument("command", choices=("prepare", "status", "warm-start", "warm-sample", "warm-finish", "cold-sample", "cold-finish", "abort-cleanup"))
     parser.add_argument("--execute", action="store_true")
@@ -742,4 +746,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

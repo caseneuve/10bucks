@@ -45,9 +45,13 @@ absolute owner-private (`0600`) approval JSON file:
 The controller rejects a non-clean repository, including every staged,
 unstaged, and untracked porcelain-v1 `-z` record (including rename/copy
 counterparts), a non-exact current full `HEAD`, or a changed HEAD after
-preparation. `status` requires neither flag nor approval; it is read-only and
-returns only phase and redacted booleans—never paths, PIDs, sockets, tokens,
-aliases, responses, or trace records.
+preparation. Its executable entry point propagates the controller result as the
+process exit status. Before dynamically importing the real-host adapter it
+sets `sys.dont_write_bytecode`, so launching the controller cannot create a
+repository `__pycache__` artifact before its clean-tree preflight. `status`
+requires neither flag nor approval; it is read-only and returns only phase and
+redacted booleans—never paths, PIDs, sockets, tokens, aliases, responses, or
+trace records.
 
 `prepare` allocates the controller's initial storage directory exactly once:
 `/tmp/p1d.XXXXXX` under `umask 077`. Each cold sample separately allocates one

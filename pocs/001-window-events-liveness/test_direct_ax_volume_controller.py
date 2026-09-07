@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """TDD coverage for the POC-only controller; no port performs a live action."""
-import importlib.util, json, sys, unittest
+import importlib.util, json, os, shutil, subprocess, sys, tempfile, unittest
 from copy import deepcopy
 from pathlib import Path
 
@@ -225,5 +225,53 @@ class ControllerTests(unittest.TestCase):
   ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval"); machine.abort_cleanup(run_dir=run,execute=True,approval_file="/approval")
   for call in ports.calls:
    if call[0] in {"run","spawn","marker","shutdown","terminate","wait"}: self.assertLessEqual(call[-1],120)
+
+class CLIIntegrationTests(unittest.TestCase):
+ def test_cli_refusal_exits_nonzero_and_approved_prepare_leaves_clean_repo(self):
+  """Exercise the executable boundary in an isolated, non-live module tree."""
+  host_stub = '''\
+import json, os, stat, subprocess
+from pathlib import Path
+class RealHostPorts:
+ def __init__(self, root): self.root=Path(root); self.counter=0
+ def repo_changes(self): return {"staged":[],"unstaged":[],"untracked":[]}
+ def head_commit(self): return subprocess.check_output(["git","-C",str(self.root),"rev-parse","HEAD"], text=True).strip()
+ def commit_exists(self, commit): return True
+ def environment(self):
+  head=self.head_commit()
+  return {"macos_build":"test","architecture":"test","hammerspoon_version":"test","branch":"test","head":head,"display":"test","settings":"test"}
+ def make_private_run_dir(self, prefix):
+  for name in ("abc123", "def456"):
+   path="/tmp/p1d."+name
+   try: os.mkdir(path, 0o700); return path
+   except FileExistsError: continue
+  raise RuntimeError("test run directory collision")
+ def private_dir(self, path):
+  try: s=os.lstat(path); return stat.S_ISDIR(s.st_mode) and s.st_uid==os.getuid() and stat.S_IMODE(s.st_mode)==0o700
+  except OSError: return False
+ def private_file(self, path):
+  try: s=os.lstat(path); return stat.S_ISREG(s.st_mode) and s.st_uid==os.getuid() and stat.S_IMODE(s.st_mode)==0o600
+  except OSError: return False
+ def read_text(self, path): return Path(path).read_text()
+ def write_private_json(self, path, value):
+  Path(path).write_text(json.dumps(value)); os.chmod(path, 0o600)
+ def read_private_json(self, path): return json.loads(Path(path).read_text())
+'''
+  with tempfile.TemporaryDirectory() as temporary, tempfile.TemporaryDirectory() as private:
+   repo=Path(temporary); module=repo/"pocs/001-window-events-liveness"; module.mkdir(parents=True)
+   shutil.copy2(ROOT/"direct_ax_volume_controller.py", module/"direct_ax_volume_controller.py")
+   (module/"direct_ax_volume_real_host.py").write_text(host_stub)
+   (repo/"README").write_text("fixture\n")
+   for command in (("git","init","-q"),("git","config","user.email","test@example.invalid"),("git","config","user.name","Test"),("git","add","README","pocs"),("git","commit","-qm","fixture")):
+    subprocess.run(command, cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+   approval=Path(private)/"approval.json"; approval.write_text(json.dumps({"approved_commit":subprocess.check_output(("git","rev-parse","HEAD"),cwd=repo,text=True).strip()})); os.chmod(approval,0o600)
+   refused=subprocess.run((sys.executable,str(module/"direct_ax_volume_controller.py"),"prepare"),cwd=repo,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=30)
+   self.assertNotEqual(refused.returncode,0)
+   prepared=subprocess.run((sys.executable,str(module/"direct_ax_volume_controller.py"),"prepare","--execute","--approval-file",str(approval)),cwd=repo,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=30)
+   self.assertEqual(prepared.returncode,0, prepared.stderr)
+   self.assertEqual(subprocess.check_output(("git","status","--porcelain"),cwd=repo,text=True),"")
+   self.assertFalse(any(repo.rglob("__pycache__")))
+   run_dir=prepared.stdout.strip()
+   if run_dir.startswith("/tmp/p1d.") and Path(run_dir).is_dir(): shutil.rmtree(run_dir)
 
 if __name__ == "__main__": unittest.main()
