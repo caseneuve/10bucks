@@ -14,7 +14,7 @@ class FakePorts:
   self.files, self.dirs, self.calls = {}, {"/tmp/p1d.abc123"}, []
   self.changes = {"staged":[], "unstaged":[], "untracked":[]}; self.head = COMMIT
   self.alive, self.socket, self.legacy_running, self.observer_running = False, False, True, False
-  self.binding_count = 26; self.fail_marker = self.fail_restore = False; self.pid = 42
+  self.binding_count = 26; self.fail_marker = self.fail_restore = False; self.pid = 41; self.run_count = 0
   self.fixture_token = "private-token"; self.fixture_requests = []; self.correlation_finished=False; self.waits=[]; self.interrupt_after_create=False
   self.wait_statuses={"map_ready":[False,True],"candidates_complete":[False,True]}
   self.files["/approval"] = json.dumps({"approved_commit":COMMIT}); self.private_files={"/approval"}
@@ -22,7 +22,9 @@ class FakePorts:
  def head_commit(self): return self.head
  def commit_exists(self, commit): return commit == COMMIT
  def environment(self): return {"macos_build":"26A1", "architecture":"arm64", "hammerspoon_version":"1.1.1", "branch":"test", "head":COMMIT, "display":"built-in", "settings":"separate_spaces"}
- def make_private_run_dir(self, prefix): self.calls.append(("mkdtemp",prefix)); return "/tmp/p1d.abc123"
+ def make_private_run_dir(self, prefix):
+  self.calls.append(("mkdtemp",prefix)); names=("/tmp/p1d.abc123","/tmp/p1d.def456","/tmp/p1d.ghi789","/tmp/p1d.jkl012","/tmp/p1d.mno345","/tmp/p1d.pqr678")
+  path=names[self.run_count]; self.run_count+=1; self.dirs.add(path); return path
  def private_dir(self,path): return path in self.dirs
  def private_file(self,path): return path in self.private_files
  def read_text(self,path): return self.files[path]
@@ -32,21 +34,21 @@ class FakePorts:
   self.calls.append(("run",argv,timeout)); assert timeout <= 120
   if argv[0] == "normalizer": self.write_private_json(argv[-1], {"validated":"row"})
   if argv[0] == "analyzer": self.write_private_json(argv[-1], {"outcome":"pass"})
- def spawn_fixture(self,run_dir,clock_kind,timeout): self.calls.append(("spawn",clock_kind,timeout)); self.alive=True; self.socket=True; return self.pid
+ def spawn_fixture(self,run_dir,clock_kind,timeout): self.calls.append(("spawn",run_dir,clock_kind,timeout)); self.pid+=1; self.alive=True; self.socket=True; return self.pid
  def fixture_identity(self,pid,run_dir): return {"executable":"fixture", "run_dir":run_dir}
- def process_alive(self,pid,identity=None): return self.alive and pid == self.pid and (identity is None or identity.get("run_dir") == "/tmp/p1d.abc123")
+ def process_alive(self,pid,identity=None): return self.alive and pid == self.pid and (identity is None or identity.get("run_dir") in self.dirs)
  def socket_exists(self,path): return self.socket
  def fixture_request(self,run_dir,command,sample_id,token,timeout):
   self.fixture_requests.append((command,sample_id,token,timeout)); assert timeout <= 120
   if command == "close" and self.interrupt_after_create: raise KeyboardInterrupt()
   return {"status":"accepted","sample_id":sample_id,"fixture_token":self.fixture_token,"correlation_alias":"private-alias"}
  def wait_marker(self,path,marker,sample_id,timeout):
-  self.calls.append(("marker",marker,sample_id,timeout)); assert timeout <= 120; assert sample_id == "startup" or sample_id.startswith("warm-")
+  self.calls.append(("marker",marker,sample_id,timeout)); assert timeout <= 120; assert sample_id == "startup" or sample_id.startswith(("warm-", "cold-"))
   if self.fail_marker: raise RuntimeError("timeout")
  def legacy(self,action,**kwargs):
   self.calls.append(("legacy",action))
-  def snapshot(): return {"started":self.legacy_running,"configured_hotkey_count":self.binding_count,"binding_count":self.binding_count,"lifecycle_watcher_active":True,"reconcile_active":True,"bar_timer_active":True,"bar_canvas_count":1}
-  if action == "capture": return snapshot()
+  def snapshot(): return {"started":self.legacy_running,"configured_hotkey_count":26,"binding_count":self.binding_count,"lifecycle_watcher_active":self.legacy_running,"reconcile_active":self.legacy_running,"bar_timer_active":self.legacy_running,"bar_canvas_count":1 if self.legacy_running else 0}
+  if action in {"capture", "inspect"}: return snapshot()
   if action == "stop": self.legacy_running=False; self.binding_count=0; return snapshot()
   if action == "restore":
    self.legacy_running=not self.fail_restore
@@ -63,7 +65,7 @@ class FakePorts:
    observations=self.wait_statuses[stage]
    self.calls.append(("correlation_observations",stage,list(observations)))
    assert observations == [False,True]
-   if stage == "map_ready": assert not any(request[0] == "close" for request in self.fixture_requests)
+   if stage == "map_ready": assert not any(request[0] == "close" and request[1] == kwargs["sample_id"] for request in self.fixture_requests)
    if stage == "candidates_complete": assert not self.correlation_finished
    return {"ready":True}
   if action == "correlation_ready": return {"ready":True,"map_count":1,"candidates_complete":True}
@@ -87,7 +89,7 @@ class ControllerTests(unittest.TestCase):
   ports,machine,run=prepared()
   self.assertEqual(run,"/tmp/p1d.abc123"); self.assertTrue(ports.private_file(run+"/controller-state.json")); self.assertTrue(ports.private_file(run+"/controller-evidence.json"))
   state=ports.read_private_json(run+"/controller-state.json"); self.assertEqual((state["phase"],state["frozen_commit"]),("prepared",COMMIT))
-  self.assertNotIn(("spawn","mach_absolute",120),ports.calls)
+  self.assertFalse(any(call[0] == "spawn" for call in ports.calls))
  def test_every_mutation_requires_execute_private_approval_and_clean_relative_preflight(self):
   ports=FakePorts(); machine=controller.DirectAXVolumeController(ports)
   with self.assertRaisesRegex(controller.ControllerError,"--execute"): machine.prepare(execute=False,approval_file="/approval")
@@ -103,7 +105,7 @@ class ControllerTests(unittest.TestCase):
   names=[call[0] for call in ports.calls]; stop_index=ports.calls.index(("legacy","stop"))
   self.assertLess(names.index("spawn"), stop_index); self.assertLess(stop_index, names.index("clear"))
   state=ports.read_private_json(run+"/controller-state.json")
-  self.assertIn(("spawn","mach_absolute",120),ports.calls); self.assertEqual((state["phase"],state["legacy_baseline"]["binding_count"]),("running",26))
+  self.assertTrue(any(call[0] == "spawn" and call[-2:] == ("mach_absolute",120) for call in ports.calls)); self.assertEqual((state["phase"],state["legacy_baseline"]["binding_count"]),("running",26))
  def test_startup_partial_failure_uses_abort_cleanup_and_preserves_indeterminate_evidence(self):
   ports,machine,run=prepared(); ports.fail_marker=True
   with self.assertRaisesRegex(RuntimeError,"timeout"): machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
@@ -171,6 +173,39 @@ class ControllerTests(unittest.TestCase):
   ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
   with self.assertRaisesRegex(controller.ControllerError,"exactly 30"):
    machine.warm_finish(run_dir=run,execute=True,approval_file="/approval")
+ def test_cold_requires_a_finalized_passing_warm_class_then_uses_five_fresh_generation_one_sessions(self):
+  ports,machine,run=prepared()
+  with self.assertRaisesRegex(controller.ControllerError,"finalized passing warm"):
+   machine.cold_sample(run_dir=run,index=1,execute=True,approval_file="/approval")
+  state=ports.read_private_json(run+"/controller-state.json"); state["phase"]="passed"; ports.write_private_json(run+"/controller-state.json",state)
+  for index in range(1,6):
+   result=machine.cold_sample(run_dir=run,index=index,execute=True,approval_file="/approval")
+   self.assertEqual((result["next_index"],result["samples_completed"]),(index+1,index))
+  self.assertEqual([(name,sample) for name,sample,*_ in ports.fixture_requests], [item for index in range(1,6) for item in (("create",f"cold-{index:02d}"),("close",f"cold-{index:02d}"))])
+  arms=[call for call in ports.calls if call == ("observer","arm_correlation")]
+  self.assertEqual(len(arms),5)
+  cold_spawns=[call for call in ports.calls if call[0] == "spawn"]
+  self.assertEqual(len({call[1] for call in cold_spawns}),5)
+  state=ports.read_private_json(run+"/controller-state.json")
+  self.assertEqual((state["phase"],state["cold_next_index"],len(state["cold_rows"]),len(state["cold_cleanups"])),("cold_ready",6,5,5))
+  self.assertEqual([event["sample_id"] for event in state["events"] if event["event"] == "cold_sample_validated"],[f"cold-{n:02d}" for n in range(1,6)])
+ def test_cold_failure_or_interrupt_cleans_once_without_retry_and_preserves_indeterminate_state(self):
+  ports,machine,run=prepared(); state=ports.read_private_json(run+"/controller-state.json"); state["phase"]="passed"; ports.write_private_json(run+"/controller-state.json",state)
+  ports.interrupt_after_create=True
+  with self.assertRaises(KeyboardInterrupt): machine.cold_sample(run_dir=run,index=1,execute=True,approval_file="/approval")
+  state=ports.read_private_json(run+"/controller-state.json")
+  self.assertEqual(state["phase"],"indeterminate")
+  self.assertEqual([(name,sample) for name,sample,*_ in ports.fixture_requests],[("create","cold-01"),("close","cold-01")])
+  self.assertIn(("legacy","restore"),ports.calls)
+ def test_cold_finish_requires_exact_ordered_clean_rows_and_runs_class_analysis(self):
+  ports,machine,run=prepared(); state=ports.read_private_json(run+"/controller-state.json")
+  state.update(phase="cold_ready",cold_next_index=6,cold_rows=[{"validated":n} for n in range(5)],cold_cleanups=[{"cleanup":n} for n in range(5)],legacy_baseline={"started":True,"configured_hotkey_count":26,"binding_count":26,"lifecycle_watcher_active":True,"reconcile_active":True,"bar_timer_active":True,"bar_canvas_count":1})
+  ports.write_private_json(run+"/controller-state.json",state)
+  self.assertEqual(machine.cold_finish(run_dir=run,execute=True,approval_file="/approval")["phase"],"cold_passed")
+  self.assertTrue(ports.private_file(run+"/cold-class-final-cleanup.json"))
+  ports,machine,run=prepared()
+  with self.assertRaisesRegex(controller.ControllerError,"exactly five"):
+   machine.cold_finish(run_dir=run,execute=True,approval_file="/approval")
  def test_all_subprocess_boundaries_are_at_most_120_seconds(self):
   ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval"); machine.abort_cleanup(run_dir=run,execute=True,approval_file="/approval")
   for call in ports.calls:

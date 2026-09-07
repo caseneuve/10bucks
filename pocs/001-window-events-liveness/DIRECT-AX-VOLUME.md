@@ -4,8 +4,8 @@
 performed by this change.** `direct_ax_volume_analyzer.py` and
 `direct_ax_volume_normalizer.py` remain private evidence readers; **not a live runner**. `direct_ax_volume_controller.py` wires the reviewed
 `direct_ax_volume_real_host.py` ports for the explicitly approved controller
-commands: `prepare`, `status`, `warm-start`, `warm-sample`, `warm-finish`, and
-`abort-cleanup`. The controller has no autonomous batch loop: each sample is
+commands: `prepare`, `status`, `warm-start`, `warm-sample`, `warm-finish`,
+`cold-sample`, `cold-finish`, and `abort-cleanup`. The controller has no autonomous batch loop: each sample is
 one separately invoked, explicitly approved command.
 
 ## Frozen safety boundary
@@ -24,10 +24,12 @@ preparation. `status` requires neither flag nor approval; it is read-only and
 returns only phase and redacted booleans—never paths, PIDs, sockets, tokens,
 aliases, responses, or trace records.
 
-`prepare` is the only storage allocator. It creates exactly
-`/tmp/p1d.XXXXXX` under `umask 077`, verifies owner `0700`, and writes state
-and evidence by no-follow atomic replacement at owner `0600`. The fixture
-socket remains the short canonical
+`prepare` allocates the controller's initial storage directory exactly once:
+`/tmp/p1d.XXXXXX` under `umask 077`. Each cold sample separately allocates one
+fresh owner-private fixture session directory under the same short prefix so a
+new fixture never reuses a trace or socket. Every allocated directory is
+verified owner `0700`; state and evidence use no-follow atomic replacement at
+owner `0600`. Each fixture socket remains at the short canonical
 `/tmp/p1d.XXXXXX/poc001-fixture.sock` path. Every command/process wait has a
 hard limit of at most 120 seconds. Marker waiting reads complete NDJSON lines
 only, rejects malformed complete records, ignores only a final incomplete
@@ -49,6 +51,10 @@ python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-star
 python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --generation 1
 # Only after 30 analyzer-validated rows.
 python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-finish --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX
+# Cold starts only after warm-finish records `passed`. Invoke one command per
+# separately approved index; do not loop or batch these five destructive runs.
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py cold-sample --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX --index 1
+python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py cold-finish --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX
 python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py abort-cleanup --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX
 ```
 
@@ -110,15 +116,52 @@ private `class_final_cleanup`, and runs the warm class analyzer. It preserves
 the run tree and persists `passed`, `failed`, or `indeterminate`; it never
 claims that an analyzer or cleanup error is platform evidence.
 
+## Executable cold slice — isolated first-create samples
+
+`cold-sample N` is accepted only after `warm-finish` has persisted a passing,
+fully cleaned warm class, and only for the exact next `N` in `1..5`. A warm
+failure does **not** authorize cold collection. Each command captures and
+durably writes a new exact legacy semantic baseline and cleanup intent before
+any fixture, legacy, or observer mutation. It then builds/spawns a **fresh**
+fixture process in a new owner-private session directory/socket, rejects stale
+PID/socket state, stops legacy semantically, clears the approved observer module
+cache, and starts one fresh observer.
+
+It sets trace scope to exactly `cold-N`, arms `direct_ax` once with generation
+`1`, performs exactly one create and one close, and uses the same bounded
+fixture-marker/correlation sequencing as a warm sample. It records
+pre-close facts and post-finish/reset facts from the observer, then exports and
+stops the observer, verifies its stopped counters, shuts down/waits for the
+identity-checked fixture, verifies exact process/socket absence, and restores
+all legacy bindings/watchers/bar to the captured baseline. The final stopped
+session record is evidence-derived; it is not inferred from an intended
+cleanup. The normalizer receives all three snapshots and appends a row only
+when the normalizer and sample analyzer validate it.
+
+A timeout, malformed/unsafe evidence, cleanup uncertainty, interrupt, or
+normalizer failure preserves the private evidence, performs idempotent cleanup
+once, and becomes `indeterminate`; it never retries the sample. A schema-valid
+sample analyzer rejection is a substantive `failed` result. Every process,
+marker, status, and analyzer command is bounded at no more than 120 seconds.
+
+`cold-finish` accepts exactly the ordered rows `cold-01` through `cold-05`,
+each with generation `1` and its own successful cleanup. It writes the
+observed class-final cleanup record, runs the cold class analyzer (including
+p95), persists `cold_passed`, `failed`, or `indeterminate`, and retains the run
+tree. It has no unattended five-sample loop.
+
 ## Evidence normalization and subsequent batches
 
 The normalizer consumes only already-retained private fixture trace/response,
-running observer export, and before/after observer status snapshots. It joins
-only on the frozen full alias; it never joins on title, PID, native ID, focus,
+running observer export, pre-close/post-finish observer status snapshots, and
+one retained session-status input. For cold that final input is the observed
+stopped observer/fixture session; for warm it is the already-retained
+post-finish running observation and is not a cleanup claim. It joins only on
+the frozen full alias; it never joins on title, PID, native ID, focus,
 visibility, Space, or timing. Sample/class analyzer commands remain:
 
 ```sh
-python3 pocs/001-window-events-liveness/direct_ax_volume_normalizer.py warm "$CREATE_RESPONSE" "$FIXTURE_TRACE" "$OBSERVER_EXPORT" "$PRE_CLOSE_STATUS" "$POST_FINISH_STATUS" "$ROW_JSON"
+python3 pocs/001-window-events-liveness/direct_ax_volume_normalizer.py warm "$CREATE_RESPONSE" "$FIXTURE_TRACE" "$OBSERVER_EXPORT" "$PRE_CLOSE_STATUS" "$POST_FINISH_STATUS" "$SESSION_STATUS" "$ROW_JSON"
 python3 pocs/001-window-events-liveness/direct_ax_volume_analyzer.py sample warm "$ROW_JSON" "$SAMPLE_RESULT"
 python3 pocs/001-window-events-liveness/direct_ax_volume_analyzer.py class warm "$WARM_CLASS_JSON" "$WARM_RESULT"
 ```

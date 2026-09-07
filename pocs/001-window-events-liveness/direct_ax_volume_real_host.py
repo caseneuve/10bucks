@@ -152,7 +152,7 @@ class RealHostPorts:
             self._checked(("/bin/sh", str(self.fixture / "scripts/build-fixture.sh")), timeout)
             if not self.app.is_file() or not self.fixturectl.is_file(): raise HostError("canonical fixture build missing")
             return
-        if argv and argv[0] == "normalizer" and len(argv) == 8 and argv[1] in {"warm", "cold"}:
+        if argv and argv[0] == "normalizer" and len(argv) == 9 and argv[1] in {"warm", "cold"}:
             self._checked((sys.executable, str(self.root / "pocs/001-window-events-liveness/direct_ax_volume_normalizer.py"), *argv[1:]), timeout)
             return
         if argv and argv[0] == "analyzer" and len(argv) == 5 and argv[1] in {"sample", "class"} and argv[2] in {"warm", "cold"}:
@@ -227,8 +227,8 @@ class RealHostPorts:
     def legacy(self, action: str, **kwargs: Any) -> dict[str, Any]:
         base = "local t=spoon['10bucks']; if type(t) ~= 'table' then error('missing loaded spoon') end; local function out(x) print(hs.json.encode(x)) end; "
         inspect = "local l=t.lifecycle or {}; local b=t.bar or {}; local n,c=0,0; for _,v in pairs((t.config or {}).hotkeys or {}) do if v ~= false then n=n+1 end end; for _ in pairs(t.hotkeyBindings or {}) do c=c+1 end; local cc=0; for _ in pairs(b.canvases or {}) do cc=cc+1 end; return {started=t.started == true,configured_hotkey_count=n,binding_count=c,lifecycle_watcher_active=l.filter ~= nil,reconcile_active=l.reconcileTimer ~= nil,bar_timer_active=b.timer ~= nil,bar_canvas_count=cc}"
-        if action == "capture": body = base + "out((function() " + inspect + " end)())"
-        elif action == "stop": body = base + "t:stop(); out((function() " + inspect + " end)())"
+        if action in {"capture", "inspect"}: body = base + "out((function() " + inspect + " end)())"
+        elif action == "stop":  body = base + "t:stop(); out((function() " + inspect + " end)())"
         elif action == "restore":
             # bindHotkeys is deliberately explicit and verified in the returned baseline.
             body = base + "t:start(); t:bindHotkeys(); out((function() " + inspect + " end)())"

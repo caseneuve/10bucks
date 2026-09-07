@@ -80,5 +80,7 @@ class RealHostTests(unittest.TestCase):
         self.assertIn("o.trace:set_sample", source)
         self.assertIn("wait_correlation", source)
         self.assertIn("external controller wait; observer owns no poll/timer", source)
+        self.assertIn("len(argv) == 9", source)
+        self.assertIn('action in {"capture", "inspect"}', source)
 
 if __name__ == "__main__": unittest.main()

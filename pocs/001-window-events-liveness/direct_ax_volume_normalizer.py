@@ -101,7 +101,7 @@ def _atomic_output(path, result):
     finally:
         if os.path.exists(temporary): os.unlink(temporary)
 
-def normalize(create_response, fixture_trace, observer_export, pre_close_snapshot, observer_snapshot, sample_class):
+def normalize(create_response, fixture_trace, observer_export, pre_close_snapshot, observer_snapshot, final_session_snapshot, sample_class):
     """Derive one analyzer row. Inputs are retained private records, never live ports."""
     if sample_class not in ("warm", "cold"): _fail("invalid_sample_class")
     # These are owner-private retained inputs and necessarily contain the fixture
@@ -111,6 +111,7 @@ def normalize(create_response, fixture_trace, observer_export, pre_close_snapsho
     _reject_private_leak(observer_export)
     _reject_private_leak(pre_close_snapshot)
     _reject_private_leak(observer_snapshot)
+    _reject_private_leak(final_session_snapshot)
     response = _dict(create_response, "create_response")
     if response.get("status") != "accepted": _fail("create_not_accepted")
     sample_id, fixture_alias = _string(response, "sample_id"), _alias(response, "correlation_alias")
@@ -172,6 +173,7 @@ def normalize(create_response, fixture_trace, observer_export, pre_close_snapsho
             or candidate_sources.get("count") != 0 or candidate_sources.get("direct_ax") is not False
             or candidate_sources.get("filter") is not False or candidate_sources.get("complete") is not False): _fail("generation_not_reset")
     callbacks = _dict(snapshot.get("callbacks"), "snapshot_callbacks")
+    final_session = _dict(final_session_snapshot, "final_session_snapshot")
     status = _dict(observer_export.get("status"), "observer_export_status")
     # Snapshot is taken immediately after finish; export status must be internally
     # consistent about counters, but lifecycle is intentionally the snapshot fact.
@@ -184,18 +186,18 @@ def normalize(create_response, fixture_trace, observer_export, pre_close_snapsho
       "direct_candidates": candidates["direct_ax"], "filter_candidates": candidates["filter"], "direct_correlation_ms": (_integer(observed, "absolute_ns") - create_ns) / 1_000_000, "callback_durations_ms": durations,
       "steady_global_queries": global_queries, "window_effects": _integer(snapshot, "window_effects"), "permanent_polls": _integer(snapshot, "active_timers"),
       "generation_reset": {"finish_called": True, "map_count": correlation["map_count"], "armed": correlation["armed"], "candidate_source": correlation["candidate_source"]},
-      "session_after_generation": {"callbacks_open": _integer(callbacks, "open"), "active_timers": _integer(snapshot, "active_timers"), "window_effects": _integer(snapshot, "window_effects"), "observer_running": snapshot.get("lifecycle") == "running", "fixture_running": _bool(snapshot, "fixture_running")}}
+      "session_after_generation": ({"callbacks_open": _integer(callbacks, "open"), "active_timers": _integer(snapshot, "active_timers"), "window_effects": _integer(snapshot, "window_effects"), "observer_running": snapshot.get("lifecycle") == "running", "fixture_running": _bool(snapshot, "fixture_running")} if sample_class == "warm" else {"callbacks_open": _integer(final_session, "callbacks_open"), "active_timers": _integer(final_session, "active_timers"), "window_effects": _integer(final_session, "window_effects"), "observer_running": _bool(final_session, "observer_running"), "fixture_running": _bool(final_session, "fixture_running")})}
     if row["direct_correlation_ms"] < 0: _fail("negative_or_order_invalid_correlation")
     if status.get("steady_global_queries") not in (0, global_queries): _fail("contradictory_export_global_queries")
     return row
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Pure POC-001 evidence normalizer; not a live runner.")
-    parser.add_argument("sample_class", choices=("warm", "cold")); parser.add_argument("create_response", type=Path); parser.add_argument("fixture_trace", type=Path); parser.add_argument("observer_export", type=Path); parser.add_argument("pre_close_snapshot", type=Path); parser.add_argument("observer_snapshot", type=Path); parser.add_argument("output", type=Path)
+    parser.add_argument("sample_class", choices=("warm", "cold")); parser.add_argument("create_response", type=Path); parser.add_argument("fixture_trace", type=Path); parser.add_argument("observer_export", type=Path); parser.add_argument("pre_close_snapshot", type=Path); parser.add_argument("observer_snapshot", type=Path); parser.add_argument("final_session_snapshot", type=Path); parser.add_argument("output", type=Path)
     args = parser.parse_args(argv)
     try:
-        for path in (args.create_response, args.fixture_trace, args.observer_export, args.pre_close_snapshot, args.observer_snapshot): _private_dir(path.parent)
-        result = normalize(_read_private_json(args.create_response), _read_private_ndjson(args.fixture_trace), _read_private_json(args.observer_export), _read_private_json(args.pre_close_snapshot), _read_private_json(args.observer_snapshot), args.sample_class)
+        for path in (args.create_response, args.fixture_trace, args.observer_export, args.pre_close_snapshot, args.observer_snapshot, args.final_session_snapshot): _private_dir(path.parent)
+        result = normalize(_read_private_json(args.create_response), _read_private_ndjson(args.fixture_trace), _read_private_json(args.observer_export), _read_private_json(args.pre_close_snapshot), _read_private_json(args.observer_snapshot), _read_private_json(args.final_session_snapshot), args.sample_class)
         code = 0
     except (NormalizerError, OSError, json.JSONDecodeError):
         result, code = {"analysis_status": "indeterminate", "outcome": "normalizer_error"}, 2
