@@ -20,7 +20,7 @@ RUN_PREFIX = "/tmp/p1d."
 STATE_NAME = "controller-state.json"
 EVIDENCE_NAME = "controller-evidence.json"
 APPROVED_MODULES = ("trace", "lifecycle", "ownership", "private_export", "correlation", "observer")
-LEGACY_SEMANTIC_KEYS = ("started", "binding_count", "lifecycle_watcher_active", "reconcile_active", "bar_active")
+LEGACY_SEMANTIC_KEYS = ("started", "configured_hotkey_count", "binding_count", "lifecycle_watcher_active", "reconcile_active", "bar_active")
 MAX_TIMEOUT_SECONDS = 120
 STARTUP_TIMEOUT_SECONDS = 30
 SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
@@ -79,6 +79,8 @@ class DirectAXVolumeController:
                 raise ControllerError("refused: repository has " + category + " changes")
 
     def _approval(self, approval_file: str, commit: str) -> None:
+        if not isinstance(approval_file, str) or not approval_file.startswith("/"):
+            raise ControllerError("refused: approval file must be an absolute owner-private path")
         if not self.ports.private_file(approval_file):
             raise ControllerError("refused: approval file is not owner-private 0600")
         # The intentionally tiny approval format avoids accepting a broad,
@@ -154,7 +156,11 @@ class DirectAXVolumeController:
         for key in LEGACY_SEMANTIC_KEYS:
             if key not in baseline:
                 raise ControllerError("legacy capture missing " + key)
-        if baseline["started"] is not True or isinstance(baseline["binding_count"], bool) or not isinstance(baseline["binding_count"], int) or baseline["binding_count"] <= 0:
+        if (baseline["started"] is not True or isinstance(baseline["binding_count"], bool)
+                or not isinstance(baseline["binding_count"], int) or baseline["binding_count"] <= 0
+                or isinstance(baseline["configured_hotkey_count"], bool)
+                or not isinstance(baseline["configured_hotkey_count"], int)
+                or baseline["configured_hotkey_count"] != baseline["binding_count"]):
             raise ControllerError("legacy capture is not shortcut-ready")
         if any(not isinstance(baseline[key], bool) for key in ("lifecycle_watcher_active", "reconcile_active", "bar_active")):
             raise ControllerError("legacy capture has invalid lifecycle state")
@@ -228,8 +234,12 @@ class DirectAXVolumeController:
 
     def _zero_observer(self, status: dict[str, Any]) -> bool:
         correlation = status.get("correlation", {})
-        return (status.get("callbacks_open") == 0 and status.get("active_timers") == 0
-                and status.get("window_effects") == 0 and correlation.get("map_count") == 0)
+        return (status.get("running") is False and status.get("callbacks_open") == 0
+                and status.get("active_timers") == 0 and status.get("window_effects") == 0
+                and status.get("direct_application_watchers") == 0
+                and status.get("direct_window_watchers") == 0
+                and status.get("target_binding_armed") is False
+                and correlation.get("map_count") == 0)
 
     def _abort(self, state: dict[str, Any], *, restoration_required: bool) -> dict[str, Any]:
         failures: list[str] = []
@@ -288,20 +298,27 @@ class DirectAXVolumeController:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Expose the frozen command grammar without embedding unreviewed live ports.
-
-    The future live adapter must instantiate ``DirectAXVolumeController`` with
-    reviewed ports.  This source-only entry point therefore cannot mutate the
-    host, even if somebody supplies ``--execute``.
-    """
-    parser = argparse.ArgumentParser(description="POC-001 direct-AX controller (no bundled live adapter).")
+    """Run only the reviewed real-host adapter through the four-command grammar."""
+    parser = argparse.ArgumentParser(description="POC-001 direct-AX controller.")
     parser.add_argument("command", choices=("prepare", "status", "warm-start", "abort-cleanup"))
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--approval-file")
     parser.add_argument("--run-dir")
-    parser.parse_args(argv)
-    # Do not print paths, input content, or another sensitive value.
-    raise SystemExit("refused: no live ports are bundled in the source/test controller")
+    args = parser.parse_args(argv)
+    try:
+        from direct_ax_volume_real_host import RealHostPorts
+        root = __import__("pathlib").Path(__file__).resolve().parents[2]
+        result = DirectAXVolumeController(RealHostPorts(root)).command(
+            args.command, execute=args.execute, approval_file=args.approval_file, run_dir=args.run_dir)
+        # status is intentionally redacted by the controller; prepare returns
+        # only its owner-private run directory as the documented normal output.
+        if isinstance(result, str): print(result)
+        else: print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        return 0
+    except (ControllerError, RuntimeError, OSError) as error:
+        # Never reflect private paths, trace content, tokens, or subprocess output.
+        print("refused: " + str(error).split("/")[0], file=__import__("sys").stderr)
+        return 2
 
 
 if __name__ == "__main__":

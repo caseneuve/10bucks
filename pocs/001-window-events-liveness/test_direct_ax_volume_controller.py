@@ -35,7 +35,7 @@ class FakePorts:
   if self.fail_marker: raise RuntimeError("timeout")
  def legacy(self,action,**kwargs):
   self.calls.append(("legacy",action))
-  def snapshot(): return {"started":self.legacy_running,"binding_count":self.binding_count,"lifecycle_watcher_active":True,"reconcile_active":True,"bar_active":True}
+  def snapshot(): return {"started":self.legacy_running,"configured_hotkey_count":self.binding_count,"binding_count":self.binding_count,"lifecycle_watcher_active":True,"reconcile_active":True,"bar_active":True}
   if action == "capture": return snapshot()
   if action == "stop": self.legacy_running=False; self.binding_count=0; return snapshot()
   if action == "restore":
@@ -48,7 +48,7 @@ class FakePorts:
   self.calls.append(("observer",action))
   if action == "start": self.observer_running=True; return {"running":True}
   if action == "abort_correlation": return {}
-  if action == "stop_export": self.observer_running=False; return {"callbacks_open":0,"active_timers":0,"window_effects":0,"correlation":{"map_count":0}}
+  if action == "stop_export": self.observer_running=False; return {"running":False,"callbacks_open":0,"active_timers":0,"window_effects":0,"direct_application_watchers":0,"direct_window_watchers":0,"target_binding_armed":False,"correlation":{"map_count":0}}
   raise AssertionError(action)
  def fixture_shutdown(self,run_dir,timeout): self.calls.append(("shutdown",timeout)); self.alive=False; self.socket=False
  def terminate(self,pid,timeout): self.calls.append(("terminate",timeout)); self.alive=False
