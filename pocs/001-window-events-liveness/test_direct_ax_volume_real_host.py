@@ -55,6 +55,18 @@ class RealHostTests(unittest.TestCase):
         self.assertIn("_G.__poc001_observer", snippet)
         self.assertIn("dofile(", snippet)
 
+    def test_correlation_wait_accepts_finite_float_budget_and_stopped_export_is_not_running(self):
+        runner = FakeRunner(); ports = real_host.RealHostPorts(ROOT.parents[1], runner)
+        def ready_run(argv, *, timeout, env=None):
+            runner.calls.append(("run", argv, timeout, env))
+            return Result('__POC001_SAFE_JSON__ {"armed":true,"candidate_source":"direct_ax","map_count":1,"candidates_complete":false}\n')
+        runner.run = ready_run
+        self.assertEqual(ports.observer("wait_correlation", stage="map_ready", timeout=0.5), {"ready": True})
+        self.assertTrue(any(isinstance(call[2], float) and 0 < call[2] <= 0.5 for call in runner.calls if call[0] == "run"))
+        ports.observer("stop_export", path="/tmp/poc001-test-export.json")
+        self.assertIn("running=s.lifecycle == 'running'", runner.calls[-1][1][2])
+        self.assertNotIn("running=s.lifecycle == 'stopped'", runner.calls[-1][1][2])
+
     def test_hs_print_transport_accepts_one_marker_and_rejects_bad_envelopes(self):
         runner = FakeRunner(); ports = real_host.RealHostPorts(ROOT.parents[1], runner)
         # This is the hs -c stdout transport shape: unrelated print logs are

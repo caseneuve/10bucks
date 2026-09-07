@@ -383,6 +383,13 @@ class DirectAXVolumeController:
             self._save(state)
             raise ControllerError("correlation wait failed")
 
+    @staticmethod
+    def _failure_reason_class(error: BaseException) -> str:
+        if isinstance(error, KeyboardInterrupt): return "interrupt"
+        if isinstance(error, ControllerError): return "controller_error"
+        if isinstance(error, RuntimeError): return "runtime_error"
+        return "other_error"
+
     def _semantic_abort(self, state: dict[str, Any], reason: str) -> None:
         # Evidence has already been written by the caller.  Never retry a
         # sample: cleanup is the only permitted response to uncertainty.
@@ -409,6 +416,7 @@ class DirectAXVolumeController:
         state["active_generation"] = generation
         self._record(state, "warm_sample_started", sample_id=sample_id, generation=generation)
         self._save(state)
+        stage = "arm_correlation"
         try:
             armed = self.ports.observer("arm_correlation", generation=generation, source="direct_ax", sample_id=sample_id, timeout=self._timeout())
             if not isinstance(armed, dict) or armed.get("armed") is not True:
@@ -419,7 +427,9 @@ class DirectAXVolumeController:
             response_path = self._private_path(state, f"{sample_id}-create-response.json")
             self.ports.write_private_json(response_path, response)
             if not self.ports.private_file(response_path): raise ControllerError("private create response write failed")
+            stage = "wait_fixture_create_visible"
             self.ports.wait_marker(self._private_path(state, "trace.ndjson"), "fixture_create_visible_completed", sample_id=sample_id, timeout=self._timeout())
+            stage = "wait_map_ready"
             self._wait_correlation(state, sample_id, "map_ready")
             self._snapshot(state, f"{sample_id}-pre-close-status.json", expected="pre_close")
             token = response.get("fixture_token")
@@ -454,12 +464,23 @@ class DirectAXVolumeController:
             return {"phase": "running", "next_generation": state["next_generation"], "samples_completed": len(state["warm_rows"])}
         except BaseException as error:
             substantive = isinstance(error, ControllerError) and str(error) == "sample analyzer substantive failure"
-            self._semantic_abort(state, "warm_sample_substantive_failure" if substantive else "warm_sample_failed")
+            primary = {"stage": stage, "reason_class": self._failure_reason_class(error)}
+            self._record(state, "warm_sample_primary_failure", **primary)
+            self._save(state)
+            cleanup_outcome = "cleaned"
+            try:
+                self._semantic_abort(state, "warm_sample_substantive_failure" if substantive else "warm_sample_failed")
+            except BaseException:
+                cleanup_outcome = "indeterminate"
             # A schema-valid analyzer rejection is evidence of a failed class,
             # whereas a timeout/normalizer/harness failure is indeterminate.
             state["phase"] = "failed" if substantive else "indeterminate"
+            state["last_failure"] = {**primary, "cleanup_outcome": cleanup_outcome}
+            self._record(state, "warm_sample_cleanup_outcome", **primary, cleanup_outcome=cleanup_outcome)
             self._record(state, "warm_sample_terminal", outcome=state["phase"])
             self._save(state)
+            # Cleanup uncertainty is separately retained; never mask the
+            # primary failure that caused this sample to stop.
             raise error
 
     @bounded_command

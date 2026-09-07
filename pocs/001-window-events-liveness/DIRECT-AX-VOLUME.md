@@ -29,9 +29,11 @@ pocs/001-window-events-liveness/test_direct_ax_volume_analyzer.py
 The human approved the estimated **8–12 minute** disruption subject to this
 reviewed procedure, the private exact-commit approval gate, and the retained
 private evidence review. That approval is not execution authorization by
-itself. POC-001 remains a **Hypothesis** until live evidence is independently
-reviewed; a later docs-only follow-up may be at a later `HEAD` without changing
-this code/test freeze.
+itself. Warm-01 produced an **indeterminate harness sample**, not platform
+evidence: private review found a float remaining-budget rejection and a
+stopped-observer status inversion. It has not been retried. POC-001 remains a
+**Hypothesis** until live evidence is independently reviewed; a later docs-only
+follow-up may be at a later `HEAD` without changing this code/test freeze.
 
 ## Frozen safety boundary
 

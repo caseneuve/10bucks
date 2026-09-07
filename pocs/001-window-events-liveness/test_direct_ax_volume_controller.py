@@ -15,7 +15,7 @@ class FakePorts:
   self.changes = {"staged":[], "unstaged":[], "untracked":[]}; self.head = COMMIT
   self.alive, self.socket, self.legacy_running, self.observer_running = False, False, True, False
   self.binding_count = 26; self.fail_marker = self.fail_restore = False; self.pid = 41; self.run_count = 0
-  self.fixture_token = "private-token"; self.fixture_requests = []; self.correlation_finished=False; self.waits=[]; self.interrupt_after_create=False
+  self.fixture_token = "private-token"; self.fixture_requests = []; self.correlation_finished=False; self.waits=[]; self.interrupt_after_create=False; self.fail_map_wait=False
   self.wait_statuses={"map_ready":[False,True],"candidates_complete":[False,True]}
   self.files["/approval"] = json.dumps({"approved_commit":COMMIT}); self.private_files={"/approval"}
  def repo_changes(self): return deepcopy(self.changes)
@@ -62,6 +62,7 @@ class FakePorts:
   if action == "arm_correlation": self.correlation_finished=False; return {"armed":True}
   if action == "wait_correlation":
    stage=kwargs["stage"]; self.waits.append(stage)
+   if stage == "map_ready" and self.fail_map_wait: raise RuntimeError("map wait failed")
    observations=self.wait_statuses[stage]
    self.calls.append(("correlation_observations",stage,list(observations)))
    assert observations == [False,True]
@@ -131,6 +132,9 @@ class ControllerTests(unittest.TestCase):
    machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
   self.assertEqual(ports.read_private_json(run+"/controller-state.json")["phase"],"indeterminate")
   self.assertTrue(ports.private_file(run+"/controller-evidence.json"))
+ def test_stopped_observer_status_is_quiescent(self):
+  ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
+  self.assertTrue(machine._zero_observer(ports.observer("stop_export", path=run+"/observer-export.json")))
  def test_stale_state_refuses_start_and_status_is_redacted(self):
   ports,machine,run=prepared(); state=ports.read_private_json(run+"/controller-state.json"); state["phase"]="running"; state["fixture_pid"]=99; ports.write_private_json(run+"/controller-state.json",state)
   with self.assertRaisesRegex(controller.ControllerError,"requires prepared"): machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
@@ -159,6 +163,15 @@ class ControllerTests(unittest.TestCase):
   self.assertIn(("legacy","restore"),ports.calls)
   self.assertEqual(ports.binding_count,26)
   self.assertEqual([(request[0],request[1]) for request in ports.fixture_requests],[("create","warm-01"),("close","warm-01")])
+ def test_map_wait_primary_failure_survives_successful_cleanup_and_binding_restore(self):
+  ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval"); ports.fail_map_wait=True
+  with self.assertRaisesRegex(RuntimeError,"map wait failed"): machine.warm_sample(run_dir=run,generation=1,execute=True,approval_file="/approval")
+  state=ports.read_private_json(run+"/controller-state.json")
+  self.assertEqual(state["phase"],"indeterminate"); self.assertEqual(ports.binding_count,26)
+  self.assertEqual(state["last_failure"],{"stage":"wait_map_ready","reason_class":"runtime_error","cleanup_outcome":"cleaned"})
+  events={event["event"]:event for event in state["events"]}
+  self.assertEqual(events["warm_sample_primary_failure"]["stage"],"wait_map_ready")
+  self.assertEqual(events["warm_sample_cleanup_outcome"]["cleanup_outcome"],"cleaned")
  def test_warm_finish_requires_30_rows_then_quiesces_and_restores_before_class_analysis(self):
   ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
   state=ports.read_private_json(run+"/controller-state.json")

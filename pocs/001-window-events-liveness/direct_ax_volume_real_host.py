@@ -8,6 +8,7 @@ exact-HEAD approval for every mutation.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import secrets
@@ -289,15 +290,18 @@ class RealHostPorts:
             body = base + "o.trace:set_sample(" + json.dumps(kwargs["sample_id"]) + "); local ok=o:arm_fixture_correlation(" + str(int(kwargs["generation"])) + "," + json.dumps(kwargs["source"]) + "); __poc001_out({armed=ok})"
         elif action == "wait_correlation":
             stage, timeout = kwargs.get("stage"), kwargs.get("timeout")
-            if stage not in {"map_ready", "candidates_complete"} or not isinstance(timeout, int) or timeout > MAX_TIMEOUT_SECONDS:
+            if (stage not in {"map_ready", "candidates_complete"} or isinstance(timeout, bool)
+                    or not isinstance(timeout, (int, float)) or not math.isfinite(timeout)
+                    or timeout <= 0 or timeout > MAX_TIMEOUT_SECONDS):
                 raise HostError("invalid correlation wait")
             deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                status = self._hs("local s=_G.__poc001_observer:status().correlation; __poc001_out({armed=s.armed,candidate_source=s.candidate_source,map_count=s.map_count,candidates_complete=s.candidate_sources.complete})")
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0: return {"ready": False, "timed_out": True}
+                status = self._hs("local s=_G.__poc001_observer:status().correlation; __poc001_out({armed=s.armed,candidate_source=s.candidate_source,map_count=s.map_count,candidates_complete=s.candidate_sources.complete})", timeout=remaining)
                 ready = (status.get("armed") is True and status.get("candidate_source") == "direct_ax" and status.get("map_count") == 1) if stage == "map_ready" else status.get("candidates_complete") is True
                 if ready: return {"ready": True}
-                time.sleep(0.05) # external controller wait; observer owns no poll/timer.
-            return {"ready": False, "timed_out": True}
+                time.sleep(min(0.05, max(0, deadline - time.monotonic()))) # external controller wait; observer owns no poll/timer.
         elif action == "correlation_ready":
             body = base + "local s=o:status().correlation; __poc001_out({ready=s.armed and s.map_count == 1,candidates_complete=s.candidate_sources.complete,map_count=s.map_count})"
         elif action == "finish_correlation":
@@ -311,7 +315,7 @@ class RealHostPorts:
         elif action == "abort_correlation": body = base + "o:abort_fixture_correlation('controller_abort'); __poc001_out({ok=true})"
         elif action == "stop_export":
             export = json.dumps(str(Path(kwargs["path"]).resolve()))
-            body = base + "o:stop(); o:export(" + export + "); local s=o:status(); __poc001_out({running=s.lifecycle == 'stopped',callbacks_open=s.callbacks.open,active_timers=s.active_timers,window_effects=s.window_effects,direct_application_watchers=s.direct_application_watchers,direct_window_watchers=s.direct_window_watchers,target_binding_armed=s.target_binding_armed,correlation={map_count=s.correlation.map_count}})"
+            body = base + "o:stop(); o:export(" + export + "); local s=o:status(); __poc001_out({running=s.lifecycle == 'running',callbacks_open=s.callbacks.open,active_timers=s.active_timers,window_effects=s.window_effects,direct_application_watchers=s.direct_application_watchers,direct_window_watchers=s.direct_window_watchers,target_binding_armed=s.target_binding_armed,correlation={map_count=s.correlation.map_count}})"
         else: raise HostError("unapproved observer action")
         return self._hs(body, kwargs.get("timeout", 30))
 
