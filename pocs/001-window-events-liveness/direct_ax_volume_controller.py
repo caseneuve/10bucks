@@ -242,7 +242,7 @@ class DirectAXVolumeController:
             self._record(state, "running")
             self._save(state)
             return self.status(run_dir=run_dir)
-        except Exception:
+        except BaseException:
             self._abort(state, restoration_required=True)
             raise
 
@@ -291,12 +291,46 @@ class DirectAXVolumeController:
     def _private_path(self, state: dict[str, Any], name: str) -> str:
         return state["run_dir"] + "/" + name
 
-    def _snapshot(self, state: dict[str, Any], name: str) -> dict[str, Any]:
-        """Persist one observer status snapshot without exposing its content."""
-        status = self.ports.observer("snapshot", path=self._private_path(state, name))
-        if not isinstance(status, dict) or not self.ports.private_file(self._private_path(state, name)):
+    def _fixture_running(self, state: dict[str, Any]) -> bool:
+        pid, identity = state.get("fixture_pid"), state.get("fixture_identity")
+        return isinstance(pid, int) and isinstance(identity, dict) and self.ports.process_alive(pid, identity) and self.ports.socket_exists(state["socket"])
+
+    def _snapshot(self, state: dict[str, Any], name: str, *, expected: str) -> dict[str, Any]:
+        """Persist observer facts plus independently verified fixture liveness."""
+        path = self._private_path(state, name)
+        status = self.ports.observer("snapshot", path=path)
+        if not isinstance(status, dict) or not self.ports.private_file(path):
             raise ControllerError("observer snapshot failed")
-        return status
+        # Observer never claims fixture state.  The controller supplies that one
+        # fact from its identity-checked process/socket port, then atomically
+        # replaces the private snapshot wrapper consumed by the normalizer.
+        snapshot = self.ports.read_private_json(path)
+        if not isinstance(snapshot, dict): raise ControllerError("invalid observer snapshot")
+        # The adapter returns the same read-only status it exported.  Reject an
+        # acknowledgement-only response or a disagreement before wrapping it.
+        if status.get("lifecycle") != snapshot.get("lifecycle") or status.get("correlation") != snapshot.get("correlation"):
+            raise ControllerError("observer snapshot return disagrees")
+        snapshot["fixture_running"] = self._fixture_running(state)
+        self.ports.write_private_json(path, snapshot)
+        correlation = snapshot.get("correlation", {})
+        candidates = correlation.get("candidate_sources", {}) if isinstance(correlation, dict) else {}
+        if expected == "pre_close":
+            valid = (snapshot.get("lifecycle") == "running" and snapshot["fixture_running"] is True
+                     and correlation.get("armed") is True and correlation.get("candidate_source") == "direct_ax"
+                     and correlation.get("map_count") == 1 and candidates.get("complete") is False)
+        else:
+            valid = (snapshot.get("lifecycle") == "running" and snapshot["fixture_running"] is True
+                     and correlation.get("armed") is False and correlation.get("candidate_source") is None
+                     and correlation.get("map_count") == 0 and candidates.get("complete") is False)
+        if not valid: raise ControllerError("observer snapshot facts failed")
+        return snapshot
+
+    def _wait_correlation(self, state: dict[str, Any], sample_id: str, stage: str) -> None:
+        result = self.ports.observer("wait_correlation", sample_id=sample_id, stage=stage, timeout=MAX_TIMEOUT_SECONDS)
+        if not isinstance(result, dict) or result.get("ready") is not True:
+            self._record(state, "correlation_wait_timeout", sample_id=sample_id, stage=stage)
+            self._save(state)
+            raise ControllerError("correlation wait failed")
 
     def _semantic_abort(self, state: dict[str, Any], reason: str) -> None:
         # Evidence has already been written by the caller.  Never retry a
@@ -334,21 +368,17 @@ class DirectAXVolumeController:
             self.ports.write_private_json(response_path, response)
             if not self.ports.private_file(response_path): raise ControllerError("private create response write failed")
             self.ports.wait_marker(self._private_path(state, "trace.ndjson"), "fixture_create_visible_completed", sample_id=sample_id, timeout=MAX_TIMEOUT_SECONDS)
-            ready = self.ports.observer("correlation_ready", sample_id=sample_id)
-            if not isinstance(ready, dict) or ready.get("ready") is not True or ready.get("map_count") != 1:
-                raise ControllerError("correlation readiness failed")
-            self._snapshot(state, f"{sample_id}-pre-close-status.json")
+            self._wait_correlation(state, sample_id, "map_ready")
+            self._snapshot(state, f"{sample_id}-pre-close-status.json", expected="pre_close")
             token = response.get("fixture_token")
             if not isinstance(token, str) or not token: raise ControllerError("fixture create response lacks token")
             close = self.ports.fixture_request(state["run_dir"], "close", sample_id, token, timeout=MAX_TIMEOUT_SECONDS)
             if not isinstance(close, dict) or close.get("status") != "accepted": raise ControllerError("fixture close failed")
             self.ports.wait_marker(self._private_path(state, "trace.ndjson"), "native_close_completed", sample_id=sample_id, timeout=MAX_TIMEOUT_SECONDS)
-            candidates = self.ports.observer("correlation_ready", sample_id=sample_id)
-            if not isinstance(candidates, dict) or candidates.get("candidates_complete") is not True:
-                raise ControllerError("destruction candidates incomplete")
+            self._wait_correlation(state, sample_id, "candidates_complete")
             finished = self.ports.observer("finish_correlation", sample_id=sample_id)
             if not isinstance(finished, dict) or finished.get("finished") is not True: raise ControllerError("correlation finish failed")
-            self._snapshot(state, f"{sample_id}-post-finish-status.json")
+            self._snapshot(state, f"{sample_id}-post-finish-status.json", expected="post_finish")
             exported = self.ports.observer("export_running", path=self._private_path(state, f"{sample_id}-observer-export.json"))
             if not isinstance(exported, dict) or not self.ports.private_file(self._private_path(state, f"{sample_id}-observer-export.json")):
                 raise ControllerError("running observer export failed")
@@ -367,7 +397,7 @@ class DirectAXVolumeController:
             self._record(state, "warm_sample_validated", sample_id=sample_id, generation=generation)
             self._save(state)
             return {"phase": "running", "next_generation": state["next_generation"], "samples_completed": len(state["warm_rows"])}
-        except Exception as error:
+        except BaseException as error:
             substantive = isinstance(error, ControllerError) and str(error) == "sample analyzer substantive failure"
             self._semantic_abort(state, "warm_sample_substantive_failure" if substantive else "warm_sample_failed")
             # A schema-valid analyzer rejection is evidence of a failed class,
@@ -410,7 +440,7 @@ class DirectAXVolumeController:
             state["phase"] = "passed" if result.get("outcome") == "pass" else "failed"
             self._record(state, "warm_finish_result", outcome=state["phase"]); self._save(state)
             return {"phase": state["phase"]}
-        except Exception:
+        except BaseException:
             self._semantic_abort(state, "warm_finish_failed")
             raise
 
@@ -460,6 +490,9 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(result, str): print(result)
         else: print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return 0
+    except KeyboardInterrupt:
+        print("interrupted: cleanup attempted", file=__import__("sys").stderr)
+        return 130
     except (ControllerError, RuntimeError, OSError) as error:
         # Never reflect private paths, trace content, tokens, or subprocess output.
         print("refused: " + str(error).split("/")[0], file=__import__("sys").stderr)

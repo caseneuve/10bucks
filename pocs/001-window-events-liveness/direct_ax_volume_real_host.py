@@ -246,14 +246,27 @@ class RealHostPorts:
         base = "package.path=" + observer_dir + " .. '?.lua;' .. package.path; _G.__poc001_observer=_G.__poc001_observer or dofile(" + observer + "); local o=_G.__poc001_observer; local function out(x) print(hs.json.encode(x)) end; "
         if action == "start": body = base + "o:start(); out({running=o:status().lifecycle == 'running'})"
         elif action == "arm_correlation":
-            body = base + "local ok=o:arm_fixture_correlation(" + str(int(kwargs["generation"])) + "," + json.dumps(kwargs["source"]) + "); out({armed=ok})"
+            # Scope arm/observed/candidate events to the exact warm sample
+            # before any correlation callback can arrive.
+            body = base + "o.trace:set_sample(" + json.dumps(kwargs["sample_id"]) + "); local ok=o:arm_fixture_correlation(" + str(int(kwargs["generation"])) + "," + json.dumps(kwargs["source"]) + "); out({armed=ok})"
+        elif action == "wait_correlation":
+            stage, timeout = kwargs.get("stage"), kwargs.get("timeout")
+            if stage not in {"map_ready", "candidates_complete"} or not isinstance(timeout, int) or timeout > MAX_TIMEOUT_SECONDS:
+                raise HostError("invalid correlation wait")
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                status = self._hs("local s=_G.__poc001_observer:status().correlation; print(hs.json.encode({armed=s.armed,candidate_source=s.candidate_source,map_count=s.map_count,candidates_complete=s.candidate_sources.complete}))")
+                ready = (status.get("armed") is True and status.get("candidate_source") == "direct_ax" and status.get("map_count") == 1) if stage == "map_ready" else status.get("candidates_complete") is True
+                if ready: return {"ready": True}
+                time.sleep(0.05) # external controller wait; observer owns no poll/timer.
+            return {"ready": False, "timed_out": True}
         elif action == "correlation_ready":
             body = base + "local s=o:status().correlation; out({ready=s.armed and s.map_count == 1,candidates_complete=s.candidate_sources.complete,map_count=s.map_count})"
         elif action == "finish_correlation":
             body = base + "local ok=o:finish_fixture_correlation(); out({finished=ok})"
         elif action == "snapshot":
             output = json.dumps(str(Path(kwargs["path"]).resolve()))
-            body = base + "o:export_snapshot(" + output + "); out({ok=true})"
+            body = base + "o:export_snapshot(" + output + "); out(o:status())"
         elif action == "export_running":
             output = json.dumps(str(Path(kwargs["path"]).resolve()))
             body = base + "o:export_running(" + output + "); out({ok=true})"

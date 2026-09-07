@@ -85,15 +85,21 @@ nonzero, retains the run directory and its evidence, and never deletes it.
 ## Executable next slice — warm samples and finalization
 
 `warm-sample N` is accepted only for a running warm session and its exact next
-generation (`1..30`). It records `warm-N`, arms `direct_ax` once, creates one
-fixture window, waits (each wait is bounded at 120 seconds) for fixture-visible
-plus correlation readiness/map `1`, snapshots status, closes once with the
-private response token, waits for `native_close_completed` and both
-alias-bearing candidates, and finishes correlation once. It writes a
+generation (`1..30`). It sets the observer trace sample to exact `warm-N` before it arms `direct_ax`
+once, creates one fixture window, waits (each wait is bounded at 120 seconds)
+for fixture-visible plus correlation readiness/map `1`, snapshots status, closes
+once with the private response token, waits for `native_close_completed` and
+both alias-bearing candidates, and finishes correlation once. Correlation
+waiting is an external controller bounded status wait: it creates no observer
+timer or permanent POC poll, and a timeout is retained as private evidence. It writes a
 post-finish snapshot and a running observer trace export, normalizes private
 evidence, runs the sample analyzer, then appends only a validated row and
-persists the next generation. A timeout, normalizer failure, or analyzer error
+persists the next generation. The controller verifies the snapshot's exact
+correlation facts and independently identity-checks fixture process plus socket
+before adding `fixture_running`; the observer never fabricates fixture state. A timeout, normalizer failure, or analyzer error
 uses semantic abort cleanup without retry and retains all private evidence.
+`KeyboardInterrupt`/SIGINT follows that same cleanup/restoration path once,
+then exits nonzero.
 A schema-valid substantive analyzer failure remains `failed`, distinct from
 `indeterminate` harness/evidence failure.
 

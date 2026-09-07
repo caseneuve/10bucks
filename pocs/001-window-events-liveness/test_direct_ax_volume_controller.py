@@ -15,7 +15,8 @@ class FakePorts:
   self.changes = {"staged":[], "unstaged":[], "untracked":[]}; self.head = COMMIT
   self.alive, self.socket, self.legacy_running, self.observer_running = False, False, True, False
   self.binding_count = 26; self.fail_marker = self.fail_restore = False; self.pid = 42
-  self.fixture_token = "private-token"; self.fixture_requests = []
+  self.fixture_token = "private-token"; self.fixture_requests = []; self.correlation_finished=False; self.waits=[]; self.interrupt_after_create=False
+  self.wait_statuses={"map_ready":[False,True],"candidates_complete":[False,True]}
   self.files["/approval"] = json.dumps({"approved_commit":COMMIT}); self.private_files={"/approval"}
  def repo_changes(self): return deepcopy(self.changes)
  def head_commit(self): return self.head
@@ -37,6 +38,7 @@ class FakePorts:
  def socket_exists(self,path): return self.socket
  def fixture_request(self,run_dir,command,sample_id,token,timeout):
   self.fixture_requests.append((command,sample_id,token,timeout)); assert timeout <= 120
+  if command == "close" and self.interrupt_after_create: raise KeyboardInterrupt()
   return {"status":"accepted","sample_id":sample_id,"fixture_token":self.fixture_token,"correlation_alias":"private-alias"}
  def wait_marker(self,path,marker,sample_id,timeout):
   self.calls.append(("marker",marker,sample_id,timeout)); assert timeout <= 120; assert sample_id == "startup" or sample_id.startswith("warm-")
@@ -55,10 +57,20 @@ class FakePorts:
  def observer(self,action,**kwargs):
   self.calls.append(("observer",action))
   if action == "start": self.observer_running=True; return {"running":True}
-  if action == "arm_correlation": return {"armed":True}
+  if action == "arm_correlation": self.correlation_finished=False; return {"armed":True}
+  if action == "wait_correlation":
+   stage=kwargs["stage"]; self.waits.append(stage)
+   observations=self.wait_statuses[stage]
+   self.calls.append(("correlation_observations",stage,list(observations)))
+   assert observations == [False,True]
+   if stage == "map_ready": assert not any(request[0] == "close" for request in self.fixture_requests)
+   if stage == "candidates_complete": assert not self.correlation_finished
+   return {"ready":True}
   if action == "correlation_ready": return {"ready":True,"map_count":1,"candidates_complete":True}
-  if action == "finish_correlation": return {"finished":True}
-  if action == "snapshot": self.write_private_json(kwargs["path"], {"snapshot":True}); return {"ok":True}
+  if action == "finish_correlation": self.correlation_finished=True; return {"finished":True}
+  if action == "snapshot":
+   correlation={"armed":not self.correlation_finished,"candidate_source":None if self.correlation_finished else "direct_ax","map_count":0 if self.correlation_finished else 1,"candidate_sources":{"complete":False}}
+   self.write_private_json(kwargs["path"], {"lifecycle":"running","callbacks":{"open":0},"active_timers":0,"window_effects":0,"correlation":correlation}); return {"lifecycle":"running","correlation":correlation}
   if action == "export_running": self.write_private_json(kwargs["path"], {"export":True}); return {"ok":True}
   if action == "abort_correlation": return {}
   if action == "stop_export": self.observer_running=False; return {"running":False,"callbacks_open":0,"active_timers":0,"window_effects":0,"direct_application_watchers":0,"direct_window_watchers":0,"target_binding_armed":False,"correlation":{"map_count":0}}
@@ -131,10 +143,20 @@ class ControllerTests(unittest.TestCase):
   result=machine.warm_sample(run_dir=run,generation=1,execute=True,approval_file="/approval")
   self.assertEqual((result["next_generation"],result["samples_completed"]),(2,1))
   self.assertEqual([(item[0],item[1]) for item in ports.fixture_requests],[("create","warm-01"),("close","warm-01")])
+  self.assertEqual(ports.waits,["map_ready","candidates_complete"])
   self.assertEqual(ports.fixture_requests[1][2],"private-token")
   with self.assertRaisesRegex(controller.ControllerError,"exact next generation"):
    machine.warm_sample(run_dir=run,generation=1,execute=True,approval_file="/approval")
   self.assertEqual(len(ports.fixture_requests),2)
+ def test_interrupt_after_create_semantically_cleans_up_and_restores_bindings(self):
+  ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
+  ports.interrupt_after_create=True
+  with self.assertRaises(KeyboardInterrupt): machine.warm_sample(run_dir=run,generation=1,execute=True,approval_file="/approval")
+  state=ports.read_private_json(run+"/controller-state.json")
+  self.assertEqual(state["phase"],"indeterminate")
+  self.assertIn(("legacy","restore"),ports.calls)
+  self.assertEqual(ports.binding_count,26)
+  self.assertEqual([(request[0],request[1]) for request in ports.fixture_requests],[("create","warm-01"),("close","warm-01")])
  def test_warm_finish_requires_30_rows_then_quiesces_and_restores_before_class_analysis(self):
   ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
   state=ports.read_private_json(run+"/controller-state.json")

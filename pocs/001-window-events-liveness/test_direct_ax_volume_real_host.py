@@ -77,5 +77,8 @@ class RealHostTests(unittest.TestCase):
         self.assertIn("unsafe opened private file", source)
         self.assertIn('row.get("sample_id") == sample_id', source)
         self.assertIn("POC001_FIXTURE_CLOCK_KIND=\"mach_absolute\"", source)
+        self.assertIn("o.trace:set_sample", source)
+        self.assertIn("wait_correlation", source)
+        self.assertIn("external controller wait; observer owns no poll/timer", source)
 
 if __name__ == "__main__": unittest.main()
