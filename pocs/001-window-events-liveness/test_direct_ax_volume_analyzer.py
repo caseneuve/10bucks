@@ -40,7 +40,10 @@ class Tests(unittest.TestCase):
   with self.assertRaisesRegex(analyzer.SubstantiveFailure,"cold_correlation_ms"): analyzer.analyze_sample(row,"cold")
  def test_class_requires_unique_exact_generations_and_final_cleanup(self):
   warm=[sample(f"warm-{n:02d}",n) for n in range(1,31)]
-  self.assertEqual(analyzer.analyze_class(warm,"warm",final_cleanup())["outcome"],"pass")
+  for number, row in enumerate(warm, 1): row["direct_correlation_ms"] = number
+  complete=analyzer.analyze_class(warm,"warm",final_cleanup())
+  self.assertEqual(complete["outcome"],"pass")
+  self.assertEqual(complete["correlation_median_ms"],15.5)
   warm[-1]["generation"]=1
   self.assertEqual(analyzer.analyze_class(warm,"warm",final_cleanup())["reason"],"duplicate_generation")
   with self.assertRaises(analyzer.AnalyzerError): analyzer.analyze_class([sample()],"warm",final_cleanup())

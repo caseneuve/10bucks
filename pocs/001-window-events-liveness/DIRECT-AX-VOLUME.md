@@ -2,9 +2,14 @@
 
 **Status: source/test checkpoint; not a live runner and no live action was
 performed.** `direct_ax_volume_analyzer.py` is a retained pure normal-record
-validator, not an orchestrator. The executable live orchestration/normalizer is
-the next reviewed slice; this document provides its exact short batches rather
-than claiming it exists.
+validator, not an orchestrator. `direct_ax_volume_normalizer.py` is the
+reviewed pure/private evidence adapter, not live orchestration: it reads one
+already-retained create response, cumulative fixture NDJSON trace, stopped
+observer export, and after-generation observer snapshot, then writes one
+private analyzer row. It joins fixture and observer only by the frozen full
+alias; fixture trace intervals isolate a generation without exporting or
+joining on the private close capability. This document provides the later live
+batches rather than claiming that orchestration exists.
 
 ## Frozen semantics
 
@@ -56,8 +61,11 @@ no batch exceeds 120 seconds and the next batch starts only after the previous
 private analyzer output is reviewed:
 
 ```sh
-# Per generation, after a private normalizer has written SAMPLE_JSON mode 0600:
-python3 pocs/001-window-events-liveness/direct_ax_volume_analyzer.py sample warm "$SAMPLE_JSON" "$SAMPLE_RESULT"
+# Per generation, the pure normalizer consumes only already-retained private files.
+# It performs no launch, socket, Hammerspoon, or process action and writes ROW_JSON mode 0600.
+python3 pocs/001-window-events-liveness/direct_ax_volume_normalizer.py warm "$CREATE_RESPONSE" "$FIXTURE_TRACE" "$OBSERVER_EXPORT" "$OBSERVER_SNAPSHOT" "$ROW_JSON"
+# After it has written the analyzer schema row:
+python3 pocs/001-window-events-liveness/direct_ax_volume_analyzer.py sample warm "$ROW_JSON" "$SAMPLE_RESULT"
 python3 pocs/001-window-events-liveness/direct_ax_volume_analyzer.py sample cold "$SAMPLE_JSON" "$SAMPLE_RESULT"
 # After the class-final cleanup record exists, with CLASS_JSON={samples,class_final_cleanup}:
 python3 pocs/001-window-events-liveness/direct_ax_volume_analyzer.py class warm "$WARM_CLASS_JSON" "$WARM_RESULT"

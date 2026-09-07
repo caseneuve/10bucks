@@ -116,6 +116,11 @@ def _p95(values):
     if not values: raise AnalyzerError("empty_metric")
     return sorted(values)[math.ceil(len(values) * .95) - 1]
 
+def _median(values):
+    if not values: raise AnalyzerError("empty_metric")
+    ordered, middle = sorted(values), len(values) // 2
+    return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+
 def analyze_class(rows, sample_class, class_final_cleanup):
     expected = WARM_SAMPLES if sample_class == "warm" else COLD_SAMPLES
     if not isinstance(rows, list): raise AnalyzerError("invalid_samples")
@@ -133,7 +138,7 @@ def analyze_class(rows, sample_class, class_final_cleanup):
     correlations = [v["direct_correlation_ms"] for v in accepted]
     callbacks = [d for v in accepted for d in v["callback_durations_ms"]]
     result = {"analysis_status":"complete", "class":sample_class, "outcome":"pass", "samples_completed":expected,
-              "correlation_median_ms": sorted(correlations)[len(correlations)//2], "correlation_p95_ms":_p95(correlations),
+              "correlation_median_ms": _median(correlations), "correlation_p95_ms":_p95(correlations),
               "callback_p95_ms":_p95(callbacks), "callback_max_ms":max(callbacks)}
     if sample_class == "warm" and result["correlation_p95_ms"] > WARM_P95_MS: result.update(outcome="substantive_failure", reason="warm_correlation_p95_ms", stopped_after=accepted[-1]["sample_id"])
     elif result["callback_p95_ms"] > CALLBACK_P95_MS: result.update(outcome="substantive_failure", reason="callback_p95_ms", stopped_after=accepted[-1]["sample_id"])
