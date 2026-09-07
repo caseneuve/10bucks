@@ -64,6 +64,44 @@ fixture, verify process/socket absent and observer callbacks/timers/effects/map
 all zero, then restart/verify legacy. This **class-final cleanup** is separate
 from each warm generation's finish/reset gate. Preserve all private evidence.
 
+## Executable controller state machine (source/test only; no sample command)
+
+`direct_ax_volume_controller.py` now owns the POC-only lifecycle boundary.
+It deliberately exposes **only** these commands: `prepare`, `status`,
+`warm-start`, and `abort-cleanup`. It has no create/close/sample command and
+ships no live macOS port adapter. Its source-only CLI refuses execution rather
+than quietly selecting shell/Hammerspoon behavior.
+
+A reviewed future adapter must inject its command/process/clock/filesystem
+ports into `DirectAXVolumeController`; every subprocess request has an explicit
+limit at or below 120 seconds. Every mutating command (`prepare`, `warm-start`,
+and `abort-cleanup`) requires `--execute`, a pre-existing owner-private `0600`
+approval JSON file containing the exact `approved_commit`, a clean full frozen
+HEAD commit, and a repo-relative staged/unstaged/untracked preflight. `status`
+is read-only and emits only redacted booleans/phase, never a PID, socket path,
+token, alias, response, or trace content.
+
+`prepare` is the only command that allocates storage. It uses `umask 077` in
+its future filesystem port to create exactly `/tmp/p1d.XXXXXX` at `0700`, then
+opens the controller state and evidence files at `0600` before writing the
+private environment/freeze record. Its only permitted normal output is that
+private run directory.
+
+`warm-start` statically builds the canonical fixture, writes durable
+`cleanup_pending` state **before** stopping legacy, launches exactly one
+fixture in `mach_absolute` mode, waits (bounded) for `run_started` and
+`socket_ready`, verifies its process/socket, then stops/verifies legacy,
+clears only the approved POC modules, starts/verifies the observer, and writes
+`running`. Any partial startup takes the same abort-cleanup path.
+
+`abort-cleanup` is idempotent. It aborts correlation; stops/exports the
+observer; requests fixture shutdown, terminates/waits if needed; verifies the
+fixture process/socket are absent and observer callbacks/timers/effects/map are
+zero; and restarts/verifies legacy. It never deletes private evidence. A failed
+restoration is persisted as `indeterminate` and returns nonzero rather than
+claiming cleanup succeeded. Persisted `running`/stale PID/socket state cannot
+be reused by `warm-start`.
+
 ## Executable next slice (not run)
 
 The reviewed live orchestrator/normalizer must implement these literal batches;
