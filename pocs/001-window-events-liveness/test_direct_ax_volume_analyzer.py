@@ -20,7 +20,7 @@ class Tests(unittest.TestCase):
  def test_frozen_constants_and_short_socket(self):
   self.assertEqual((analyzer.WARM_SAMPLES, analyzer.COLD_SAMPLES, analyzer.SOURCE), (30,5,"direct_ax")); self.assertLess(len(analyzer.socket_path_template("abc123")),104)
  def test_warm_keeps_session_running_but_requires_finish_reset(self):
-  result=analyzer.analyze_sample(sample(),"warm"); self.assertEqual(result["generation"],1)
+  result=analyzer.analyze_sample(sample(),"warm"); self.assertEqual((result["analysis_status"],result["outcome"],result["generation"]),("complete","pass",1))
   row=sample(); row["generation_reset"]["candidate_source"]="direct_ax"
   with self.assertRaisesRegex(analyzer.SubstantiveFailure,"candidate_source_not_reset"): analyzer.analyze_sample(row,"warm")
   row=sample(); row["session_after_generation"]["observer_running"]=False
@@ -58,11 +58,15 @@ class Tests(unittest.TestCase):
   with self.assertRaisesRegex(analyzer.AnalyzerError,"unexpected_sample_id_order"): analyzer.analyze_class(cold,"cold",final_cleanup())
   cold=[sample(f"cold-{n:02d}",1,"cold") for n in range(1,6)]; cold[2]["generation"]=2
   with self.assertRaisesRegex(analyzer.AnalyzerError,"cold_generation_not_one"): analyzer.analyze_class(cold,"cold",final_cleanup())
- def test_sample_cli_and_atomic_no_follow_output(self):
+ def test_sample_cli_explicit_pass_substantive_failure_and_atomic_no_follow_output(self):
   with tempfile.TemporaryDirectory() as directory:
    os.chmod(directory,0o700); d=pathlib.Path(directory); source=d/"sample.json"; output=d/"out.json"
    source.write_text(json.dumps(sample()),encoding="utf-8"); os.chmod(source,0o600)
-   self.assertEqual(analyzer.main(["sample","warm",str(source),str(output)]),0); self.assertNotIn("alias",output.read_text())
+   self.assertEqual(analyzer.main(["sample","warm",str(source),str(output)]),0)
+   result=json.loads(output.read_text()); self.assertEqual((result["analysis_status"],result["outcome"]),("complete","pass")); self.assertNotIn("alias",output.read_text())
+   failed=sample(); failed["source"]="wrong"; source.write_text(json.dumps(failed),encoding="utf-8")
+   self.assertEqual(analyzer.main(["sample","warm",str(source),str(output)]),1)
+   self.assertEqual(json.loads(output.read_text()),{"analysis_status":"complete","outcome":"substantive_failure","reason":"source"})
    target=d/"target"; target.write_text("retain",encoding="utf-8"); output.unlink(); output.symlink_to(target)
    self.assertEqual(analyzer.main(["sample","warm",str(source),str(output)]),2); self.assertEqual(target.read_text(),"retain")
  def test_procedure_honestly_names_analyzer_and_next_live_slice(self):

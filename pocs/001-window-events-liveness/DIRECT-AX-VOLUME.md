@@ -31,9 +31,12 @@ reviewed procedure, the private exact-commit approval gate, and the retained
 private evidence review. That approval is not execution authorization by
 itself. Warm-01 produced an **indeterminate harness sample**, not platform
 evidence: private review found a float remaining-budget rejection, a
-stopped-observer status inversion, and a normalizer false negative when Lua
-JSON omitted the reset `candidate_source` nil field. Semantic cleanup/restoration
-completed; the sample has not been retried. POC-001 remains a
+stopped-observer status inversion, a normalizer false negative when Lua JSON
+omitted the reset `candidate_source` nil field, and a sample-analyzer output
+contract omission. Safe private re-analysis confirms the retained fixture and
+observer evidence passes the per-sample gates, but it cannot count toward the
+new warm session. Semantic cleanup/restoration completed; the sample has not
+been retried. POC-001 remains a
 **Hypothesis** until live evidence is independently reviewed; a later docs-only
 follow-up may be at a later `HEAD` without changing this code/test freeze.
 

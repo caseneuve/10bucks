@@ -104,7 +104,8 @@ def analyze_sample(row, sample_class):
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0 for v in durations): raise AnalyzerError("invalid_callback_durations_ms")
     if max(durations) > CALLBACK_MAX_MS: raise SubstantiveFailure("callback_max_ms")
     _generation_reset(row); _session_gate(row, sample_class)
-    return {"sample_id": sample_id, "generation": generation, "direct_correlation_ms": correlation, "callback_durations_ms": list(map(float, durations))}
+    return {"analysis_status":"complete", "outcome":"pass", "sample_id": sample_id, "generation": generation,
+            "direct_correlation_ms": correlation, "callback_durations_ms": list(map(float, durations))}
 
 def _class_cleanup(cleanup):
     if not isinstance(cleanup, dict): raise AnalyzerError("invalid_class_final_cleanup")
@@ -195,7 +196,9 @@ def main(argv=None):
     try:
         _private_dir(args.input.parent); data = _read_private(args.input)
         result = analyze_sample(data, args.sample_class) if args.mode == "sample" else analyze_class(_required(data, "samples", list), args.sample_class, _required(data, "class_final_cleanup", dict))
-        code = 0 if result.get("outcome", "pass") == "pass" else 1
+        code = 0 if result.get("outcome") == "pass" else 1
+    except SubstantiveFailure as exc:
+        result, code = {"analysis_status":"complete", "outcome":"substantive_failure", "reason":str(exc)}, 1
     except (AnalyzerError, json.JSONDecodeError) as exc:
         result, code = {"analysis_status":"indeterminate", "outcome":"analyzer_error", "reason": "invalid_json" if isinstance(exc, json.JSONDecodeError) else str(exc)}, 2
     try: _atomic_output(args.output, result)

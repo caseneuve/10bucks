@@ -460,7 +460,8 @@ class DirectAXVolumeController:
             result_path = self._private_path(state, f"{sample_id}-sample-result.json")
             self.ports.run(("analyzer", "sample", "warm", row_path, result_path), timeout=self._timeout())
             result = self.ports.read_private_json(result_path)
-            if result.get("outcome") != "pass": raise ControllerError("sample analyzer substantive failure")
+            if result.get("analysis_status") != "complete" or result.get("outcome") != "pass":
+                raise ControllerError("sample analyzer substantive failure")
             # Append only after both normalizer and analyzer have validated it.
             row = self.ports.read_private_json(row_path)
             state["warm_rows"] = state.get("warm_rows", []) + [row]
@@ -664,7 +665,8 @@ class DirectAXVolumeController:
             result_path = self._private_path(state, f"{sample_id}-sample-result.json")
             self.ports.run(("analyzer", "sample", "cold", row_path, result_path), timeout=self._timeout())
             result = self.ports.read_private_json(result_path)
-            if result.get("outcome") != "pass": raise ControllerError("cold sample analyzer substantive failure")
+            if result.get("analysis_status") != "complete" or result.get("outcome") != "pass":
+                raise ControllerError("cold sample analyzer substantive failure")
             row = self.ports.read_private_json(row_path)
             state["cold_rows"] = state.get("cold_rows", []) + [row]
             state["cold_cleanups"] = state.get("cold_cleanups", []) + [cleanup]

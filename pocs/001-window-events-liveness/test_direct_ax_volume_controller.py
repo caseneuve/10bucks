@@ -34,7 +34,7 @@ class FakePorts:
   self.calls.append(("run",argv,timeout)); assert timeout <= 120
   if argv[0] == "normalizer" and self.fail_normalizer: raise RuntimeError("normalizer internal error")
   if argv[0] == "normalizer": self.write_private_json(argv[-1], {"validated":"row"})
-  if argv[0] == "analyzer": self.write_private_json(argv[-1], {"outcome":"pass"})
+  if argv[0] == "analyzer": self.write_private_json(argv[-1], {"analysis_status":"complete","outcome":"pass"})
  def spawn_fixture(self,run_dir,clock_kind,timeout): self.calls.append(("spawn",run_dir,clock_kind,timeout)); self.pid+=1; self.alive=True; self.socket=True; return self.pid
  def fixture_identity(self,pid,run_dir): return {"executable":"fixture", "run_dir":run_dir}
  def process_alive(self,pid,identity=None): return self.alive and pid == self.pid and (identity is None or identity.get("run_dir") in self.dirs)
