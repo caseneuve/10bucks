@@ -1,130 +1,76 @@
-# POC-001 direct-AX fixture correlation volume
+# POC-001 direct-AX volume — analyzer and executable next slice
 
-**Status: retained runner/procedure only; no live action is authorized.** This
-procedure is the next human-gated slice after the recorded direct-AX smoke. It
-does not change POC-001's `hypothesis` status, select a destruction authority,
-or authorize production work. The retained analyzer is
-[`direct_ax_volume_runner.py`](direct_ax_volume_runner.py); its pure tests are
-[`test_direct_ax_volume_runner.py`](test_direct_ax_volume_runner.py).
+**Status: source/test checkpoint; not a live runner and no live action was
+performed.** `direct_ax_volume_analyzer.py` is a retained pure normal-record
+validator, not an orchestrator. The executable live orchestration/normalizer is
+the next reviewed slice; this document provides its exact short batches rather
+than claiming it exists.
 
-## Frozen protocol
+## Frozen semantics
 
-Freeze the source commit and this document before requesting approval. The only
-correlation source is **`direct_ax`**. There are exactly **30 warm** samples and
-exactly **5 cold** samples; do not substitute filter samples, add retries, or
-change a threshold after observing a result.
+The only source is `direct_ax`; exactly 30 warm and 5 cold samples are fixed.
+Warm uses one observer and one fixture process across generations 1..30. Each
+warm generation must finish/reset its correlation map/source but must **not**
+stop the observer or fixture. Cold uses one fresh observer/cache and fixture
+per sample, with global sample generations 1..5. Every generation requires:
 
-- **Warm:** one observer session and one fixture process; sequentially create,
-  correlate, close, verify candidates, and finish 30 generations. Each
-  generation is armed once with `arm_fixture_correlation(generation,
-  "direct_ax")`.
-- **Cold:** five separate first-create samples. Each has a fresh fixture
-  process *and* a fresh observer start/cache. Do not arm a second generation.
-- Every sample has exactly one fixture create and exactly one fixture close.
-  It performs one direct `windowElement` construction, one direct
-  `AXIdentifier` read, zero filter correlation constructions, and zero filter
-  identifier reads. It must have one map entry before close, exact full
-  fixture/observer SHA-256 alias equality, and exactly one alias-bearing
-  `direct_ax` and `filter` destruction candidate.
-- Every destruction candidate is at most 1,000 ms after the fixture native
-  close. A successful finish resets the map and source state. Missing,
-  duplicate, malformed, or late correlation is substantive failure.
-- Warm direct-correlation p95 is at most 100 ms. Callback processing across
-  the warm class has p95 at most 50 ms and maximum at most 100 ms. Every cold
-  first-create direct correlation is at most 3,000 ms; the cold callback
-  p95/maximum gates remain 50/100 ms.
-- POC-issued steady global queries, POC effects, and permanent polls are zero.
-  Candidate filter callbacks remain destruction diagnostics only; they do not
-  consume correlation or select an authority.
+- exactly one create/close; map count 1 before close; one direct construction
+  and `AXIdentifier` read; zero filter constructions/reads;
+- exact full alias equality; exactly one alias-bearing direct/filter destruction
+  candidate, each <=1,000 ms after native close;
+- successful `finish_fixture_correlation`: map 0, armed false, candidate source
+  null; zero effects, permanent polls, and steady global queries.
 
-Stop the affected class on the first substantive failure. Preserve the private
-evidence, do not retry that sample, and do not start a later sample in that
-class. A p95 failure becomes knowable only after the final required sample; it
-ends that class immediately and still does not permit a threshold change.
+Warm direct-correlation p95 <=100 ms. Callback p95 <=50 ms and max <=100 ms.
+Every cold direct correlation is <=3,000 ms. Stop a class on its first
+schema-valid substantive failure. Missing, ill-typed, unsafe, or contradictory
+normalizer data is `analyzer_error`/`indeterminate`, never platform evidence.
 
-## Private paths, output, and cleanup
+## Approval and source boundary
 
-Use `umask 077`. Create the per-run directory only with the short template
-`/tmp/p1d.XXXXXX` (mode `0700`); the fixture socket is exactly
-`/tmp/p1d.XXXXXX/poc001-fixture.sock`. Do not use a nested `$TMPDIR` path.
-Every private trace, response, status record, input array, and aggregate is
-mode `0600`, owner-only. The runner refuses non-`0600` input.
+Human approval for the estimated **8–12 minute** volume disruption was granted
+**after preflight**, subject to orchestrator review of this checkpoint. It does
+not authorize a live action yet. The exact freeze commit is recorded in the
+separate approval checkpoint following this source/test commit; the operator
+must require a clean tree and byte-match the frozen POC files before any live
+batch. Commands must have timeout <=120 seconds.
 
-Raw fixture responses and observer exports remain private. The analyzer accepts
-only a locally normalized, redacted record: aliases and timings may be input,
-but its aggregate intentionally emits no alias, raw AX value, title, PID,
-native ID, token, bundle ID, socket path, response, URL, or filesystem path.
-Sensitive keys cause `analyzer_error`, not a platform result.
+## Private paths and final cleanup
 
-Install cleanup before legacy is stopped. On **every** normal, failed,
-interrupted, or analyzer-error exit: stop/export the observer if loaded; abort
-any armed correlation; shut down or terminate and wait for the fixture; verify
-fixture process/socket absence; verify observer stopped with callbacks/timers/
-effects/map all zero; then restart and verify legacy 10bucks. Preserve the
-private directory and all evidence on failure. Never delete evidence in a trap.
+Use `umask 077`, a `0700` directory exactly matching `/tmp/p1d.XXXXXX`, and
+`/tmp/p1d.XXXXXX/poc001-fixture.sock`; never nested `$TMPDIR`. Private input,
+trace, export, response, and output files are owner `0600`. The analyzer uses
+atomic no-follow output creation and emits redacted aggregates only.
 
-## Human-gated execution procedure
+At class end (and every abort), stop/export observer, abort any arm, terminate
+fixture, verify process/socket absent and observer callbacks/timers/effects/map
+all zero, then restart/verify legacy. This **class-final cleanup** is separate
+from each warm generation's finish/reset gate. Preserve all private evidence.
 
-Do not execute this section without explicit human approval for the estimated
-**8–12 minute** disruption (30 warm plus 5 cold disposable window samples).
-Split commands into observable batches with command timeouts no greater than
-120 seconds. No command should combine the entire volume into one unattended
-step.
+## Executable next slice (not run)
 
-1. **Preflight:** require clean frozen source, record the full commit and
-   environment privately, confirm no observer/fixture is already present, and
-   build statically only. Do not treat a static build as live evidence.
-2. **Prepare the private run directory and cleanup trap** as above. The trap is
-   installed before stopping legacy. Stop legacy only after all preflight gates
-   pass; load the observer from the frozen absolute POC path, clearing only
-   `trace`, `lifecycle`, `ownership`, `private_export`, and `correlation` from
-   `package.loaded`.
-3. **Warm batch:** launch one fixture with `POC001_FIXTURE_CLOCK_KIND=mach_absolute`.
-   For generation 1 through 30, use source `direct_ax`, collect the private
-   fixture response/trace and stopped observer export, then create exactly one
-   normalized redacted sample record. Check it with the runner before issuing
-   the next generation. Any substantive failure stops the warm batch.
-4. **Cold batch:** for each of five samples, fully clean the preceding run,
-   start a fresh observer and fresh fixture process/cache, and issue exactly
-   one first create/close. Analyze its one normalized record before the next
-   cold process is started. A fixture exiting before create is a
-   harness/preflight issue: retain evidence and independently inspect it; do
-   not call it a platform failure.
-5. **Class analysis:** after exactly 30 valid warm or 5 valid cold records,
-   serialize the corresponding normalized array to a private `0600` JSON file
-   and run:
+The reviewed live orchestrator/normalizer must implement these literal batches;
+no batch exceeds 120 seconds and the next batch starts only after the previous
+private analyzer output is reviewed:
 
-   ```sh
-   python3 pocs/001-window-events-liveness/direct_ax_volume_runner.py warm /private/warm.json /private/warm-aggregate.json
-   python3 pocs/001-window-events-liveness/direct_ax_volume_runner.py cold /private/cold.json /private/cold-aggregate.json
-   ```
+```sh
+# Per generation, after a private normalizer has written SAMPLE_JSON mode 0600:
+python3 pocs/001-window-events-liveness/direct_ax_volume_analyzer.py sample warm "$SAMPLE_JSON" "$SAMPLE_RESULT"
+python3 pocs/001-window-events-liveness/direct_ax_volume_analyzer.py sample cold "$SAMPLE_JSON" "$SAMPLE_RESULT"
+# After the class-final cleanup record exists, with CLASS_JSON={samples,class_final_cleanup}:
+python3 pocs/001-window-events-liveness/direct_ax_volume_analyzer.py class warm "$WARM_CLASS_JSON" "$WARM_RESULT"
+python3 pocs/001-window-events-liveness/direct_ax_volume_analyzer.py class cold "$COLD_CLASS_JSON" "$COLD_RESULT"
+```
 
-   The paths above are illustrative only and must resolve inside the short
-   owner-private run directory. The process exits `0` for pass, `1` for a
-   schema-valid substantive failure, and `2` for `analyzer_error`/
-   `indeterminate`. Exit 2 is never platform evidence. Review the underlying
-   private trace/export, stale module/process state, operator timing, and
-   normalizer/analyzer correctness before recording any platform conclusion.
-6. **Only after cleanup and independent review**, commit a redacted aggregate
-   to the canonical POC result. Do not commit raw inputs, results containing
-   aliases, private paths, or a claim that analyzer refusal is a platform
-   failure.
+The normalizer must derive fields only from retained private fixture trace /
+response and stopped observer export; it must never join using title, PID,
+native ID, focus, visibility, Space, or timing. Per-row required fields are
+`sample_id`, `generation`, source/aliases, create/close/query counts, candidates,
+direct correlation/callback timings, `generation_reset`, and
+`session_after_generation`. `class_final_cleanup` is required only for class
+mode. Sample mode enables the mandated check before the next generation.
 
-## Normalized sample schema (private input only)
-
-Each row is a JSON object containing only `sample_id` (`warm-01` …
-`warm-30` or `cold-01` … `cold-05`), `source`, `fixture_alias`,
-`observer_alias`, `map_count_before_close`, `direct_constructions`,
-`direct_identifier_reads`, `filter_constructions`, `filter_identifier_reads`,
-`direct_candidates`, `filter_candidates`, `direct_correlation_ms`,
-`callback_durations_ms`, `steady_global_queries`, `window_effects`,
-`permanent_polls`, and `cleanup`. Candidate objects contain only `alias` and
-`latency_ms`. Cleanup contains only the boolean/count gates checked by the
-runner. The normalizer must derive these fields from the retained raw private
-fixture trace/response and stopped observer export; it must not use title,
-timing proximity, PID, native ID, focus, visibility, Space, or any fallback
-identity input.
-
-The runner is intentionally pure analysis: it does not launch the fixture,
-load Hammerspoon, stop/start legacy, or remove files. That makes its tests safe
-and prevents a malformed analyzer input from mutating the live environment.
+Exit 0 is a passing check, 1 a schema-valid substantive failure, and 2 an
+indeterminate analyzer boundary. Before recording any failure, independently
+review raw private evidence for harness, stale module/process, operator, and
+normalizer/analyzer defects. No result is committed except a redacted aggregate.
