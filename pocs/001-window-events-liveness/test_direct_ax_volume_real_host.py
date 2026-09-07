@@ -55,8 +55,10 @@ class RealHostTests(unittest.TestCase):
         self.assertIn("_G.__poc001_observer", snippet)
         self.assertIn("dofile(", snippet)
 
-    def test_hs_envelope_requires_one_explicit_emitter_and_rejects_bad_responses(self):
+    def test_hs_print_transport_accepts_one_marker_and_rejects_bad_envelopes(self):
         runner = FakeRunner(); ports = real_host.RealHostPorts(ROOT.parents[1], runner)
+        # This is the hs -c stdout transport shape: unrelated print logs are
+        # discarded and only the one marker-framed print is decoded.
         runner.run = lambda argv, *, timeout, env=None: Result('hotkey diagnostic\n__POC001_SAFE_JSON__ {"ok":true}\n')
         self.assertEqual(ports._hs("__poc001_out({ok=true})"), {"ok": True})
         with self.assertRaisesRegex(real_host.HostError, "envelope body"): ports._hs("print(hs.json.encode({ok=true}))")
@@ -111,6 +113,8 @@ class RealHostTests(unittest.TestCase):
         self.assertIn("class FakeRunner", tests)
         self.assertNotIn("subprocess", tests.split("class FakeRunner", 1)[0])
         self.assertIn("hs.json.encode", source)
+        self.assertIn("print('__POC001_SAFE_JSON__ '..hs.json.encode(x))", source)
+        self.assertNotIn("io.write('__POC001_SAFE_JSON__", source)
         self.assertIn("t:bindHotkeys();", source)
         self.assertIn("package.path=", source)
         self.assertIn("POC001_FIXTURE_RUN_DIR=", source)

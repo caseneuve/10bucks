@@ -222,7 +222,9 @@ class RealHostPorts:
         # Hotkey binding may emit diagnostic lines. Accept only one final,
         # explicitly framed JSON object; diagnostics are discarded, never
         # retained or reflected to the caller.
-        emitter = "local function __poc001_out(x) io.write('__POC001_SAFE_JSON__ '..hs.json.encode(x)..'\\n') end; "
+        # `hs -c` returns Lua `print` output on stdout; direct `io.write` is
+        # process-local and would silently lose the controller envelope.
+        emitter = "local function __poc001_out(x) print('__POC001_SAFE_JSON__ '..hs.json.encode(x)) end; "
         # Every reviewed body must explicitly emit one envelope.  Do not rewrite
         # source text here: a textual replacement can unbalance Lua delimiters
         # and turn a harness defect into an opaque host-command failure.

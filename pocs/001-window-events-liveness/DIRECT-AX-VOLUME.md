@@ -51,7 +51,10 @@ sets `sys.dont_write_bytecode`, so launching the controller cannot create a
 repository `__pycache__` artifact before its clean-tree preflight. The
 real-host Hammerspoon adapter accepts a reviewed Lua body only when it calls
 the injected `__poc001_out(...)` exactly once; it never rewrites Lua source
-text before execution. `status` requires neither flag nor approval; it is
+text before execution. The envelope uses Lua `print`, which the `hs -c`
+transport returns on stdout; it must not use process-local `io.write`, whose
+missing marker would be a harness false negative. `status` requires neither
+flag nor approval; it is
 read-only and returns only phase and
 redacted booleans—never paths, PIDs, sockets, tokens, aliases, responses, or
 trace records.
