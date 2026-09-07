@@ -15,7 +15,7 @@ class FakePorts:
   self.changes = {"staged":[], "unstaged":[], "untracked":[]}; self.head = COMMIT
   self.alive, self.socket, self.legacy_running, self.observer_running = False, False, True, False
   self.binding_count = 26; self.fail_marker = self.fail_restore = False; self.pid = 41; self.run_count = 0
-  self.fixture_token = "private-token"; self.fixture_requests = []; self.correlation_finished=False; self.waits=[]; self.interrupt_after_create=False; self.fail_map_wait=False
+  self.fixture_token = "private-token"; self.fixture_requests = []; self.correlation_finished=False; self.waits=[]; self.interrupt_after_create=False; self.fail_map_wait=False; self.fail_normalizer=False
   self.wait_statuses={"map_ready":[False,True],"candidates_complete":[False,True]}
   self.files["/approval"] = json.dumps({"approved_commit":COMMIT}); self.private_files={"/approval"}
  def repo_changes(self): return deepcopy(self.changes)
@@ -32,6 +32,7 @@ class FakePorts:
  def read_private_json(self,path): return json.loads(self.files[path])
  def run(self,argv,timeout):
   self.calls.append(("run",argv,timeout)); assert timeout <= 120
+  if argv[0] == "normalizer" and self.fail_normalizer: raise RuntimeError("normalizer internal error")
   if argv[0] == "normalizer": self.write_private_json(argv[-1], {"validated":"row"})
   if argv[0] == "analyzer": self.write_private_json(argv[-1], {"outcome":"pass"})
  def spawn_fixture(self,run_dir,clock_kind,timeout): self.calls.append(("spawn",run_dir,clock_kind,timeout)); self.pid+=1; self.alive=True; self.socket=True; return self.pid
@@ -172,6 +173,10 @@ class ControllerTests(unittest.TestCase):
   events={event["event"]:event for event in state["events"]}
   self.assertEqual(events["warm_sample_primary_failure"]["stage"],"wait_map_ready")
   self.assertEqual(events["warm_sample_cleanup_outcome"]["cleanup_outcome"],"cleaned")
+ def test_normalizer_failure_records_normalize_primary_stage(self):
+  ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval"); ports.fail_normalizer=True
+  with self.assertRaisesRegex(RuntimeError,"normalizer internal error"): machine.warm_sample(run_dir=run,generation=1,execute=True,approval_file="/approval")
+  self.assertEqual(ports.read_private_json(run+"/controller-state.json")["last_failure"]["stage"],"normalize")
  def test_warm_finish_requires_30_rows_then_quiesces_and_restores_before_class_analysis(self):
   ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
   state=ports.read_private_json(run+"/controller-state.json")

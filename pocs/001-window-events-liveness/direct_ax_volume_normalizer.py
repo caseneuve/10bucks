@@ -180,12 +180,16 @@ def normalize(create_response, fixture_trace, observer_export, pre_close_snapsho
     for key in ("active_timers", "window_effects"):
         _integer(snapshot, key)
     map_count_before_close = pre_correlation["map_count"]
+    # Lua nil fields are omitted by hs.json encode.  The reset validation above
+    # deliberately accepts an absent/null source; freeze that fact as Python
+    # None rather than indexing a field whose omission is semantically reset.
+    reset_candidate_source = correlation.get("candidate_source")
     row = {"sample_id": sample_id, "generation": generation, "source": observed["source"], "fixture_alias": fixture_alias, "observer_alias": observer_alias,
       "create_count": sum(r.get("event") == "create_requested" and r.get("sample_id") == sample_id for r in records), "close_count": sum(r.get("event") == "native_close_completed" for r in records[create_position + 1:next_create_position]),
       "map_count_before_close": map_count_before_close, "direct_constructions": direct_constructions, "direct_identifier_reads": direct_reads, "filter_constructions": filter_constructions, "filter_identifier_reads": filter_reads,
       "direct_candidates": candidates["direct_ax"], "filter_candidates": candidates["filter"], "direct_correlation_ms": (_integer(observed, "absolute_ns") - create_ns) / 1_000_000, "callback_durations_ms": durations,
       "steady_global_queries": global_queries, "window_effects": _integer(snapshot, "window_effects"), "permanent_polls": _integer(snapshot, "active_timers"),
-      "generation_reset": {"finish_called": True, "map_count": correlation["map_count"], "armed": correlation["armed"], "candidate_source": correlation["candidate_source"]},
+      "generation_reset": {"finish_called": True, "map_count": correlation["map_count"], "armed": correlation["armed"], "candidate_source": reset_candidate_source},
       "session_after_generation": ({"callbacks_open": _integer(callbacks, "open"), "active_timers": _integer(snapshot, "active_timers"), "window_effects": _integer(snapshot, "window_effects"), "observer_running": snapshot.get("lifecycle") == "running", "fixture_running": _bool(snapshot, "fixture_running")} if sample_class == "warm" else {"callbacks_open": _integer(final_session, "callbacks_open"), "active_timers": _integer(final_session, "active_timers"), "window_effects": _integer(final_session, "window_effects"), "observer_running": _bool(final_session, "observer_running"), "fixture_running": _bool(final_session, "fixture_running")})}
     if row["direct_correlation_ms"] < 0: _fail("negative_or_order_invalid_correlation")
     if status.get("steady_global_queries") not in (0, global_queries): _fail("contradictory_export_global_queries")
@@ -199,8 +203,11 @@ def main(argv=None):
         for path in (args.create_response, args.fixture_trace, args.observer_export, args.pre_close_snapshot, args.observer_snapshot, args.final_session_snapshot): _private_dir(path.parent)
         result = normalize(_read_private_json(args.create_response), _read_private_ndjson(args.fixture_trace), _read_private_json(args.observer_export), _read_private_json(args.pre_close_snapshot), _read_private_json(args.observer_snapshot), _read_private_json(args.final_session_snapshot), args.sample_class)
         code = 0
-    except (NormalizerError, OSError, json.JSONDecodeError):
-        result, code = {"analysis_status": "indeterminate", "outcome": "normalizer_error"}, 2
+    except Exception as error:
+        # This private product distinguishes harness/schema defects without
+        # reflecting raw records or turning an internal exception into an
+        # analyzer-style substantive (exit 1) platform result.
+        result, code = {"analysis_status": "indeterminate", "outcome": "normalizer_error", "diagnostic_class": type(error).__name__}, 2
     try: _atomic_output(args.output, result)
     except (NormalizerError, OSError): sys.stderr.write("normalizer_error: output_write_error\n"); return 2
     return code

@@ -70,6 +70,26 @@ class Tests(unittest.TestCase):
   self.assertEqual((row["generation"],row["session_after_generation"]["observer_running"],row["session_after_generation"]["fixture_running"]),(1,False,False))
   final["observer_running"]=True
   self.assertTrue(normalizer.normalize(response,trace,export,pre_close,snapshot,final,"cold")["session_after_generation"]["observer_running"])
+ def test_lua_json_omitted_nil_reset_source_decodes_as_none(self):
+  response, trace, export, pre_close, snapshot, final = inputs()
+  del snapshot["correlation"]["candidate_source"] # hs.json omits Lua nil keys.
+  lua_json_decoded=json.loads(json.dumps(snapshot))
+  row=normalizer.normalize(response,trace,export,pre_close,lua_json_decoded,final,"warm")
+  self.assertIsNone(row["generation_reset"]["candidate_source"])
+ def test_cli_converts_unexpected_internal_error_to_private_indeterminate_row(self):
+  response, trace, export, pre_close, snapshot, final = inputs()
+  with tempfile.TemporaryDirectory() as directory:
+   os.chmod(directory,0o700); d=pathlib.Path(directory); paths=[]
+   for name,data in (("response.json",response),("observer.json",export),("pre-close.json",pre_close),("snapshot.json",snapshot),("final.json",final)):
+    path=d/name; path.write_text(json.dumps(data)); os.chmod(path,0o600); paths.append(path)
+   trace_path=d/"trace.ndjson"; trace_path.write_text("".join(json.dumps(x)+"\n" for x in trace)); os.chmod(trace_path,0o600)
+   output=d/"row.json"; original=normalizer.normalize
+   try:
+    normalizer.normalize=lambda *args: (_ for _ in ()).throw(KeyError("private detail"))
+    self.assertEqual(normalizer.main(["warm",str(paths[0]),str(trace_path),str(paths[1]),str(paths[2]),str(paths[3]),str(paths[4]),str(output)]),2)
+   finally: normalizer.normalize=original
+   result=json.loads(output.read_text()); self.assertEqual((result["analysis_status"],result["outcome"],result["diagnostic_class"]),("indeterminate","normalizer_error","KeyError"))
+   self.assertNotIn("private detail",output.read_text())
  def test_cli_private_modes_atomic_output_and_no_stdout_alias(self):
   response, trace, export, pre_close, snapshot, final = inputs()
   with tempfile.TemporaryDirectory() as directory:

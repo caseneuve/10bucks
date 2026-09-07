@@ -431,16 +431,22 @@ class DirectAXVolumeController:
             self.ports.wait_marker(self._private_path(state, "trace.ndjson"), "fixture_create_visible_completed", sample_id=sample_id, timeout=self._timeout())
             stage = "wait_map_ready"
             self._wait_correlation(state, sample_id, "map_ready")
+            stage = "snapshot_pre_close"
             self._snapshot(state, f"{sample_id}-pre-close-status.json", expected="pre_close")
             token = response.get("fixture_token")
             if not isinstance(token, str) or not token: raise ControllerError("fixture create response lacks token")
             close = self.ports.fixture_request(state["run_dir"], "close", sample_id, token, timeout=self._timeout())
             if not isinstance(close, dict) or close.get("status") != "accepted": raise ControllerError("fixture close failed")
+            stage = "wait_native_close"
             self.ports.wait_marker(self._private_path(state, "trace.ndjson"), "native_close_completed", sample_id=sample_id, timeout=self._timeout())
+            stage = "wait_candidates_complete"
             self._wait_correlation(state, sample_id, "candidates_complete")
+            stage = "finish_correlation"
             finished = self.ports.observer("finish_correlation", sample_id=sample_id, timeout=self._timeout())
             if not isinstance(finished, dict) or finished.get("finished") is not True: raise ControllerError("correlation finish failed")
+            stage = "snapshot_post_finish"
             self._snapshot(state, f"{sample_id}-post-finish-status.json", expected="post_finish")
+            stage = "export_running"
             exported = self.ports.observer("export_running", timeout=self._timeout(), path=self._private_path(state, f"{sample_id}-observer-export.json"))
             if not isinstance(exported, dict) or not self.ports.private_file(self._private_path(state, f"{sample_id}-observer-export.json")):
                 raise ControllerError("running observer export failed")
@@ -448,7 +454,9 @@ class DirectAXVolumeController:
             # The warm normalizer does not consume a stopped-session record;
             # pass the already-retained post-finish observation as its required
             # session input rather than synthesize a cleanup fact.
+            stage = "normalize"
             self.ports.run(("normalizer", "warm", response_path, self._private_path(state, "trace.ndjson"), self._private_path(state, f"{sample_id}-observer-export.json"), self._private_path(state, f"{sample_id}-pre-close-status.json"), self._private_path(state, f"{sample_id}-post-finish-status.json"), self._private_path(state, f"{sample_id}-post-finish-status.json"), row_path), timeout=self._timeout())
+            stage = "analyze"
             result_path = self._private_path(state, f"{sample_id}-sample-result.json")
             self.ports.run(("analyzer", "sample", "warm", row_path, result_path), timeout=self._timeout())
             result = self.ports.read_private_json(result_path)
