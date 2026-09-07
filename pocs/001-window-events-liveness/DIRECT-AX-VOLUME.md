@@ -30,10 +30,12 @@ normalizer data is `analyzer_error`/`indeterminate`, never platform evidence.
 
 Human approval for the estimated **8–12 minute** volume disruption was granted
 **after preflight**, subject to orchestrator review of this checkpoint. It does
-not authorize a live action yet. The exact freeze commit is recorded in the
-separate approval checkpoint following this source/test commit; the operator
-must require a clean tree and byte-match the frozen POC files before any live
-batch. Commands must have timeout <=120 seconds.
+not authorize a live action yet. The frozen source/procedure boundary is
+`223ba1c8f5357e903dcd91aeb06034b5e6aa8498` (`poc: clarify direct AX volume
+analyzer boundary`). The operator must require a clean tree and byte-match the
+frozen POC files before any live batch. This approval record is documentation
+only and does not alter that frozen source. Commands must have timeout <=120
+seconds.
 
 ## Private paths and final cleanup
 
