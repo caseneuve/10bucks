@@ -133,6 +133,15 @@ class ControllerTests(unittest.TestCase):
    machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
   self.assertEqual(ports.read_private_json(run+"/controller-state.json")["phase"],"indeterminate")
   self.assertTrue(ports.private_file(run+"/controller-evidence.json"))
+ def test_dead_identity_matched_fixture_with_stale_socket_is_preserved_crash_residue(self):
+  ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
+  ports.alive=False; ports.socket=True
+  with self.assertRaisesRegex(controller.ControllerError,"fixture_crash_residue"):
+   machine.abort_cleanup(run_dir=run,execute=True,approval_file="/approval")
+  state=ports.read_private_json(run+"/controller-state.json")
+  self.assertEqual(state["phase"],"indeterminate"); self.assertTrue(ports.socket)
+  self.assertNotIn(("shutdown",120),ports.calls)
+  self.assertEqual(next(event for event in state["events"] if event["event"]=="fixture_crash_residue")["disposition"],"preserved")
  def test_stopped_observer_status_is_quiescent(self):
   ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
   self.assertTrue(machine._zero_observer(ports.observer("stop_export", path=run+"/observer-export.json")))

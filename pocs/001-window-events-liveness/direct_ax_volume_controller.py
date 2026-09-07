@@ -302,17 +302,26 @@ class DirectAXVolumeController:
         except Exception:
             failures.append("observer_cleanup")
         pid, identity = state.get("fixture_pid"), state.get("fixture_identity")
+        fixture_residue = False
         if isinstance(pid, int) and isinstance(identity, dict):
-            try: self.ports.fixture_shutdown(state.get("fixture_run_dir") or state["run_dir"], timeout=self._timeout())
-            except Exception: failures.append("fixture_shutdown")
-            if self.ports.process_alive(pid, identity):
-                try: self.ports.terminate(pid, identity, timeout=self._timeout())
-                except Exception: failures.append("fixture_terminate")
-            try:
-                if not self.ports.wait_process(pid, identity, timeout=self._timeout()): failures.append("fixture_wait")
-            except Exception: failures.append("fixture_wait")
+            fixture_alive = self.ports.process_alive(pid, identity)
+            # A recorded fixture identity that is already dead while its owned
+            # socket persists is crash residue, not a semantic cleanup success.
+            # Preserve it for review; never unlink evidence on this path.
+            fixture_residue = not fixture_alive and self.ports.socket_exists(state["socket"])
+            if fixture_residue:
+                failures.append("fixture_crash_residue")
+            else:
+                try: self.ports.fixture_shutdown(state.get("fixture_run_dir") or state["run_dir"], timeout=self._timeout())
+                except Exception: failures.append("fixture_shutdown")
+                if self.ports.process_alive(pid, identity):
+                    try: self.ports.terminate(pid, identity, timeout=self._timeout())
+                    except Exception: failures.append("fixture_terminate")
+                try:
+                    if not self.ports.wait_process(pid, identity, timeout=self._timeout()): failures.append("fixture_wait")
+                except Exception: failures.append("fixture_wait")
         if isinstance(pid, int) and (not isinstance(identity, dict) or self.ports.process_alive(pid, identity)): failures.append("fixture_still_alive")
-        if self.ports.socket_exists(state["socket"]): failures.append("socket_present")
+        if self.ports.socket_exists(state["socket"]) and not fixture_residue: failures.append("socket_present")
         try:
             if not self._legacy_restored(state):
                 failures.append("legacy_restore_semantic")
@@ -320,6 +329,8 @@ class DirectAXVolumeController:
             failures.append("legacy_restore_semantic")
         state["observer_started"], state["legacy_stopped"] = False, False
         state["phase"] = "indeterminate" if failures else "cleaned"
+        if fixture_residue:
+            self._record(state, "fixture_crash_residue", disposition="preserved", semantic_cleanup=False)
         self._record(state, "abort_cleanup", outcome=state["phase"], failures=failures)
         self._save(state)
         if failures and restoration_required:

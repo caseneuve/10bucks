@@ -25,6 +25,15 @@ file "$app/Contents/MacOS/poc001-fixturectl" | grep -F 'arm64' >/dev/null
 # The public occlusion callback measures only AppKit-reported partial visibility.
 grep -F 'windowDidChangeOcclusionState' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null
 grep -F 'occlusionState.contains(.visible)' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null
+python3 - "$fixture/Sources/POC001FixtureApp.swift" <<'PY'
+import sys
+source = open(sys.argv[1], encoding="utf-8").read()
+created = source.index("let window = NSWindow(")
+released = source.index("window.isReleasedWhenClosed = false")
+delegate = source.index("window.delegate = self")
+registry = source.index("windows[objectID] = window")
+assert created < released < delegate < registry
+PY
 grep -F 'fixture_create_visible_completed' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null
 ! grep -F 'windowDidBecomeKey' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null
 ! grep -F 'makeKeyAndOrderFront' "$fixture/Sources/POC001FixtureApp.swift" >/dev/null

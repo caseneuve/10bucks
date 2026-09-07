@@ -16,6 +16,10 @@ private final class AppKitWindowPort: NSObject, FixtureWindowPort, NSWindowDeleg
             backing: .buffered,
             defer: false
         )
+        // The dictionary is this fixture's single explicit owner until
+        // windowWillClose removes the exact object. Avoid AppKit releasing the
+        // native window independently of ARC during repeated close cycles.
+        window.isReleasedWhenClosed = false
         window.delegate = self
         windows[objectID] = window
         return objectID
