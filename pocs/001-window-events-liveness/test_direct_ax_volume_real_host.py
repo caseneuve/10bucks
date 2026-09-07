@@ -107,6 +107,18 @@ class RealHostTests(unittest.TestCase):
             os.unlink(output); os.symlink("/tmp/nope", output)
             with self.assertRaises(real_host.HostError): ports.write_private_json(output, {"ok": False})
 
+    def test_private_run_dir_uses_exact_six_alphanumeric_suffix_and_0700_mode(self):
+        ports = real_host.RealHostPorts(ROOT.parents[1], FakeRunner()); created = ports.make_private_run_dir("/tmp/p1d.")
+        try:
+            self.assertRegex(created, r"^/tmp/p1d\.[A-Za-z0-9]{6}$")
+            meta = os.lstat(created)
+            self.assertTrue(stat.S_ISDIR(meta.st_mode))
+            self.assertEqual(meta.st_uid, os.getuid())
+            self.assertEqual(stat.S_IMODE(meta.st_mode), 0o700)
+        finally:
+            # This test removes only the directory it exclusively created.
+            if os.path.isdir(created) and not os.path.islink(created): os.rmdir(created)
+
     def test_static_no_live_test_runner_and_safe_hs_contract(self):
         source = (ROOT / "direct_ax_volume_real_host.py").read_text()
         tests = (ROOT / "test_direct_ax_volume_real_host.py").read_text()

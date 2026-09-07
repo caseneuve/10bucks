@@ -60,8 +60,13 @@ redacted booleans—never paths, PIDs, sockets, tokens, aliases, responses, or
 trace records.
 
 `prepare` allocates the controller's initial storage directory exactly once:
-`/tmp/p1d.XXXXXX` under `umask 077`. Each cold sample separately allocates one
-fresh owner-private fixture session directory under the same short prefix so a
+`/tmp/p1d.XXXXXX` under `umask 077`. The real-host allocator exclusively
+creates exactly six cryptographically random alphanumeric suffix characters;
+it does not use `tempfile.mkdtemp`'s incompatible suffix grammar. Collisions,
+including symlink names, are retried without following or reusing the path.
+This corrects a preflight false negative, not a platform result. Each cold
+sample separately allocates one fresh owner-private fixture session directory
+under the same short prefix so a
 new fixture never reuses a trace or socket. Every allocated directory is
 verified owner `0700`; state and evidence use no-follow atomic replacement at
 owner `0600`. Each fixture socket remains at the short canonical

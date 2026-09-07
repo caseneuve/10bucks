@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import signal
 import stat
+import string
 import subprocess
 import sys
 import tempfile
@@ -105,11 +107,31 @@ class RealHostPorts:
                 "head": self.head_commit(), "display": hs.get("display", ""), "settings": hs.get("settings", "")}
 
     def make_private_run_dir(self, prefix: str) -> str:
+        if prefix != "/tmp/p1d.": raise HostError("invalid private run prefix")
+        alphabet = string.ascii_letters + string.digits
+        # tempfile.mkdtemp's platform suffix is not the controller's frozen
+        # six-alphanumeric path grammar.  Create the exact path atomically;
+        # collisions (including symlinks) are never followed or reused.
         old = os.umask(0o077)
-        try: path = tempfile.mkdtemp(prefix=prefix, dir="/tmp")
-        finally: os.umask(old)
-        os.chmod(path, 0o700)
-        return path
+        try:
+            for _ in range(128):
+                path = prefix + "".join(secrets.choice(alphabet) for _ in range(6))
+                try:
+                    os.mkdir(path, 0o700)
+                except FileExistsError:
+                    continue
+                except OSError as error:
+                    raise HostError("private run directory creation failed") from error
+                meta = os.lstat(path)
+                if (stat.S_ISDIR(meta.st_mode) and meta.st_uid == os.getuid()
+                        and not stat.S_ISLNK(meta.st_mode)):
+                    os.chmod(path, 0o700)
+                    if self.private_dir(path): return path
+                # Do not remove a path whose post-create identity is uncertain.
+                raise HostError("private run directory verification failed")
+        finally:
+            os.umask(old)
+        raise HostError("private run directory collision limit reached")
 
     def _read_nofollow(self, path: str) -> str:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
