@@ -717,6 +717,20 @@ function Observer:status()
   for _ in pairs(self.app_watchers) do status.direct_application_watchers = status.direct_application_watchers + 1 end; for _ in pairs(self.window_watchers) do status.direct_window_watchers = status.direct_window_watchers + 1 end
   return status
 end
+-- A snapshot is a read-only, owner-private diagnostic boundary.  It does not
+-- stop, mutate, arm, finish, or abort correlation; callers use it to preserve
+-- the exact before-close and after-finish state for the private normalizer.
+function Observer:export_snapshot(path)
+  assert(self.trace, "start the POC before exporting a snapshot")
+  local snapshot = self:status()
+  return PrivateExport.write(path, Trace.encode_json(snapshot), self.export_ops)
+end
+
+function Observer:export_running(path)
+  assert(self.trace and self.running, "start the POC before exporting a running trace")
+  return PrivateExport.write(path, Trace.encode_json(self.trace:export_table()), self.export_ops)
+end
+
 function Observer:export(path)
   assert(self.trace, "start the POC before exporting")
   assert(not self.running and self.trace:status().lifecycle == "stopped", "stop the POC before exporting")

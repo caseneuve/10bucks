@@ -644,6 +644,28 @@ return {
     for _, prohibited in ipairs({ "attributeNames", "allAttributeValues", "hs.window.find", "children", "timer", "runningApplications", "focusedWindow" }) do assert(not correlation_source:find(prohibited, 1, true), prohibited .. " is prohibited in correlation observer") end
     observer:stop()
   end,
+  ["POC-001 observer snapshot export is private and does not mutate running correlation"] = function()
+    local state = install_fake_hs({}); package.loaded.observer = nil
+    local observer = require("observer").new(); assert(observer:start()); assert(observer:arm_fixture_correlation(1, "direct_ax"))
+    local written, renamed, chmod = nil, nil, false
+    observer.export_ops = {
+      current_uid = function() return 501 end,
+      attributes = function(path)
+        if path == "/private" then return { mode = "directory", uid = 501, permissions = "rwx------" } end
+        return { mode = "file", uid = 501, permissions = chmod and "rw-------" or "rw-r--r--" }
+      end,
+      open = function() return { write = function(_, value) written = value; return true end, close = function() end } end,
+      chmod_600 = function() chmod = true; return true end,
+      rename = function(_, destination) renamed = destination; return true end,
+      remove = function() end,
+    }
+    local before = observer:status().correlation
+    assert(observer:export_snapshot("/private/snapshot.json"))
+    equal(renamed, "/private/snapshot.json"); assert(chmod); assert(written:find('"lifecycle":"running"', 1, true))
+    local after = observer:status().correlation
+    equal(after.armed, before.armed); equal(after.map_count, before.map_count); equal(observer.running, true)
+    observer:stop()
+  end,
   ["POC-001 cleanup removes observer-owned direct watchers"] = function()
     local window, application = fake_window(501, complete_metadata()), fake_application(55, {})
     local state = install_fake_hs({ application }); package.loaded.observer = nil

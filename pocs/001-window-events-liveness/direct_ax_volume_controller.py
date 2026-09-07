@@ -50,6 +50,9 @@ class Ports(Protocol):
     def process_alive(self, pid: int, identity: dict[str, str] | None = None) -> bool: ...
     def socket_exists(self, path: str) -> bool: ...
     def wait_marker(self, trace_path: str, marker: str, *, sample_id: str, timeout: int) -> None: ...
+    # One bounded fixture IPC request.  It returns only the private retained
+    # response; the controller never prints its token or alias.
+    def fixture_request(self, run_dir: str, command: str, sample_id: str, token: str | None, *, timeout: int) -> dict[str, Any]: ...
     # `restore` is one semantic action: start, rebind configured hotkeys, then
     # return an observed state for exact comparison with `capture`.
     def legacy(self, action: str, **kwargs: Any) -> dict[str, Any]: ...
@@ -149,7 +152,8 @@ class DirectAXVolumeController:
         self._valid_run_dir(run_dir)
         state = {"schema": "poc001-direct-ax-controller-v1", "run_dir": run_dir, "frozen_commit": commit,
                  "phase": "prepared", "fixture_pid": None, "fixture_identity": None, "socket": run_dir + "/poc001-fixture.sock",
-                 "legacy_stopped": False, "legacy_baseline": None, "observer_started": False, "events": []}
+                 "legacy_stopped": False, "legacy_baseline": None, "observer_started": False,
+                 "next_generation": 1, "warm_rows": [], "events": []}
         # State/evidence are opened privately by the filesystem port before any write.
         self._save(state)
         self._record(state, "prepared", environment=environment)
@@ -180,6 +184,7 @@ class DirectAXVolumeController:
         actual = self.ports.legacy("restore", expected=baseline)
         if not isinstance(actual, dict):
             return False
+        state["legacy_restore_observed"] = {key: actual.get(key) for key in LEGACY_SEMANTIC_KEYS}
         return all(actual.get(key) == baseline.get(key) for key in LEGACY_SEMANTIC_KEYS)
 
     def status(self, *, run_dir: str) -> dict[str, Any]:
@@ -283,6 +288,132 @@ class DirectAXVolumeController:
             raise ControllerError("cleanup indeterminate: " + ",".join(failures))
         return {"phase": state["phase"], "restoration_ok": not failures}
 
+    def _private_path(self, state: dict[str, Any], name: str) -> str:
+        return state["run_dir"] + "/" + name
+
+    def _snapshot(self, state: dict[str, Any], name: str) -> dict[str, Any]:
+        """Persist one observer status snapshot without exposing its content."""
+        status = self.ports.observer("snapshot", path=self._private_path(state, name))
+        if not isinstance(status, dict) or not self.ports.private_file(self._private_path(state, name)):
+            raise ControllerError("observer snapshot failed")
+        return status
+
+    def _semantic_abort(self, state: dict[str, Any], reason: str) -> None:
+        # Evidence has already been written by the caller.  Never retry a
+        # sample: cleanup is the only permitted response to uncertainty.
+        self._record(state, "semantic_abort", reason=reason)
+        self._save(state)
+        self._abort(state, restoration_required=True)
+
+    def warm_sample(self, *, run_dir: str, generation: int, execute: bool,
+                    approval_file: str) -> dict[str, Any]:
+        self._require_execute(execute)
+        state = self._load(run_dir)
+        if self._freeze(approval_file) != state.get("frozen_commit"):
+            raise ControllerError("refused: current freeze differs from state")
+        if state.get("phase") != "running" or state.get("observer_started") is not True:
+            raise ControllerError("refused: warm-sample requires running warm session")
+        if not isinstance(generation, int) or isinstance(generation, bool) or not 1 <= generation <= 30:
+            raise ControllerError("refused: warm generation must be 1..30")
+        if generation != state.get("next_generation"):
+            raise ControllerError("refused: warm generation is not the exact next generation")
+        sample_id = f"warm-{generation:02d}"
+        # Persist the in-flight generation before the sole arm/create sequence.
+        state["phase"] = "warm_sample_pending"
+        state["active_generation"] = generation
+        self._record(state, "warm_sample_started", sample_id=sample_id, generation=generation)
+        self._save(state)
+        try:
+            armed = self.ports.observer("arm_correlation", generation=generation, source="direct_ax", sample_id=sample_id)
+            if not isinstance(armed, dict) or armed.get("armed") is not True:
+                raise ControllerError("correlation arm failed")
+            response = self.ports.fixture_request(state["run_dir"], "create", sample_id, None, timeout=MAX_TIMEOUT_SECONDS)
+            if not isinstance(response, dict) or response.get("status") != "accepted":
+                raise ControllerError("fixture create failed")
+            response_path = self._private_path(state, f"{sample_id}-create-response.json")
+            self.ports.write_private_json(response_path, response)
+            if not self.ports.private_file(response_path): raise ControllerError("private create response write failed")
+            self.ports.wait_marker(self._private_path(state, "trace.ndjson"), "fixture_create_visible_completed", sample_id=sample_id, timeout=MAX_TIMEOUT_SECONDS)
+            ready = self.ports.observer("correlation_ready", sample_id=sample_id)
+            if not isinstance(ready, dict) or ready.get("ready") is not True or ready.get("map_count") != 1:
+                raise ControllerError("correlation readiness failed")
+            self._snapshot(state, f"{sample_id}-pre-close-status.json")
+            token = response.get("fixture_token")
+            if not isinstance(token, str) or not token: raise ControllerError("fixture create response lacks token")
+            close = self.ports.fixture_request(state["run_dir"], "close", sample_id, token, timeout=MAX_TIMEOUT_SECONDS)
+            if not isinstance(close, dict) or close.get("status") != "accepted": raise ControllerError("fixture close failed")
+            self.ports.wait_marker(self._private_path(state, "trace.ndjson"), "native_close_completed", sample_id=sample_id, timeout=MAX_TIMEOUT_SECONDS)
+            candidates = self.ports.observer("correlation_ready", sample_id=sample_id)
+            if not isinstance(candidates, dict) or candidates.get("candidates_complete") is not True:
+                raise ControllerError("destruction candidates incomplete")
+            finished = self.ports.observer("finish_correlation", sample_id=sample_id)
+            if not isinstance(finished, dict) or finished.get("finished") is not True: raise ControllerError("correlation finish failed")
+            self._snapshot(state, f"{sample_id}-post-finish-status.json")
+            exported = self.ports.observer("export_running", path=self._private_path(state, f"{sample_id}-observer-export.json"))
+            if not isinstance(exported, dict) or not self.ports.private_file(self._private_path(state, f"{sample_id}-observer-export.json")):
+                raise ControllerError("running observer export failed")
+            row_path = self._private_path(state, f"{sample_id}-row.json")
+            self.ports.run(("normalizer", "warm", response_path, self._private_path(state, "trace.ndjson"), self._private_path(state, f"{sample_id}-observer-export.json"), self._private_path(state, f"{sample_id}-pre-close-status.json"), self._private_path(state, f"{sample_id}-post-finish-status.json"), row_path), timeout=MAX_TIMEOUT_SECONDS)
+            result_path = self._private_path(state, f"{sample_id}-sample-result.json")
+            self.ports.run(("analyzer", "sample", "warm", row_path, result_path), timeout=MAX_TIMEOUT_SECONDS)
+            result = self.ports.read_private_json(result_path)
+            if result.get("outcome") != "pass": raise ControllerError("sample analyzer substantive failure")
+            # Append only after both normalizer and analyzer have validated it.
+            row = self.ports.read_private_json(row_path)
+            state["warm_rows"] = state.get("warm_rows", []) + [row]
+            state["next_generation"] = generation + 1
+            state.pop("active_generation", None)
+            state["phase"] = "running"
+            self._record(state, "warm_sample_validated", sample_id=sample_id, generation=generation)
+            self._save(state)
+            return {"phase": "running", "next_generation": state["next_generation"], "samples_completed": len(state["warm_rows"])}
+        except Exception as error:
+            substantive = isinstance(error, ControllerError) and str(error) == "sample analyzer substantive failure"
+            self._semantic_abort(state, "warm_sample_substantive_failure" if substantive else "warm_sample_failed")
+            # A schema-valid analyzer rejection is evidence of a failed class,
+            # whereas a timeout/normalizer/harness failure is indeterminate.
+            state["phase"] = "failed" if substantive else "indeterminate"
+            self._record(state, "warm_sample_terminal", outcome=state["phase"])
+            self._save(state)
+            raise error
+
+    def warm_finish(self, *, run_dir: str, execute: bool, approval_file: str) -> dict[str, Any]:
+        self._require_execute(execute)
+        state = self._load(run_dir)
+        if self._freeze(approval_file) != state.get("frozen_commit"):
+            raise ControllerError("refused: current freeze differs from state")
+        if state.get("phase") != "running" or state.get("next_generation") != 31 or len(state.get("warm_rows", [])) != 30:
+            raise ControllerError("refused: warm-finish requires exactly 30 validated rows")
+        state["phase"] = "warm_finish_pending"; self._record(state, "warm_finish_started"); self._save(state)
+        try:
+            stopped = self.ports.observer("stop_export", path=self._private_path(state, "warm-final-observer-export.json"))
+            if not self._zero_observer(stopped): raise ControllerError("observer final quiesce failed")
+            pid, identity = state.get("fixture_pid"), state.get("fixture_identity")
+            self.ports.fixture_shutdown(state["run_dir"], timeout=MAX_TIMEOUT_SECONDS)
+            if isinstance(pid, int) and isinstance(identity, dict) and self.ports.process_alive(pid, identity):
+                self.ports.terminate(pid, identity, timeout=MAX_TIMEOUT_SECONDS)
+            if isinstance(pid, int) and isinstance(identity, dict) and not self.ports.wait_process(pid, identity, timeout=MAX_TIMEOUT_SECONDS): raise ControllerError("fixture final wait failed")
+            if self.ports.socket_exists(state["socket"]): raise ControllerError("fixture socket remains")
+            restored = self._legacy_restored(state)
+            observed = state.get("legacy_restore_observed", {})
+            cleanup = {"observer_stopped": True, "callbacks_open": 0, "active_timers": 0, "window_effects": 0, "map_count": 0,
+                       "fixture_process_absent": not (isinstance(pid, int) and self.ports.process_alive(pid, identity)), "fixture_socket_absent": True,
+                       "legacy_restored": restored, "legacy_binding_count_expected": state["legacy_baseline"]["binding_count"], "legacy_binding_count_actual": observed.get("binding_count", 0),
+                       "legacy_lifecycle_watcher_expected": state["legacy_baseline"]["lifecycle_watcher_active"], "legacy_lifecycle_watcher_actual": observed.get("lifecycle_watcher_active", False),
+                       "legacy_reconcile_expected": state["legacy_baseline"]["reconcile_active"], "legacy_reconcile_actual": observed.get("reconcile_active", False),
+                       "legacy_bar_expected": state["legacy_baseline"]["bar_timer_active"], "legacy_bar_actual": observed.get("bar_timer_active", False)}
+            cleanup_path = self._private_path(state, "class-final-cleanup.json"); self.ports.write_private_json(cleanup_path, cleanup)
+            class_path = self._private_path(state, "warm-class.json"); self.ports.write_private_json(class_path, {"samples": state["warm_rows"], "class_final_cleanup": cleanup})
+            result_path = self._private_path(state, "warm-class-result.json"); self.ports.run(("analyzer", "class", "warm", class_path, result_path), timeout=MAX_TIMEOUT_SECONDS)
+            result = self.ports.read_private_json(result_path)
+            state["observer_started"], state["legacy_stopped"] = False, False
+            state["phase"] = "passed" if result.get("outcome") == "pass" else "failed"
+            self._record(state, "warm_finish_result", outcome=state["phase"]); self._save(state)
+            return {"phase": state["phase"]}
+        except Exception:
+            self._semantic_abort(state, "warm_finish_failed")
+            raise
+
     def abort_cleanup(self, *, run_dir: str, execute: bool, approval_file: str) -> dict[str, Any]:
         self._require_execute(execute)
         state = self._load(run_dir)
@@ -293,7 +424,7 @@ class DirectAXVolumeController:
         return self._abort(state, restoration_required=True)
 
     def command(self, name: str, *, execute: bool = False, approval_file: str | None = None,
-                run_dir: str | None = None) -> Any:
+                run_dir: str | None = None, generation: int | None = None) -> Any:
         """The four explicit command names used by a future approved CLI port."""
         if name == "status":
             if run_dir is None: raise ControllerError("refused: --run-dir is required")
@@ -302,6 +433,10 @@ class DirectAXVolumeController:
         if name == "prepare": return self.prepare(execute=execute, approval_file=approval_file)
         if run_dir is None: raise ControllerError("refused: --run-dir is required")
         if name == "warm-start": return self.warm_start(run_dir=run_dir, execute=execute, approval_file=approval_file)
+        if name == "warm-sample":
+            if generation is None: raise ControllerError("refused: --generation is required")
+            return self.warm_sample(run_dir=run_dir, generation=generation, execute=execute, approval_file=approval_file)
+        if name == "warm-finish": return self.warm_finish(run_dir=run_dir, execute=execute, approval_file=approval_file)
         if name == "abort-cleanup": return self.abort_cleanup(run_dir=run_dir, execute=execute, approval_file=approval_file)
         raise ControllerError("refused: unknown command")
 
@@ -309,16 +444,17 @@ class DirectAXVolumeController:
 def main(argv: list[str] | None = None) -> int:
     """Run only the reviewed real-host adapter through the four-command grammar."""
     parser = argparse.ArgumentParser(description="POC-001 direct-AX controller.")
-    parser.add_argument("command", choices=("prepare", "status", "warm-start", "abort-cleanup"))
+    parser.add_argument("command", choices=("prepare", "status", "warm-start", "warm-sample", "warm-finish", "abort-cleanup"))
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--approval-file")
     parser.add_argument("--run-dir")
+    parser.add_argument("--generation", type=int)
     args = parser.parse_args(argv)
     try:
         from direct_ax_volume_real_host import RealHostPorts
         root = __import__("pathlib").Path(__file__).resolve().parents[2]
         result = DirectAXVolumeController(RealHostPorts(root)).command(
-            args.command, execute=args.execute, approval_file=args.approval_file, run_dir=args.run_dir)
+            args.command, execute=args.execute, approval_file=args.approval_file, run_dir=args.run_dir, generation=args.generation)
         # status is intentionally redacted by the controller; prepare returns
         # only its owner-private run directory as the documented normal output.
         if isinstance(result, str): print(result)

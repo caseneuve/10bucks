@@ -15,6 +15,7 @@ class FakePorts:
   self.changes = {"staged":[], "unstaged":[], "untracked":[]}; self.head = COMMIT
   self.alive, self.socket, self.legacy_running, self.observer_running = False, False, True, False
   self.binding_count = 26; self.fail_marker = self.fail_restore = False; self.pid = 42
+  self.fixture_token = "private-token"; self.fixture_requests = []
   self.files["/approval"] = json.dumps({"approved_commit":COMMIT}); self.private_files={"/approval"}
  def repo_changes(self): return deepcopy(self.changes)
  def head_commit(self): return self.head
@@ -26,13 +27,19 @@ class FakePorts:
  def read_text(self,path): return self.files[path]
  def write_private_json(self,path,value): self.calls.append(("write",path)); self.files[path]=json.dumps(value); self.private_files.add(path)
  def read_private_json(self,path): return json.loads(self.files[path])
- def run(self,argv,timeout): self.calls.append(("run",argv,timeout)); assert timeout <= 120
+ def run(self,argv,timeout):
+  self.calls.append(("run",argv,timeout)); assert timeout <= 120
+  if argv[0] == "normalizer": self.write_private_json(argv[-1], {"validated":"row"})
+  if argv[0] == "analyzer": self.write_private_json(argv[-1], {"outcome":"pass"})
  def spawn_fixture(self,run_dir,clock_kind,timeout): self.calls.append(("spawn",clock_kind,timeout)); self.alive=True; self.socket=True; return self.pid
  def fixture_identity(self,pid,run_dir): return {"executable":"fixture", "run_dir":run_dir}
  def process_alive(self,pid,identity=None): return self.alive and pid == self.pid and (identity is None or identity.get("run_dir") == "/tmp/p1d.abc123")
  def socket_exists(self,path): return self.socket
+ def fixture_request(self,run_dir,command,sample_id,token,timeout):
+  self.fixture_requests.append((command,sample_id,token,timeout)); assert timeout <= 120
+  return {"status":"accepted","sample_id":sample_id,"fixture_token":self.fixture_token,"correlation_alias":"private-alias"}
  def wait_marker(self,path,marker,sample_id,timeout):
-  self.calls.append(("marker",marker,sample_id,timeout)); assert timeout <= 120; assert sample_id == "startup"
+  self.calls.append(("marker",marker,sample_id,timeout)); assert timeout <= 120; assert sample_id == "startup" or sample_id.startswith("warm-")
   if self.fail_marker: raise RuntimeError("timeout")
  def legacy(self,action,**kwargs):
   self.calls.append(("legacy",action))
@@ -48,6 +55,11 @@ class FakePorts:
  def observer(self,action,**kwargs):
   self.calls.append(("observer",action))
   if action == "start": self.observer_running=True; return {"running":True}
+  if action == "arm_correlation": return {"armed":True}
+  if action == "correlation_ready": return {"ready":True,"map_count":1,"candidates_complete":True}
+  if action == "finish_correlation": return {"finished":True}
+  if action == "snapshot": self.write_private_json(kwargs["path"], {"snapshot":True}); return {"ok":True}
+  if action == "export_running": self.write_private_json(kwargs["path"], {"export":True}); return {"ok":True}
   if action == "abort_correlation": return {}
   if action == "stop_export": self.observer_running=False; return {"running":False,"callbacks_open":0,"active_timers":0,"window_effects":0,"direct_application_watchers":0,"direct_window_watchers":0,"target_binding_armed":False,"correlation":{"map_count":0}}
   raise AssertionError(action)
@@ -111,6 +123,32 @@ class ControllerTests(unittest.TestCase):
   status=machine.status(run_dir=run); self.assertNotIn("pid",status); self.assertNotIn(run,str(status))
   ports,machine,run=prepared(); ports.socket=True
   with self.assertRaisesRegex(controller.ControllerError,"stale fixture PID or socket"): machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
+ def test_warm_sample_requires_exact_running_generation_and_never_duplicates_a_create(self):
+  ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
+  with self.assertRaisesRegex(controller.ControllerError,"exact next generation"):
+   machine.warm_sample(run_dir=run,generation=2,execute=True,approval_file="/approval")
+  self.assertEqual(ports.fixture_requests,[])
+  result=machine.warm_sample(run_dir=run,generation=1,execute=True,approval_file="/approval")
+  self.assertEqual((result["next_generation"],result["samples_completed"]),(2,1))
+  self.assertEqual([(item[0],item[1]) for item in ports.fixture_requests],[("create","warm-01"),("close","warm-01")])
+  self.assertEqual(ports.fixture_requests[1][2],"private-token")
+  with self.assertRaisesRegex(controller.ControllerError,"exact next generation"):
+   machine.warm_sample(run_dir=run,generation=1,execute=True,approval_file="/approval")
+  self.assertEqual(len(ports.fixture_requests),2)
+ def test_warm_finish_requires_30_rows_then_quiesces_and_restores_before_class_analysis(self):
+  ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
+  state=ports.read_private_json(run+"/controller-state.json")
+  state["next_generation"],state["warm_rows"]=31,[{"validated":number} for number in range(30)]
+  ports.write_private_json(run+"/controller-state.json",state)
+  self.assertEqual(machine.warm_finish(run_dir=run,execute=True,approval_file="/approval")["phase"],"passed")
+  names=[call[0:2] for call in ports.calls]
+  self.assertIn(("observer","stop_export"),names); self.assertIn(("legacy","restore"),names)
+  final=ports.read_private_json(run+"/controller-state.json")
+  self.assertEqual(final["phase"],"passed")
+  self.assertTrue(ports.private_file(run+"/class-final-cleanup.json"))
+  ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
+  with self.assertRaisesRegex(controller.ControllerError,"exactly 30"):
+   machine.warm_finish(run_dir=run,execute=True,approval_file="/approval")
  def test_all_subprocess_boundaries_are_at_most_120_seconds(self):
   ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval"); machine.abort_cleanup(run_dir=run,execute=True,approval_file="/approval")
   for call in ports.calls:

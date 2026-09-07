@@ -147,14 +147,40 @@ class RealHostPorts:
         return result
 
     def run(self, argv: tuple[str, ...], *, timeout: int) -> None:
-        if argv != ("fixture-build", "canonical"): raise HostError("unapproved command")
-        self._checked(("/bin/sh", str(self.fixture / "scripts/build-fixture.sh")), timeout)
-        if not self.app.is_file() or not self.fixturectl.is_file(): raise HostError("canonical fixture build missing")
+        if timeout > MAX_TIMEOUT_SECONDS: raise HostError("timeout exceeds 120 seconds")
+        if argv == ("fixture-build", "canonical"):
+            self._checked(("/bin/sh", str(self.fixture / "scripts/build-fixture.sh")), timeout)
+            if not self.app.is_file() or not self.fixturectl.is_file(): raise HostError("canonical fixture build missing")
+            return
+        if argv and argv[0] == "normalizer" and len(argv) == 8 and argv[1] in {"warm", "cold"}:
+            self._checked((sys.executable, str(self.root / "pocs/001-window-events-liveness/direct_ax_volume_normalizer.py"), *argv[1:]), timeout)
+            return
+        if argv and argv[0] == "analyzer" and len(argv) == 5 and argv[1] in {"sample", "class"} and argv[2] in {"warm", "cold"}:
+            # A substantive analyzer result intentionally exits 1.  The private
+            # JSON result, not the return code, preserves pass/fail distinction.
+            result = self.runner.run((sys.executable, str(self.root / "pocs/001-window-events-liveness/direct_ax_volume_analyzer.py"), *argv[1:]), timeout=timeout)
+            if result.returncode not in (0, 1): raise HostError("analyzer command failed")
+            return
+        raise HostError("unapproved command")
 
     def spawn_fixture(self, run_dir: str, *, clock_kind: str, timeout: int) -> int:
         if clock_kind != "mach_absolute" or timeout > MAX_TIMEOUT_SECONDS or not self.app.is_file(): raise HostError("invalid fixture spawn")
         env = dict(os.environ, POC001_FIXTURE_RUN_DIR=run_dir, POC001_FIXTURE_CLOCK_KIND="mach_absolute")
         return self.runner.spawn((str(self.app),), env=env)
+
+    def fixture_request(self, run_dir: str, command: str, sample_id: str, token: str | None, *, timeout: int) -> dict[str, Any]:
+        if command not in {"create", "close", "shutdown"} or timeout > MAX_TIMEOUT_SECONDS:
+            raise HostError("unapproved fixture request")
+        request_id = "controller-" + command + "-" + sample_id
+        argv = (str(self.fixturectl), run_dir, command, request_id, sample_id)
+        if command == "close":
+            if not isinstance(token, str) or not token: raise HostError("missing close token")
+            argv = argv + (token,)
+        result = self._checked(argv, timeout)
+        try: response = json.loads(result.stdout)
+        except ValueError: raise HostError("unsafe fixture response") from None
+        if not isinstance(response, dict): raise HostError("unsafe fixture response")
+        return response
 
     def fixture_identity(self, pid: int, run_dir: str) -> dict[str, str]:
         identity = {"executable": str(self.app), "run_dir": run_dir}
@@ -219,6 +245,18 @@ class RealHostPorts:
         observer = json.dumps(str(self.root / "pocs/001-window-events-liveness/observer.lua"))
         base = "package.path=" + observer_dir + " .. '?.lua;' .. package.path; _G.__poc001_observer=_G.__poc001_observer or dofile(" + observer + "); local o=_G.__poc001_observer; local function out(x) print(hs.json.encode(x)) end; "
         if action == "start": body = base + "o:start(); out({running=o:status().lifecycle == 'running'})"
+        elif action == "arm_correlation":
+            body = base + "local ok=o:arm_fixture_correlation(" + str(int(kwargs["generation"])) + "," + json.dumps(kwargs["source"]) + "); out({armed=ok})"
+        elif action == "correlation_ready":
+            body = base + "local s=o:status().correlation; out({ready=s.armed and s.map_count == 1,candidates_complete=s.candidate_sources.complete,map_count=s.map_count})"
+        elif action == "finish_correlation":
+            body = base + "local ok=o:finish_fixture_correlation(); out({finished=ok})"
+        elif action == "snapshot":
+            output = json.dumps(str(Path(kwargs["path"]).resolve()))
+            body = base + "o:export_snapshot(" + output + "); out({ok=true})"
+        elif action == "export_running":
+            output = json.dumps(str(Path(kwargs["path"]).resolve()))
+            body = base + "o:export_running(" + output + "); out({ok=true})"
         elif action == "abort_correlation": body = base + "o:abort_fixture_correlation('controller_abort'); out({ok=true})"
         elif action == "stop_export":
             export = json.dumps(str(Path(kwargs["path"]).resolve()))
