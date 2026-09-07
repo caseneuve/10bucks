@@ -20,6 +20,7 @@ RUN_PREFIX = "/tmp/p1d."
 STATE_NAME = "controller-state.json"
 EVIDENCE_NAME = "controller-evidence.json"
 APPROVED_MODULES = ("trace", "lifecycle", "ownership", "private_export", "correlation", "observer")
+LEGACY_SEMANTIC_KEYS = ("started", "binding_count", "lifecycle_watcher_active", "reconcile_active", "bar_active")
 MAX_TIMEOUT_SECONDS = 120
 STARTUP_TIMEOUT_SECONDS = 30
 SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
@@ -47,7 +48,9 @@ class Ports(Protocol):
     def process_alive(self, pid: int) -> bool: ...
     def socket_exists(self, path: str) -> bool: ...
     def wait_marker(self, trace_path: str, marker: str, *, timeout: int) -> None: ...
-    def legacy(self, action: str) -> bool: ...
+    # `restore` is one semantic action: start, rebind configured hotkeys, then
+    # return an observed state for exact comparison with `capture`.
+    def legacy(self, action: str, **kwargs: Any) -> dict[str, Any]: ...
     def clear_modules(self, modules: tuple[str, ...]) -> None: ...
     def observer(self, action: str, **kwargs: Any) -> dict[str, Any]: ...
     def fixture_shutdown(self, run_dir: str, *, timeout: int) -> None: ...
@@ -137,12 +140,34 @@ class DirectAXVolumeController:
         self._valid_run_dir(run_dir)
         state = {"schema": "poc001-direct-ax-controller-v1", "run_dir": run_dir, "frozen_commit": commit,
                  "phase": "prepared", "fixture_pid": None, "socket": run_dir + "/poc001-fixture.sock",
-                 "legacy_stopped": False, "observer_started": False, "events": []}
+                 "legacy_stopped": False, "legacy_baseline": None, "observer_started": False, "events": []}
         # State/evidence are opened privately by the filesystem port before any write.
         self._save(state)
         self._record(state, "prepared", environment=self.ports.environment())
         self._save(state)
         return run_dir
+
+    def _legacy_baseline(self) -> dict[str, Any]:
+        baseline = self.ports.legacy("capture")
+        if not isinstance(baseline, dict):
+            raise ControllerError("legacy capture failed")
+        for key in LEGACY_SEMANTIC_KEYS:
+            if key not in baseline:
+                raise ControllerError("legacy capture missing " + key)
+        if baseline["started"] is not True or isinstance(baseline["binding_count"], bool) or not isinstance(baseline["binding_count"], int) or baseline["binding_count"] <= 0:
+            raise ControllerError("legacy capture is not shortcut-ready")
+        if any(not isinstance(baseline[key], bool) for key in ("lifecycle_watcher_active", "reconcile_active", "bar_active")):
+            raise ControllerError("legacy capture has invalid lifecycle state")
+        return {key: baseline[key] for key in LEGACY_SEMANTIC_KEYS}
+
+    def _legacy_restored(self, state: dict[str, Any]) -> bool:
+        baseline = state.get("legacy_baseline")
+        if not isinstance(baseline, dict):
+            return False
+        actual = self.ports.legacy("restore", expected=baseline)
+        if not isinstance(actual, dict):
+            return False
+        return all(actual.get(key) == baseline.get(key) for key in LEGACY_SEMANTIC_KEYS)
 
     def status(self, *, run_dir: str) -> dict[str, Any]:
         state = self._load(run_dir)
@@ -165,8 +190,11 @@ class DirectAXVolumeController:
             raise ControllerError("refused: current freeze differs from prepared state")
         # Static build is deliberately before legacy stop and has an explicit bound.
         self.ports.run(("fixture-build", "canonical"), timeout=MAX_TIMEOUT_SECONDS)
+        # Capture the complete semantic restoration target before mutating
+        # legacy, then durably install it before the fixture/legacy handoff.
+        state["legacy_baseline"] = self._legacy_baseline()
         state["phase"] = "cleanup_pending" # durable recovery intent precedes any runtime mutation.
-        self._record(state, "cleanup_installed")
+        self._record(state, "cleanup_installed", legacy_binding_count=state["legacy_baseline"]["binding_count"])
         self._save(state)
         try:
             pid = self.ports.spawn_fixture(run_dir, clock_kind="mach_absolute", timeout=MAX_TIMEOUT_SECONDS)
@@ -179,7 +207,8 @@ class DirectAXVolumeController:
             self.ports.wait_marker(run_dir + "/trace.ndjson", "socket_ready", timeout=STARTUP_TIMEOUT_SECONDS)
             if not self.ports.process_alive(pid) or not self.ports.socket_exists(state["socket"]):
                 raise ControllerError("fixture startup stale or partial")
-            if not self.ports.legacy("stop") or self.ports.legacy("verify_running"):
+            stopped = self.ports.legacy("stop")
+            if not isinstance(stopped, dict) or stopped.get("started") is not False:
                 raise ControllerError("legacy stop verification failed")
             state["legacy_stopped"] = True
             self._record(state, "legacy_stopped")
@@ -223,10 +252,10 @@ class DirectAXVolumeController:
         if isinstance(pid, int) and self.ports.process_alive(pid): failures.append("fixture_still_alive")
         if self.ports.socket_exists(state["socket"]): failures.append("socket_present")
         try:
-            if not self.ports.legacy("start") or not self.ports.legacy("verify_running"):
-                failures.append("legacy_restore")
+            if not self._legacy_restored(state):
+                failures.append("legacy_restore_semantic")
         except Exception:
-            failures.append("legacy_restore")
+            failures.append("legacy_restore_semantic")
         state["observer_started"], state["legacy_stopped"] = False, False
         state["phase"] = "indeterminate" if failures else "cleaned"
         self._record(state, "abort_cleanup", outcome=state["phase"], failures=failures)

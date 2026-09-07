@@ -14,7 +14,7 @@ class FakePorts:
   self.files, self.dirs, self.calls = {}, {"/tmp/p1d.abc123"}, []
   self.changes = {"staged":[], "unstaged":[], "untracked":[]}; self.head = COMMIT
   self.alive, self.socket, self.legacy_running, self.observer_running = False, False, True, False
-  self.fail_marker = self.fail_restore = False; self.pid = 42
+  self.binding_count = 26; self.fail_marker = self.fail_restore = False; self.pid = 42
   self.files["/approval"] = json.dumps({"approved_commit":COMMIT}); self.private_files={"/approval"}
  def repo_changes(self): return deepcopy(self.changes)
  def head_commit(self): return self.head
@@ -33,11 +33,15 @@ class FakePorts:
  def wait_marker(self,path,marker,timeout):
   self.calls.append(("marker",marker,timeout)); assert timeout <= 120
   if self.fail_marker: raise RuntimeError("timeout")
- def legacy(self,action):
+ def legacy(self,action,**kwargs):
   self.calls.append(("legacy",action))
-  if action == "stop": self.legacy_running=False; return True
-  if action == "start": self.legacy_running=not self.fail_restore; return self.legacy_running
-  if action == "verify_running": return self.legacy_running
+  def snapshot(): return {"started":self.legacy_running,"binding_count":self.binding_count,"lifecycle_watcher_active":True,"reconcile_active":True,"bar_active":True}
+  if action == "capture": return snapshot()
+  if action == "stop": self.legacy_running=False; self.binding_count=0; return snapshot()
+  if action == "restore":
+   self.legacy_running=not self.fail_restore
+   if not self.fail_restore: self.binding_count=kwargs["expected"]["binding_count"]
+   return snapshot()
   raise AssertionError(action)
  def clear_modules(self,modules): self.calls.append(("clear",modules)); assert modules == controller.APPROVED_MODULES
  def observer(self,action,**kwargs):
@@ -71,13 +75,26 @@ class ControllerTests(unittest.TestCase):
  def test_warm_start_persists_cleanup_before_stopping_legacy_and_uses_exact_fixture_mode(self):
   ports,machine,run=prepared(); result=machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
   self.assertEqual(result["phase"],"running")
-  names=[call[0] for call in ports.calls]; self.assertLess(names.index("spawn"), names.index("legacy")); self.assertLess(names.index("legacy"), names.index("clear"))
-  self.assertIn(("spawn","mach_absolute",120),ports.calls); self.assertEqual(ports.read_private_json(run+"/controller-state.json")["phase"],"running")
+  names=[call[0] for call in ports.calls]; stop_index=ports.calls.index(("legacy","stop"))
+  self.assertLess(names.index("spawn"), stop_index); self.assertLess(stop_index, names.index("clear"))
+  state=ports.read_private_json(run+"/controller-state.json")
+  self.assertIn(("spawn","mach_absolute",120),ports.calls); self.assertEqual((state["phase"],state["legacy_baseline"]["binding_count"]),("running",26))
  def test_startup_partial_failure_uses_abort_cleanup_and_preserves_indeterminate_evidence(self):
   ports,machine,run=prepared(); ports.fail_marker=True
   with self.assertRaisesRegex(RuntimeError,"timeout"): machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
   self.assertEqual(ports.read_private_json(run+"/controller-state.json")["phase"],"cleaned")
-  self.assertIn(("observer","abort_correlation"),ports.calls); self.assertIn(("legacy","start"),ports.calls)
+  self.assertIn(("observer","abort_correlation"),ports.calls); self.assertIn(("legacy","restore"),ports.calls)
+ def test_started_with_zero_bindings_is_indeterminate_not_a_restoration_success(self):
+  ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
+  original=ports.legacy
+  def started_only(action, **kwargs):
+   result=original(action, **kwargs)
+   if action == "restore": ports.binding_count=0; result["binding_count"]=0
+   return result
+  ports.legacy=started_only
+  with self.assertRaisesRegex(controller.ControllerError,"legacy_restore_semantic"):
+   machine.abort_cleanup(run_dir=run,execute=True,approval_file="/approval")
+  self.assertEqual(ports.read_private_json(run+"/controller-state.json")["phase"],"indeterminate")
  def test_abort_cleanup_is_idempotent_and_records_restoration_failure_as_indeterminate(self):
   ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
   self.assertEqual(machine.abort_cleanup(run_dir=run,execute=True,approval_file="/approval")["phase"],"cleaned")

@@ -99,12 +99,15 @@ an OS UI, a command, or the Hammerspoon host.
 1. Record the Environment fields, POC branch/commit, test date, and whether
    each sample is warm or cold. Do not run if any required environment fact is
    unknown; mark the affected result unmeasured instead.
-2. Stop the legacy 10bucks runtime before loading any POC harness. Use the
-   existing `spoon["10bucks"]` global, explicitly verify `started == false`,
-   and load the observer directly from its absolute repository path; do not
-   alter the init/load path or call `hs.reload`. Record `legacy_stopped` only
-   after confirming that no legacy 10bucks watcher, reconciliation timer, bar
-   timer, or hotkey remains active. The observer performs zero frame, focus,
+2. Capture the legacy semantic baseline before stopping it: `started`, exact
+   configured hotkey binding count, lifecycle watcher, reconciliation timer,
+   and bar state. Stop the existing `spoon["10bucks"]` global, explicitly
+   verify `started == false`, and load the observer directly from its absolute
+   repository path; do not alter the init/load path or call `hs.reload`.
+   Record `legacy_stopped` only after confirming that no legacy 10bucks
+   watcher, reconciliation timer, bar timer, or hotkey remains active. On
+   cleanup, restoration is start + configured-hotkey rebind + exact baseline
+   verification; `started == true` alone is insufficient. The observer performs zero frame, focus,
    minimize, hide, fullscreen, move, close, or other window effects.
 3. Start one disposable POC-only observer configuration. It may subscribe to
    candidate sources in parallel for comparison, but it is not a production
@@ -375,6 +378,25 @@ All thresholds are fixed before the run:
 
 ## Results
 
+### Legacy restoration correction — harness defect, not platform evidence
+
+**Observed during live-safety review:** `Tenbucks:stop()` deletes
+`hotkeyBindings`, while `start()` does not rebind them. A prior cleanup check
+verified only `started == true`; it could therefore report legacy restored
+while the user had zero shortcuts. The orchestrator manually called
+`bindHotkeys()` and verified **26** configured bindings. This is a harness
+restoration defect, not macOS/Hammerspoon platform evidence and not a POC-001
+sample result.
+
+The controller/procedure now capture the pre-stop semantic baseline and require
+one restoration action that starts legacy, rebinds configured hotkeys, and
+verifies exact binding count plus lifecycle watcher, reconciler, and bar state.
+A started-only or zero-binding restoration is `indeterminate`/nonzero and
+private evidence is retained. Earlier POC observations and their event/timing
+aggregates are unaffected; where they said legacy was “restored,” that wording
+means only that its started flag was checked unless an explicit binding count
+was recorded.
+
 ### Aborted pre-sample startup — harness evidence only
 
 - A later attempt to begin the approved Terminal lifecycle calibration aborted
@@ -620,8 +642,8 @@ native close completion, the direct AX candidate arrived after **1.961 ms** and
 the filter candidate after **5.639 ms**. Maximum callback processing duration
 was **28.413 ms**. The stopped export reported zero steady global queries, zero
 open callbacks, zero timers, and zero window effects. The fixture process and
-socket were absent afterward, and legacy 10bucks was restored and verified
-running.
+socket were absent afterward, and legacy 10bucks was verified started only
+(the prior record did not verify rebound hotkeys).
 
 The operator used bounded external status checks while awaiting callback
 delivery; the observer itself used no timer or poll. This one sample proves only
@@ -653,7 +675,7 @@ window wrapper and returned `attribute_read_error`. The orchestrator verified
 that as a harness API-shape mistake against retained evidence and installed
 Hammerspoon source; it is not classified as a platform failure and was corrected
 before this recorded smoke. The corrected run removed its fixture process and
-socket and restored legacy 10bucks.
+socket and verified legacy 10bucks started only (not its rebound hotkeys).
 
 This single sample proves only the privacy-safe early direct-callback
 correlation and alias retention. It does not establish p95, representative-app
@@ -710,7 +732,8 @@ These direct timings are controlled-run observations, not alias-based identity
 joins.
 
 All five cold exports had exact query counts, zero steady global queries, and
-clean observer/fixture shutdown. Legacy 10bucks was restored. The volume does
+clean observer/fixture shutdown. Legacy 10bucks was verified started only; the
+prior record did not verify rebound hotkeys. The volume does
 not establish the required warm count or a passing cold readiness path. It is
 narrow evidence that the tested filter correlation path is late on fresh
 fixture creation and missed the rapid same-process second creation, while the

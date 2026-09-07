@@ -14,7 +14,7 @@ def sample(sample_id="warm-01", generation=1, klass="warm"):
       "generation_reset":{"finish_called":True,"map_count":0,"armed":False,"candidate_source":None},
       "session_after_generation":{"callbacks_open":0,"active_timers":0,"window_effects":0,"observer_running":klass == "warm","fixture_running":klass == "warm"}}
 
-def final_cleanup(): return {"observer_stopped":True,"callbacks_open":0,"active_timers":0,"window_effects":0,"map_count":0,"fixture_process_absent":True,"fixture_socket_absent":True,"legacy_restarted":True}
+def final_cleanup(): return {"observer_stopped":True,"callbacks_open":0,"active_timers":0,"window_effects":0,"map_count":0,"fixture_process_absent":True,"fixture_socket_absent":True,"legacy_restored":True,"legacy_binding_count_expected":26,"legacy_binding_count_actual":26,"legacy_lifecycle_watcher_expected":True,"legacy_lifecycle_watcher_actual":True,"legacy_reconcile_expected":True,"legacy_reconcile_actual":True,"legacy_bar_expected":True,"legacy_bar_actual":True}
 
 class Tests(unittest.TestCase):
  def test_frozen_constants_and_short_socket(self):
@@ -47,8 +47,10 @@ class Tests(unittest.TestCase):
   warm[-1]["generation"]=1
   self.assertEqual(analyzer.analyze_class(warm,"warm",final_cleanup())["reason"],"duplicate_generation")
   with self.assertRaises(analyzer.AnalyzerError): analyzer.analyze_class([sample()],"warm",final_cleanup())
-  bad=final_cleanup(); del bad["legacy_restarted"]
+  bad=final_cleanup(); del bad["legacy_restored"]
   with self.assertRaises(analyzer.AnalyzerError): analyzer.analyze_class([sample(f"warm-{n:02d}",n) for n in range(1,31)],"warm",bad)
+  bad=final_cleanup(); bad["legacy_binding_count_actual"]=0
+  self.assertEqual(analyzer.analyze_class([sample(f"warm-{n:02d}",n) for n in range(1,31)],"warm",bad)["reason"],"legacy_binding_count")
  def test_cold_class_accepts_five_fresh_generation_one_samples_in_exact_order(self):
   cold=[sample(f"cold-{n:02d}",1,"cold") for n in range(1,6)]
   self.assertEqual(analyzer.analyze_class(cold,"cold",final_cleanup())["outcome"],"pass")

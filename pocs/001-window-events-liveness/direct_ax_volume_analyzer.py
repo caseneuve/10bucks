@@ -110,7 +110,15 @@ def _class_cleanup(cleanup):
     if not isinstance(cleanup, dict): raise AnalyzerError("invalid_class_final_cleanup")
     for key, expected in {"observer_stopped": True, "callbacks_open": 0, "active_timers": 0,
                           "window_effects": 0, "map_count": 0, "fixture_process_absent": True,
-                          "fixture_socket_absent": True, "legacy_restarted": True}.items(): _exact(cleanup, key, expected)
+                          "fixture_socket_absent": True, "legacy_restored": True}.items(): _exact(cleanup, key, expected)
+    expected_bindings = _integer(cleanup, "legacy_binding_count_expected")
+    actual_bindings = _integer(cleanup, "legacy_binding_count_actual")
+    if expected_bindings <= 0: raise SubstantiveFailure("legacy_expected_bindings")
+    if actual_bindings != expected_bindings: raise SubstantiveFailure("legacy_binding_count")
+    for name in ("lifecycle_watcher", "reconcile", "bar"):
+        expected = _required(cleanup, "legacy_" + name + "_expected", bool)
+        actual = _required(cleanup, "legacy_" + name + "_actual", bool)
+        if actual != expected: raise SubstantiveFailure("legacy_" + name)
 
 def _p95(values):
     if not values: raise AnalyzerError("empty_metric")
@@ -139,7 +147,12 @@ def analyze_class(rows, sample_class, class_final_cleanup):
             return {"analysis_status":"complete", "class":sample_class, "outcome":"substantive_failure", "reason":str(exc), "stopped_after": row.get("sample_id", "unknown") if isinstance(row, dict) else "unknown", "samples_examined":len(accepted)+1, "samples_completed":len(accepted)}
     if len(accepted) != expected: raise AnalyzerError(f"wrong_{sample_class}_sample_count")
     if sample_class == "warm" and generations != set(range(1, expected + 1)): raise AnalyzerError("unexpected_generation_set")
-    _class_cleanup(class_final_cleanup)
+    try:
+        _class_cleanup(class_final_cleanup)
+    except SubstantiveFailure as exc:
+        return {"analysis_status":"complete", "class":sample_class, "outcome":"substantive_failure",
+                "reason":str(exc), "stopped_after":"class_final_cleanup", "samples_examined":len(accepted),
+                "samples_completed":len(accepted)}
     correlations = [v["direct_correlation_ms"] for v in accepted]
     callbacks = [d for v in accepted for d in v["callback_durations_ms"]]
     result = {"analysis_status":"complete", "class":sample_class, "outcome":"pass", "samples_completed":expected,

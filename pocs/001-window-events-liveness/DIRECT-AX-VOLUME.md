@@ -61,8 +61,13 @@ atomic no-follow output creation and emits redacted aggregates only.
 
 At class end (and every abort), stop/export observer, abort any arm, terminate
 fixture, verify process/socket absent and observer callbacks/timers/effects/map
-all zero, then restart/verify legacy. This **class-final cleanup** is separate
-from each warm generation's finish/reset gate. Preserve all private evidence.
+all zero, then perform semantic legacy restoration: start, rebind configured
+hotkeys, and verify the exact captured nonzero binding count plus lifecycle
+watcher/reconciler/bar state. `legacy_restarted`/`started=true` alone is not a
+cleanup pass. The class-final record carries expected and actual binding counts
+and expected/actual lifecycle, reconcile, and bar booleans. This
+**class-final cleanup** is separate from each warm generation's finish/reset
+gate. Preserve all private evidence.
 
 ## Executable controller state machine (source/test only; no sample command)
 
@@ -87,20 +92,25 @@ opens the controller state and evidence files at `0600` before writing the
 private environment/freeze record. Its only permitted normal output is that
 private run directory.
 
-`warm-start` statically builds the canonical fixture, writes durable
-`cleanup_pending` state **before** stopping legacy, launches exactly one
-fixture in `mach_absolute` mode, waits (bounded) for `run_started` and
-`socket_ready`, verifies its process/socket, then stops/verifies legacy,
-clears only the approved POC modules, starts/verifies the observer, and writes
-`running`. Any partial startup takes the same abort-cleanup path.
+`warm-start` statically builds the canonical fixture, captures the complete
+legacy semantic baseline (started state, configured binding count, lifecycle
+watcher, reconciler, and bar state), and writes durable `cleanup_pending` state
+with that baseline **before** stopping legacy. It launches exactly one fixture
+in `mach_absolute` mode, waits (bounded) for `run_started` and `socket_ready`,
+verifies its process/socket, then stops/verifies legacy, clears only the
+approved POC modules, starts/verifies the observer, and writes `running`. Any
+partial startup takes the same abort-cleanup path.
 
 `abort-cleanup` is idempotent. It aborts correlation; stops/exports the
 observer; requests fixture shutdown, terminates/waits if needed; verifies the
 fixture process/socket are absent and observer callbacks/timers/effects/map are
-zero; and restarts/verifies legacy. It never deletes private evidence. A failed
-restoration is persisted as `indeterminate` and returns nonzero rather than
-claiming cleanup succeeded. Persisted `running`/stale PID/socket state cannot
-be reused by `warm-start`.
+zero; and invokes one semantic legacy restoration action: **start, rebind the
+configured hotkeys, then verify** the started state, exact captured (nonzero)
+binding count, lifecycle watcher, reconciler, and bar state. `started=true`
+with zero bindings is restoration failure, not cleanup. It never deletes
+private evidence. A failed restoration is persisted as `indeterminate` and
+returns nonzero rather than claiming cleanup succeeded. Persisted
+`running`/stale PID/socket state cannot be reused by `warm-start`.
 
 ## Executable next slice (not run)
 

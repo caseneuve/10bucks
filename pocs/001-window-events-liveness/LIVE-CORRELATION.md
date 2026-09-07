@@ -304,7 +304,9 @@ analysis**, only after the observer has stopped/exported:
 local legacy = assert(spoon["10bucks"])
 legacy:start()
 assert(legacy.started == true)
-print("legacy_restarted=true")
+-- Historical marker: this checked only started state. The later controller
+-- protocol requires explicit hotkey rebind and semantic baseline verification.
+print("legacy_restarted_started_only=true")
 ```
 
 Only now shut down the fixture and wait for it:
