@@ -30,8 +30,11 @@ fresh owner-private fixture session directory under the same short prefix so a
 new fixture never reuses a trace or socket. Every allocated directory is
 verified owner `0700`; state and evidence use no-follow atomic replacement at
 owner `0600`. Each fixture socket remains at the short canonical
-`/tmp/p1d.XXXXXX/poc001-fixture.sock` path. Every command/process wait has a
-hard limit of at most 120 seconds. Marker waiting reads complete NDJSON lines
+`/tmp/p1d.XXXXXX/poc001-fixture.sock` path. Every controller command installs
+one shared monotonic deadline of at most 120 seconds: each build, IPC, marker,
+status, normalizer, analyzer, shutdown, and process wait receives only its
+remaining budget. Failure cleanup runs as one separately bounded recovery
+command (also at most 120 seconds), never as extra sample time. Marker waiting reads complete NDJSON lines
 only, rejects malformed complete records, ignores only a final incomplete
 line, and prints nothing.
 

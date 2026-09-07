@@ -13,8 +13,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from functools import wraps
+from typing import Any, Callable, Protocol
 
 RUN_PREFIX = "/tmp/p1d."
 STATE_NAME = "controller-state.json"
@@ -30,6 +32,19 @@ RUN_RE = re.compile(r"^/tmp/p1d\.[A-Za-z0-9]{6}$")
 
 class ControllerError(RuntimeError):
     """A refusal or incomplete operation; callers must retain private evidence."""
+
+
+def bounded_command(method):
+    """Give every public controller command one non-extendable 120 s budget."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        previous = self._deadline
+        self._deadline = self.clock() + MAX_TIMEOUT_SECONDS
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._deadline = previous
+    return wrapped
 
 
 class Ports(Protocol):
@@ -66,6 +81,25 @@ class Ports(Protocol):
 @dataclass
 class DirectAXVolumeController:
     ports: Ports
+    clock: Callable[[], float] = time.monotonic
+    _deadline: float | None = None
+
+    def _timeout(self, cap: float = MAX_TIMEOUT_SECONDS) -> float:
+        if self._deadline is None:
+            raise ControllerError("controller deadline is not installed")
+        remaining = self._deadline - self.clock()
+        if remaining <= 0:
+            raise ControllerError("command deadline exceeded")
+        return min(cap, remaining)
+
+    def _recover(self, state: dict[str, Any]) -> None:
+        """Cleanup is a separate bounded recovery command, never extra sample time."""
+        previous = self._deadline
+        self._deadline = self.clock() + MAX_TIMEOUT_SECONDS
+        try:
+            self._abort(state, restoration_required=True)
+        finally:
+            self._deadline = previous
 
     def _require_execute(self, execute: bool) -> None:
         if execute is not True:
@@ -140,6 +174,7 @@ class DirectAXVolumeController:
         if not self.ports.private_file(self._evidence_path(state["run_dir"])):
             raise ControllerError("private evidence write failed")
 
+    @bounded_command
     def prepare(self, *, execute: bool, approval_file: str) -> str:
         self._require_execute(execute)
         commit = self._freeze(approval_file)
@@ -162,7 +197,7 @@ class DirectAXVolumeController:
         return run_dir
 
     def _legacy_baseline(self) -> dict[str, Any]:
-        baseline = self.ports.legacy("capture")
+        baseline = self.ports.legacy("capture", timeout=self._timeout())
         if not isinstance(baseline, dict):
             raise ControllerError("legacy capture failed")
         for key in LEGACY_SEMANTIC_KEYS:
@@ -182,12 +217,13 @@ class DirectAXVolumeController:
         baseline = state.get("legacy_baseline")
         if not isinstance(baseline, dict):
             return False
-        actual = self.ports.legacy("restore", expected=baseline)
+        actual = self.ports.legacy("restore", expected=baseline, timeout=self._timeout())
         if not isinstance(actual, dict):
             return False
         state["legacy_restore_observed"] = {key: actual.get(key) for key in LEGACY_SEMANTIC_KEYS}
         return all(actual.get(key) == baseline.get(key) for key in LEGACY_SEMANTIC_KEYS)
 
+    @bounded_command
     def status(self, *, run_dir: str) -> dict[str, Any]:
         state = self._load(run_dir)
         pid = state.get("fixture_pid")
@@ -198,6 +234,7 @@ class DirectAXVolumeController:
                 "legacy_stopped": state.get("legacy_stopped") is True,
                 "observer_started": state.get("observer_started") is True}
 
+    @bounded_command
     def warm_start(self, *, run_dir: str, execute: bool, approval_file: str) -> dict[str, Any]:
         self._require_execute(execute)
         state = self._load(run_dir)
@@ -208,7 +245,7 @@ class DirectAXVolumeController:
         if self._freeze(approval_file) != state.get("frozen_commit"):
             raise ControllerError("refused: current freeze differs from prepared state")
         # Static build is deliberately before legacy stop and has an explicit bound.
-        self.ports.run(("fixture-build", "canonical"), timeout=MAX_TIMEOUT_SECONDS)
+        self.ports.run(("fixture-build", "canonical"), timeout=self._timeout())
         # Capture the complete semantic restoration target before mutating
         # legacy, then durably install it before the fixture/legacy handoff.
         state["legacy_baseline"] = self._legacy_baseline()
@@ -216,7 +253,7 @@ class DirectAXVolumeController:
         self._record(state, "cleanup_installed", legacy_binding_count=state["legacy_baseline"]["binding_count"])
         self._save(state)
         try:
-            pid = self.ports.spawn_fixture(run_dir, clock_kind="mach_absolute", timeout=MAX_TIMEOUT_SECONDS)
+            pid = self.ports.spawn_fixture(run_dir, clock_kind="mach_absolute", timeout=self._timeout())
             if not isinstance(pid, int) or pid <= 0:
                 raise ControllerError("fixture launch failed")
             identity = self.ports.fixture_identity(pid, run_dir)
@@ -224,18 +261,18 @@ class DirectAXVolumeController:
             state["fixture_pid"], state["fixture_identity"] = pid, identity
             self._record(state, "fixture_launched")
             self._save(state)
-            self.ports.wait_marker(run_dir + "/trace.ndjson", "run_started", sample_id="startup", timeout=STARTUP_TIMEOUT_SECONDS)
-            self.ports.wait_marker(run_dir + "/trace.ndjson", "socket_ready", sample_id="startup", timeout=STARTUP_TIMEOUT_SECONDS)
+            self.ports.wait_marker(run_dir + "/trace.ndjson", "run_started", sample_id="startup", timeout=self._timeout(STARTUP_TIMEOUT_SECONDS))
+            self.ports.wait_marker(run_dir + "/trace.ndjson", "socket_ready", sample_id="startup", timeout=self._timeout(STARTUP_TIMEOUT_SECONDS))
             if not self.ports.process_alive(pid, identity) or not self.ports.socket_exists(state["socket"]):
                 raise ControllerError("fixture startup stale or partial")
-            self.ports.legacy("stop")
+            self.ports.legacy("stop", timeout=self._timeout())
             if not self._legacy_stopped(state):
                 raise ControllerError("legacy stop verification failed")
             state["legacy_stopped"] = True
             self._record(state, "legacy_stopped")
             self._save(state)
             self.ports.clear_modules(APPROVED_MODULES)
-            observer = self.ports.observer("start")
+            observer = self.ports.observer("start", timeout=self._timeout())
             if observer.get("running") is not True:
                 raise ControllerError("observer start verification failed")
             state["observer_started"] = True
@@ -244,7 +281,7 @@ class DirectAXVolumeController:
             self._save(state)
             return self.status(run_dir=run_dir)
         except BaseException:
-            self._abort(state, restoration_required=True)
+            self._recover(state)
             raise
 
     def _zero_observer(self, status: dict[str, Any]) -> bool:
@@ -259,20 +296,20 @@ class DirectAXVolumeController:
     def _abort(self, state: dict[str, Any], *, restoration_required: bool) -> dict[str, Any]:
         failures: list[str] = []
         try:
-            self.ports.observer("abort_correlation", reason="controller_abort")
-            stopped = self.ports.observer("stop_export", path=state["run_dir"] + "/observer-export.json")
+            self.ports.observer("abort_correlation", reason="controller_abort", timeout=self._timeout())
+            stopped = self.ports.observer("stop_export", timeout=self._timeout(), path=state["run_dir"] + "/observer-export.json")
             if not self._zero_observer(stopped): failures.append("observer_not_quiescent")
         except Exception:
             failures.append("observer_cleanup")
         pid, identity = state.get("fixture_pid"), state.get("fixture_identity")
         if isinstance(pid, int) and isinstance(identity, dict):
-            try: self.ports.fixture_shutdown(state.get("fixture_run_dir") or state["run_dir"], timeout=MAX_TIMEOUT_SECONDS)
+            try: self.ports.fixture_shutdown(state.get("fixture_run_dir") or state["run_dir"], timeout=self._timeout())
             except Exception: failures.append("fixture_shutdown")
             if self.ports.process_alive(pid, identity):
-                try: self.ports.terminate(pid, identity, timeout=MAX_TIMEOUT_SECONDS)
+                try: self.ports.terminate(pid, identity, timeout=self._timeout())
                 except Exception: failures.append("fixture_terminate")
             try:
-                if not self.ports.wait_process(pid, identity, timeout=MAX_TIMEOUT_SECONDS): failures.append("fixture_wait")
+                if not self.ports.wait_process(pid, identity, timeout=self._timeout()): failures.append("fixture_wait")
             except Exception: failures.append("fixture_wait")
         if isinstance(pid, int) and (not isinstance(identity, dict) or self.ports.process_alive(pid, identity)): failures.append("fixture_still_alive")
         if self.ports.socket_exists(state["socket"]): failures.append("socket_present")
@@ -293,7 +330,7 @@ class DirectAXVolumeController:
         return state["run_dir"] + "/" + name
 
     def _legacy_stopped(self, state: dict[str, Any]) -> bool:
-        observed = self.ports.legacy("inspect")
+        observed = self.ports.legacy("inspect", timeout=self._timeout())
         baseline = state.get("legacy_baseline", {})
         # Stopping is semantic, not merely `started == false`: no legacy
         # binding, lifecycle watcher, reconciler, or bar may overlap the POC.
@@ -312,7 +349,7 @@ class DirectAXVolumeController:
     def _snapshot(self, state: dict[str, Any], name: str, *, expected: str) -> dict[str, Any]:
         """Persist observer facts plus independently verified fixture liveness."""
         path = self._private_path(state, name)
-        status = self.ports.observer("snapshot", path=path)
+        status = self.ports.observer("snapshot", path=path, timeout=self._timeout())
         if not isinstance(status, dict) or not self.ports.private_file(path):
             raise ControllerError("observer snapshot failed")
         # Observer never claims fixture state.  The controller supplies that one
@@ -340,7 +377,7 @@ class DirectAXVolumeController:
         return snapshot
 
     def _wait_correlation(self, state: dict[str, Any], sample_id: str, stage: str) -> None:
-        result = self.ports.observer("wait_correlation", sample_id=sample_id, stage=stage, timeout=MAX_TIMEOUT_SECONDS)
+        result = self.ports.observer("wait_correlation", sample_id=sample_id, stage=stage, timeout=self._timeout())
         if not isinstance(result, dict) or result.get("ready") is not True:
             self._record(state, "correlation_wait_timeout", sample_id=sample_id, stage=stage)
             self._save(state)
@@ -351,8 +388,9 @@ class DirectAXVolumeController:
         # sample: cleanup is the only permitted response to uncertainty.
         self._record(state, "semantic_abort", reason=reason)
         self._save(state)
-        self._abort(state, restoration_required=True)
+        self._recover(state)
 
+    @bounded_command
     def warm_sample(self, *, run_dir: str, generation: int, execute: bool,
                     approval_file: str) -> dict[str, Any]:
         self._require_execute(execute)
@@ -372,37 +410,37 @@ class DirectAXVolumeController:
         self._record(state, "warm_sample_started", sample_id=sample_id, generation=generation)
         self._save(state)
         try:
-            armed = self.ports.observer("arm_correlation", generation=generation, source="direct_ax", sample_id=sample_id)
+            armed = self.ports.observer("arm_correlation", generation=generation, source="direct_ax", sample_id=sample_id, timeout=self._timeout())
             if not isinstance(armed, dict) or armed.get("armed") is not True:
                 raise ControllerError("correlation arm failed")
-            response = self.ports.fixture_request(state["run_dir"], "create", sample_id, None, timeout=MAX_TIMEOUT_SECONDS)
+            response = self.ports.fixture_request(state["run_dir"], "create", sample_id, None, timeout=self._timeout())
             if not isinstance(response, dict) or response.get("status") != "accepted":
                 raise ControllerError("fixture create failed")
             response_path = self._private_path(state, f"{sample_id}-create-response.json")
             self.ports.write_private_json(response_path, response)
             if not self.ports.private_file(response_path): raise ControllerError("private create response write failed")
-            self.ports.wait_marker(self._private_path(state, "trace.ndjson"), "fixture_create_visible_completed", sample_id=sample_id, timeout=MAX_TIMEOUT_SECONDS)
+            self.ports.wait_marker(self._private_path(state, "trace.ndjson"), "fixture_create_visible_completed", sample_id=sample_id, timeout=self._timeout())
             self._wait_correlation(state, sample_id, "map_ready")
             self._snapshot(state, f"{sample_id}-pre-close-status.json", expected="pre_close")
             token = response.get("fixture_token")
             if not isinstance(token, str) or not token: raise ControllerError("fixture create response lacks token")
-            close = self.ports.fixture_request(state["run_dir"], "close", sample_id, token, timeout=MAX_TIMEOUT_SECONDS)
+            close = self.ports.fixture_request(state["run_dir"], "close", sample_id, token, timeout=self._timeout())
             if not isinstance(close, dict) or close.get("status") != "accepted": raise ControllerError("fixture close failed")
-            self.ports.wait_marker(self._private_path(state, "trace.ndjson"), "native_close_completed", sample_id=sample_id, timeout=MAX_TIMEOUT_SECONDS)
+            self.ports.wait_marker(self._private_path(state, "trace.ndjson"), "native_close_completed", sample_id=sample_id, timeout=self._timeout())
             self._wait_correlation(state, sample_id, "candidates_complete")
-            finished = self.ports.observer("finish_correlation", sample_id=sample_id)
+            finished = self.ports.observer("finish_correlation", sample_id=sample_id, timeout=self._timeout())
             if not isinstance(finished, dict) or finished.get("finished") is not True: raise ControllerError("correlation finish failed")
             self._snapshot(state, f"{sample_id}-post-finish-status.json", expected="post_finish")
-            exported = self.ports.observer("export_running", path=self._private_path(state, f"{sample_id}-observer-export.json"))
+            exported = self.ports.observer("export_running", timeout=self._timeout(), path=self._private_path(state, f"{sample_id}-observer-export.json"))
             if not isinstance(exported, dict) or not self.ports.private_file(self._private_path(state, f"{sample_id}-observer-export.json")):
                 raise ControllerError("running observer export failed")
             row_path = self._private_path(state, f"{sample_id}-row.json")
             # The warm normalizer does not consume a stopped-session record;
             # pass the already-retained post-finish observation as its required
             # session input rather than synthesize a cleanup fact.
-            self.ports.run(("normalizer", "warm", response_path, self._private_path(state, "trace.ndjson"), self._private_path(state, f"{sample_id}-observer-export.json"), self._private_path(state, f"{sample_id}-pre-close-status.json"), self._private_path(state, f"{sample_id}-post-finish-status.json"), self._private_path(state, f"{sample_id}-post-finish-status.json"), row_path), timeout=MAX_TIMEOUT_SECONDS)
+            self.ports.run(("normalizer", "warm", response_path, self._private_path(state, "trace.ndjson"), self._private_path(state, f"{sample_id}-observer-export.json"), self._private_path(state, f"{sample_id}-pre-close-status.json"), self._private_path(state, f"{sample_id}-post-finish-status.json"), self._private_path(state, f"{sample_id}-post-finish-status.json"), row_path), timeout=self._timeout())
             result_path = self._private_path(state, f"{sample_id}-sample-result.json")
-            self.ports.run(("analyzer", "sample", "warm", row_path, result_path), timeout=MAX_TIMEOUT_SECONDS)
+            self.ports.run(("analyzer", "sample", "warm", row_path, result_path), timeout=self._timeout())
             result = self.ports.read_private_json(result_path)
             if result.get("outcome") != "pass": raise ControllerError("sample analyzer substantive failure")
             # Append only after both normalizer and analyzer have validated it.
@@ -424,6 +462,7 @@ class DirectAXVolumeController:
             self._save(state)
             raise error
 
+    @bounded_command
     def warm_finish(self, *, run_dir: str, execute: bool, approval_file: str) -> dict[str, Any]:
         self._require_execute(execute)
         state = self._load(run_dir)
@@ -433,13 +472,13 @@ class DirectAXVolumeController:
             raise ControllerError("refused: warm-finish requires exactly 30 validated rows")
         state["phase"] = "warm_finish_pending"; self._record(state, "warm_finish_started"); self._save(state)
         try:
-            stopped = self.ports.observer("stop_export", path=self._private_path(state, "warm-final-observer-export.json"))
+            stopped = self.ports.observer("stop_export", timeout=self._timeout(), path=self._private_path(state, "warm-final-observer-export.json"))
             if not self._zero_observer(stopped): raise ControllerError("observer final quiesce failed")
             pid, identity = state.get("fixture_pid"), state.get("fixture_identity")
-            self.ports.fixture_shutdown(state["run_dir"], timeout=MAX_TIMEOUT_SECONDS)
+            self.ports.fixture_shutdown(state["run_dir"], timeout=self._timeout())
             if isinstance(pid, int) and isinstance(identity, dict) and self.ports.process_alive(pid, identity):
-                self.ports.terminate(pid, identity, timeout=MAX_TIMEOUT_SECONDS)
-            if isinstance(pid, int) and isinstance(identity, dict) and not self.ports.wait_process(pid, identity, timeout=MAX_TIMEOUT_SECONDS): raise ControllerError("fixture final wait failed")
+                self.ports.terminate(pid, identity, timeout=self._timeout())
+            if isinstance(pid, int) and isinstance(identity, dict) and not self.ports.wait_process(pid, identity, timeout=self._timeout()): raise ControllerError("fixture final wait failed")
             if self.ports.socket_exists(state["socket"]): raise ControllerError("fixture socket remains")
             restored = self._legacy_restored(state)
             observed = state.get("legacy_restore_observed", {})
@@ -449,7 +488,7 @@ class DirectAXVolumeController:
                                            socket_absent=socket_absent, restored=restored)
             cleanup_path = self._private_path(state, "class-final-cleanup.json"); self.ports.write_private_json(cleanup_path, cleanup)
             class_path = self._private_path(state, "warm-class.json"); self.ports.write_private_json(class_path, {"samples": state["warm_rows"], "class_final_cleanup": cleanup})
-            result_path = self._private_path(state, "warm-class-result.json"); self.ports.run(("analyzer", "class", "warm", class_path, result_path), timeout=MAX_TIMEOUT_SECONDS)
+            result_path = self._private_path(state, "warm-class-result.json"); self.ports.run(("analyzer", "class", "warm", class_path, result_path), timeout=self._timeout())
             result = self.ports.read_private_json(result_path)
             state["observer_started"], state["legacy_stopped"] = False, False
             state["fixture_pid"], state["fixture_identity"] = None, None
@@ -488,14 +527,14 @@ class DirectAXVolumeController:
 
     def _cold_stop_and_restore(self, state: dict[str, Any], sample_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         """Stop one cold session and retain facts needed by the normalizer."""
-        stopped = self.ports.observer("stop_export", path=self._private_path(state, f"{sample_id}-final-observer-export.json"))
+        stopped = self.ports.observer("stop_export", timeout=self._timeout(), path=self._private_path(state, f"{sample_id}-final-observer-export.json"))
         if not self._zero_observer(stopped):
             raise ControllerError("cold observer final quiesce failed")
         pid, identity = state.get("fixture_pid"), state.get("fixture_identity")
-        self.ports.fixture_shutdown(state.get("fixture_run_dir") or state["run_dir"], timeout=MAX_TIMEOUT_SECONDS)
+        self.ports.fixture_shutdown(state.get("fixture_run_dir") or state["run_dir"], timeout=self._timeout())
         if isinstance(pid, int) and isinstance(identity, dict) and self.ports.process_alive(pid, identity):
-            self.ports.terminate(pid, identity, timeout=MAX_TIMEOUT_SECONDS)
-        if isinstance(pid, int) and isinstance(identity, dict) and not self.ports.wait_process(pid, identity, timeout=MAX_TIMEOUT_SECONDS):
+            self.ports.terminate(pid, identity, timeout=self._timeout())
+        if isinstance(pid, int) and isinstance(identity, dict) and not self.ports.wait_process(pid, identity, timeout=self._timeout()):
             raise ControllerError("cold fixture final wait failed")
         fixture_absent = not (isinstance(pid, int) and isinstance(identity, dict) and self.ports.process_alive(pid, identity))
         socket_absent = not self.ports.socket_exists(state["socket"])
@@ -513,6 +552,7 @@ class DirectAXVolumeController:
             raise ControllerError("cold legacy restore semantic failure")
         return cleanup, final_session
 
+    @bounded_command
     def cold_sample(self, *, run_dir: str, index: int, execute: bool, approval_file: str) -> dict[str, Any]:
         self._require_execute(execute)
         state = self._load(run_dir)
@@ -545,55 +585,55 @@ class DirectAXVolumeController:
             state["socket"] = fixture_run_dir + "/poc001-fixture.sock"
             state["cold_session_dirs"] = state.get("cold_session_dirs", []) + [fixture_run_dir]
             self._record(state, "cold_fixture_session_allocated", sample_id=sample_id); self._save(state)
-            self.ports.run(("fixture-build", "canonical"), timeout=MAX_TIMEOUT_SECONDS)
-            pid = self.ports.spawn_fixture(fixture_run_dir, clock_kind="mach_absolute", timeout=MAX_TIMEOUT_SECONDS)
+            self.ports.run(("fixture-build", "canonical"), timeout=self._timeout())
+            pid = self.ports.spawn_fixture(fixture_run_dir, clock_kind="mach_absolute", timeout=self._timeout())
             if not isinstance(pid, int) or pid <= 0: raise ControllerError("cold fixture launch failed")
             identity = self.ports.fixture_identity(pid, fixture_run_dir)
             if not isinstance(identity, dict): raise ControllerError("cold fixture identity capture failed")
             state["fixture_pid"], state["fixture_identity"] = pid, identity
             self._record(state, "cold_fixture_launched", sample_id=sample_id); self._save(state)
             fixture_trace = fixture_run_dir + "/trace.ndjson"
-            self.ports.wait_marker(fixture_trace, "run_started", sample_id="startup", timeout=STARTUP_TIMEOUT_SECONDS)
-            self.ports.wait_marker(fixture_trace, "socket_ready", sample_id="startup", timeout=STARTUP_TIMEOUT_SECONDS)
+            self.ports.wait_marker(fixture_trace, "run_started", sample_id="startup", timeout=self._timeout(STARTUP_TIMEOUT_SECONDS))
+            self.ports.wait_marker(fixture_trace, "socket_ready", sample_id="startup", timeout=self._timeout(STARTUP_TIMEOUT_SECONDS))
             if not self._fixture_running(state): raise ControllerError("cold fixture startup stale or partial")
-            self.ports.legacy("stop")
+            self.ports.legacy("stop", timeout=self._timeout())
             if not self._legacy_stopped(state): raise ControllerError("cold legacy stop verification failed")
             state["legacy_stopped"] = True; self._record(state, "cold_legacy_stopped", sample_id=sample_id); self._save(state)
             self.ports.clear_modules(APPROVED_MODULES)
-            observer = self.ports.observer("start")
+            observer = self.ports.observer("start", timeout=self._timeout())
             if not isinstance(observer, dict) or observer.get("running") is not True: raise ControllerError("cold observer start verification failed")
             state["observer_started"] = True; self._record(state, "cold_observer_started", sample_id=sample_id); self._save(state)
             # Fresh process/module session means generation is exactly one for
             # every cold sample; sample scope is installed before the one arm.
-            armed = self.ports.observer("arm_correlation", generation=1, source="direct_ax", sample_id=sample_id)
+            armed = self.ports.observer("arm_correlation", generation=1, source="direct_ax", sample_id=sample_id, timeout=self._timeout())
             if not isinstance(armed, dict) or armed.get("armed") is not True: raise ControllerError("cold correlation arm failed")
-            response = self.ports.fixture_request(fixture_run_dir, "create", sample_id, None, timeout=MAX_TIMEOUT_SECONDS)
+            response = self.ports.fixture_request(fixture_run_dir, "create", sample_id, None, timeout=self._timeout())
             if not isinstance(response, dict) or response.get("status") != "accepted": raise ControllerError("cold fixture create failed")
             response_path = self._private_path(state, f"{sample_id}-create-response.json")
             self.ports.write_private_json(response_path, response)
             if not self.ports.private_file(response_path): raise ControllerError("cold private create response write failed")
-            self.ports.wait_marker(fixture_trace, "fixture_create_visible_completed", sample_id=sample_id, timeout=MAX_TIMEOUT_SECONDS)
+            self.ports.wait_marker(fixture_trace, "fixture_create_visible_completed", sample_id=sample_id, timeout=self._timeout())
             self._wait_correlation(state, sample_id, "map_ready")
             self._snapshot(state, f"{sample_id}-pre-close-status.json", expected="pre_close")
             token = response.get("fixture_token")
             if not isinstance(token, str) or not token: raise ControllerError("cold fixture create response lacks token")
-            close = self.ports.fixture_request(fixture_run_dir, "close", sample_id, token, timeout=MAX_TIMEOUT_SECONDS)
+            close = self.ports.fixture_request(fixture_run_dir, "close", sample_id, token, timeout=self._timeout())
             if not isinstance(close, dict) or close.get("status") != "accepted": raise ControllerError("cold fixture close failed")
-            self.ports.wait_marker(fixture_trace, "native_close_completed", sample_id=sample_id, timeout=MAX_TIMEOUT_SECONDS)
+            self.ports.wait_marker(fixture_trace, "native_close_completed", sample_id=sample_id, timeout=self._timeout())
             self._wait_correlation(state, sample_id, "candidates_complete")
-            finished = self.ports.observer("finish_correlation", sample_id=sample_id)
+            finished = self.ports.observer("finish_correlation", sample_id=sample_id, timeout=self._timeout())
             if not isinstance(finished, dict) or finished.get("finished") is not True: raise ControllerError("cold correlation finish failed")
             self._snapshot(state, f"{sample_id}-post-finish-status.json", expected="post_finish")
-            exported = self.ports.observer("export_running", path=self._private_path(state, f"{sample_id}-observer-export.json"))
+            exported = self.ports.observer("export_running", timeout=self._timeout(), path=self._private_path(state, f"{sample_id}-observer-export.json"))
             if not isinstance(exported, dict) or not self.ports.private_file(self._private_path(state, f"{sample_id}-observer-export.json")):
                 raise ControllerError("cold running observer export failed")
             cleanup, _ = self._cold_stop_and_restore(state, sample_id)
             cleanup_path = self._private_path(state, f"{sample_id}-cleanup.json"); self.ports.write_private_json(cleanup_path, cleanup)
             final_path = self._private_path(state, f"{sample_id}-final-session-status.json")
             row_path = self._private_path(state, f"{sample_id}-row.json")
-            self.ports.run(("normalizer", "cold", response_path, fixture_trace, self._private_path(state, f"{sample_id}-observer-export.json"), self._private_path(state, f"{sample_id}-pre-close-status.json"), self._private_path(state, f"{sample_id}-post-finish-status.json"), final_path, row_path), timeout=MAX_TIMEOUT_SECONDS)
+            self.ports.run(("normalizer", "cold", response_path, fixture_trace, self._private_path(state, f"{sample_id}-observer-export.json"), self._private_path(state, f"{sample_id}-pre-close-status.json"), self._private_path(state, f"{sample_id}-post-finish-status.json"), final_path, row_path), timeout=self._timeout())
             result_path = self._private_path(state, f"{sample_id}-sample-result.json")
-            self.ports.run(("analyzer", "sample", "cold", row_path, result_path), timeout=MAX_TIMEOUT_SECONDS)
+            self.ports.run(("analyzer", "sample", "cold", row_path, result_path), timeout=self._timeout())
             result = self.ports.read_private_json(result_path)
             if result.get("outcome") != "pass": raise ControllerError("cold sample analyzer substantive failure")
             row = self.ports.read_private_json(row_path)
@@ -612,6 +652,7 @@ class DirectAXVolumeController:
             self._record(state, "cold_sample_terminal", outcome=state["phase"]); self._save(state)
             raise error
 
+    @bounded_command
     def cold_finish(self, *, run_dir: str, execute: bool, approval_file: str) -> dict[str, Any]:
         self._require_execute(execute)
         state = self._load(run_dir)
@@ -624,13 +665,13 @@ class DirectAXVolumeController:
             # All final facts originate in the fifth completed cold cleanup;
             # re-inspect legacy now so a stale restored runtime is not claimed.
             cleanup = state["cold_cleanups"][-1]
-            current = self.ports.legacy("capture")
+            current = self.ports.legacy("capture", timeout=self._timeout())
             for key in LEGACY_SEMANTIC_KEYS:
                 if current.get(key) != state["legacy_baseline"].get(key):
                     cleanup = dict(cleanup); cleanup["legacy_restored"] = False
             cleanup_path = self._private_path(state, "cold-class-final-cleanup.json"); self.ports.write_private_json(cleanup_path, cleanup)
             class_path = self._private_path(state, "cold-class.json"); self.ports.write_private_json(class_path, {"samples": state["cold_rows"], "class_final_cleanup": cleanup})
-            result_path = self._private_path(state, "cold-class-result.json"); self.ports.run(("analyzer", "class", "cold", class_path, result_path), timeout=MAX_TIMEOUT_SECONDS)
+            result_path = self._private_path(state, "cold-class-result.json"); self.ports.run(("analyzer", "class", "cold", class_path, result_path), timeout=self._timeout())
             result = self.ports.read_private_json(result_path)
             state["phase"] = "cold_passed" if result.get("outcome") == "pass" else "failed"
             self._record(state, "cold_finish_result", outcome=state["phase"]); self._save(state)
@@ -639,6 +680,7 @@ class DirectAXVolumeController:
             state["phase"] = "indeterminate"; self._record(state, "cold_finish_terminal", outcome="indeterminate"); self._save(state)
             raise
 
+    @bounded_command
     def abort_cleanup(self, *, run_dir: str, execute: bool, approval_file: str) -> dict[str, Any]:
         self._require_execute(execute)
         state = self._load(run_dir)

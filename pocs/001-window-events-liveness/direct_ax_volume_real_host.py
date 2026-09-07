@@ -216,16 +216,26 @@ class RealHostPorts:
             time.sleep(0.05)
         raise HostError("marker timeout")
 
-    def _hs(self, body: str) -> dict[str, Any]:
-        # Snippets emit exactly a single strict JSON object, never raw records.
-        result = self._checked((self.hs, "-c", body), 30)
-        try: value = json.loads(result.stdout)
+    _HS_ENVELOPE = "__POC001_SAFE_JSON__ "
+
+    def _hs(self, body: str, timeout: float = 30) -> dict[str, Any]:
+        # Hotkey binding may emit diagnostic lines. Accept only one final,
+        # explicitly framed JSON object; diagnostics are discarded, never
+        # retained or reflected to the caller.
+        emitter = "local function __poc001_out(x) io.write('__POC001_SAFE_JSON__ '..hs.json.encode(x)..'\\n') end; "
+        body = body.replace("print(hs.json.encode(", "__poc001_out(")
+        result = self._checked((self.hs, "-c", emitter + body), timeout)
+        marked = [line[len(self._HS_ENVELOPE):] for line in result.stdout.splitlines()
+                  if line.startswith(self._HS_ENVELOPE)]
+        if len(marked) != 1:
+            raise HostError("unsafe Hammerspoon response")
+        try: value = json.loads(marked[0])
         except ValueError: raise HostError("unsafe Hammerspoon response") from None
         if not isinstance(value, dict): raise HostError("unsafe Hammerspoon response")
         return value
 
     def legacy(self, action: str, **kwargs: Any) -> dict[str, Any]:
-        base = "local t=spoon['10bucks']; if type(t) ~= 'table' then error('missing loaded spoon') end; local function out(x) print(hs.json.encode(x)) end; "
+        base = "local t=spoon['10bucks']; if type(t) ~= 'table' then error('missing loaded spoon') end; local function out(x) __poc001_out(x) end; "
         inspect = "local l=t.lifecycle or {}; local b=t.bar or {}; local n,c=0,0; for _,v in pairs((t.config or {}).hotkeys or {}) do if v ~= false then n=n+1 end end; for _ in pairs(t.hotkeyBindings or {}) do c=c+1 end; local cc=0; for _ in pairs(b.canvases or {}) do cc=cc+1 end; return {started=t.started == true,configured_hotkey_count=n,binding_count=c,lifecycle_watcher_active=l.filter ~= nil,reconcile_active=l.reconcileTimer ~= nil,bar_timer_active=b.timer ~= nil,bar_canvas_count=cc}"
         if action in {"capture", "inspect"}: body = base + "out((function() " + inspect + " end)())"
         elif action == "stop":  body = base + "t:stop(); out((function() " + inspect + " end)())"
@@ -233,7 +243,7 @@ class RealHostPorts:
             # bindHotkeys is deliberately explicit and verified in the returned baseline.
             body = base + "t:start(); t:bindHotkeys(); out((function() " + inspect + " end)())"
         else: raise HostError("unapproved legacy action")
-        return self._hs(body)
+        return self._hs(body, kwargs.get("timeout", 30))
 
     def clear_modules(self, modules: tuple[str, ...]) -> None:
         if modules != APPROVED_MODULES: raise HostError("unapproved modules")
@@ -275,7 +285,7 @@ class RealHostPorts:
             export = json.dumps(str(Path(kwargs["path"]).resolve()))
             body = base + "o:stop(); o:export(" + export + "); local s=o:status(); out({running=s.lifecycle == 'stopped',callbacks_open=s.callbacks.open,active_timers=s.active_timers,window_effects=s.window_effects,direct_application_watchers=s.direct_application_watchers,direct_window_watchers=s.direct_window_watchers,target_binding_armed=s.target_binding_armed,correlation={map_count=s.correlation.map_count}})"
         else: raise HostError("unapproved observer action")
-        return self._hs(body)
+        return self._hs(body, kwargs.get("timeout", 30))
 
     def fixture_shutdown(self, run_dir: str, *, timeout: int) -> None:
         if self.socket_exists(run_dir + "/poc001-fixture.sock"):

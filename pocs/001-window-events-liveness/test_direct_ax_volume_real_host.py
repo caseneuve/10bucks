@@ -19,8 +19,8 @@ class FakeRunner:
         if "cat-file" in argv: return Result()
         if argv[0].endswith("hs"):
             # Every host snippet receives strict JSON only.
-            if "o:start()" in argv[2]: return Result('{"running":true}\n')
-            return Result('{"started":true,"configured_hotkey_count":26,"binding_count":26,"lifecycle_watcher_active":true,"reconcile_active":true,"bar_timer_active":true,"bar_canvas_count":1}\n')
+            if "o:start()" in argv[2]: return Result('__POC001_SAFE_JSON__ {"running":true}\n')
+            return Result('__POC001_SAFE_JSON__ {"started":true,"configured_hotkey_count":26,"binding_count":26,"lifecycle_watcher_active":true,"reconcile_active":true,"bar_timer_active":true,"bar_canvas_count":1}\n')
         return Result()
     def spawn(self, argv, *, env): self.calls.append(("spawn", argv, env)); return self.pid
 
@@ -54,6 +54,15 @@ class RealHostTests(unittest.TestCase):
         self.assertIn(str(ROOT) + "/", snippet)
         self.assertIn("_G.__poc001_observer", snippet)
         self.assertIn("dofile(", snippet)
+
+    def test_hs_envelope_accepts_hotkey_diagnostics_but_rejects_multiple_or_malformed_markers(self):
+        runner = FakeRunner(); ports = real_host.RealHostPorts(ROOT.parents[1], runner)
+        runner.run = lambda argv, *, timeout, env=None: Result('hotkey diagnostic\n__POC001_SAFE_JSON__ {"ok":true}\n')
+        self.assertEqual(ports._hs("print(hs.json.encode({ok=true}))"), {"ok": True})
+        runner.run = lambda argv, *, timeout, env=None: Result('__POC001_SAFE_JSON__ {"ok":true}\n__POC001_SAFE_JSON__ {"ok":false}\n')
+        with self.assertRaises(real_host.HostError): ports._hs("print(hs.json.encode({ok=true}))")
+        runner.run = lambda argv, *, timeout, env=None: Result('__POC001_SAFE_JSON__ not-json\n')
+        with self.assertRaises(real_host.HostError): ports._hs("print(hs.json.encode({ok=true}))")
 
     def test_private_atomic_json_rejects_symlink_and_keeps_0600(self):
         runner = FakeRunner(); ports = real_host.RealHostPorts(ROOT.parents[1], runner)

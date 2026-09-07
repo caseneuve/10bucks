@@ -105,7 +105,7 @@ class ControllerTests(unittest.TestCase):
   names=[call[0] for call in ports.calls]; stop_index=ports.calls.index(("legacy","stop"))
   self.assertLess(names.index("spawn"), stop_index); self.assertLess(stop_index, names.index("clear"))
   state=ports.read_private_json(run+"/controller-state.json")
-  self.assertTrue(any(call[0] == "spawn" and call[-2:] == ("mach_absolute",120) for call in ports.calls)); self.assertEqual((state["phase"],state["legacy_baseline"]["binding_count"]),("running",26))
+  self.assertTrue(any(call[0] == "spawn" and call[-2] == "mach_absolute" and call[-1] <= 120 for call in ports.calls)); self.assertEqual((state["phase"],state["legacy_baseline"]["binding_count"]),("running",26))
  def test_startup_partial_failure_uses_abort_cleanup_and_preserves_indeterminate_evidence(self):
   ports,machine,run=prepared(); ports.fail_marker=True
   with self.assertRaisesRegex(RuntimeError,"timeout"): machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
@@ -206,6 +206,21 @@ class ControllerTests(unittest.TestCase):
   ports,machine,run=prepared()
   with self.assertRaisesRegex(controller.ControllerError,"exactly five"):
    machine.cold_finish(run_dir=run,execute=True,approval_file="/approval")
+ def test_shared_deadline_shrinks_each_subcall_and_recovery_gets_its_own_budget(self):
+  ports=FakePorts(); now=[0.0]; machine=controller.DirectAXVolumeController(ports, clock=lambda: now[0]); run=machine.prepare(execute=True,approval_file="/approval")
+  original_run, original_spawn=ports.run, ports.spawn_fixture
+  def timed_run(argv, timeout):
+   original_run(argv, timeout); now[0]+=80
+  def timed_spawn(run_dir, clock_kind, timeout):
+   value=original_spawn(run_dir, clock_kind, timeout); now[0]+=50; return value
+  ports.run, ports.spawn_fixture=timed_run, timed_spawn
+  with self.assertRaisesRegex(controller.ControllerError,"deadline exceeded"):
+   machine.warm_start(run_dir=run,execute=True,approval_file="/approval")
+  spawn=[call for call in ports.calls if call[0] == "spawn"][-1]
+  self.assertLessEqual(spawn[-1],40)
+  self.assertIn(("legacy","restore"),ports.calls)
+  for call in ports.calls:
+   if call[0] in {"run","spawn","marker","shutdown","terminate","wait"}: self.assertLessEqual(call[-1],120)
  def test_all_subprocess_boundaries_are_at_most_120_seconds(self):
   ports,machine,run=prepared(); machine.warm_start(run_dir=run,execute=True,approval_file="/approval"); machine.abort_cleanup(run_dir=run,execute=True,approval_file="/approval")
   for call in ports.calls:
