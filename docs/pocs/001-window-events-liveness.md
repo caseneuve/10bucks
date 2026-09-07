@@ -659,6 +659,18 @@ This single sample proves only the privacy-safe early direct-callback
 correlation and alias retention. It does not establish p95, representative-app
 behavior, readiness/admission, liveness, or destruction authority.
 
+### Direct-AX volume runner/procedure checkpoint
+
+**Verified (source/test only):** the retained POC-only
+[`direct-AX volume runner and human-gated procedure`](../../pocs/001-window-events-liveness/DIRECT-AX-VOLUME.md)
+freezes exactly 30 warm and 5 cold `direct_ax` samples, short owner-private
+`/tmp/p1d.XXXXXX` socket paths, exact per-sample alias/query/candidate gates,
+and redacted aggregate analysis. Its pure analyzer distinguishes malformed or
+unsafe evidence as `analyzer_error`/`indeterminate`; that outcome is not
+platform evidence. It performs no fixture, Hammerspoon, legacy-runtime, or
+socket action. The procedure remains unapproved until explicit human approval
+for the 8–12 minute live volume; POC-001 remains `hypothesis`.
+
 ### Fixture--observer correlation volume — stopped warm class; five cold samples
 
 **Observed, approved volume attempt:** the warm class stopped during sample 2,
