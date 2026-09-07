@@ -125,15 +125,20 @@ def analyze_class(rows, sample_class, class_final_cleanup):
     expected = WARM_SAMPLES if sample_class == "warm" else COLD_SAMPLES
     if not isinstance(rows, list): raise AnalyzerError("invalid_samples")
     accepted, generations = [], set()
-    for row in rows:
+    for index, row in enumerate(rows, 1):
         try:
             result = analyze_sample(row, sample_class)
-            if result["generation"] in generations: raise SubstantiveFailure("duplicate_generation")
-            generations.add(result["generation"]); accepted.append(result)
+            if result["sample_id"] != f"{sample_class}-{index:02d}": raise AnalyzerError("unexpected_sample_id_order")
+            if sample_class == "warm":
+                if result["generation"] in generations: raise SubstantiveFailure("duplicate_generation")
+                generations.add(result["generation"])
+            elif result["generation"] != 1:
+                raise AnalyzerError("cold_generation_not_one")
+            accepted.append(result)
         except SubstantiveFailure as exc:
             return {"analysis_status":"complete", "class":sample_class, "outcome":"substantive_failure", "reason":str(exc), "stopped_after": row.get("sample_id", "unknown") if isinstance(row, dict) else "unknown", "samples_examined":len(accepted)+1, "samples_completed":len(accepted)}
     if len(accepted) != expected: raise AnalyzerError(f"wrong_{sample_class}_sample_count")
-    if generations != set(range(1, expected + 1)): raise AnalyzerError("unexpected_generation_set")
+    if sample_class == "warm" and generations != set(range(1, expected + 1)): raise AnalyzerError("unexpected_generation_set")
     _class_cleanup(class_final_cleanup)
     correlations = [v["direct_correlation_ms"] for v in accepted]
     callbacks = [d for v in accepted for d in v["callback_durations_ms"]]

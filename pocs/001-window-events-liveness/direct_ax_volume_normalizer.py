@@ -9,15 +9,15 @@ SENSITIVE = frozenset({"fixture_token", "correlation_token", "raw_ax", "raw_id",
 class NormalizerError(ValueError): pass
 
 def _fail(reason): raise NormalizerError(reason)
-def _reject_private_leak(value):
+def _reject_private_leak(value, permit_fixture_token=False):
     if isinstance(value, dict):
         for key, child in value.items():
-            # Fixture control/trace alone legitimately retains this close
-            # capability. It is never an association input or output field.
-            if key in SENSITIVE and key != "fixture_token": _fail("sensitive_input")
-            _reject_private_leak(child)
+            # Only fixture control/trace retain this close capability. It is
+            # never an observer input, association input, or output field.
+            if key in SENSITIVE and not (permit_fixture_token and key == "fixture_token"): _fail("sensitive_input")
+            _reject_private_leak(child, permit_fixture_token)
     elif isinstance(value, list):
-        for child in value: _reject_private_leak(child)
+        for child in value: _reject_private_leak(child, permit_fixture_token)
 def _dict(value, name):
     if not isinstance(value, dict): _fail("invalid_" + name)
     return value
@@ -101,12 +101,16 @@ def _atomic_output(path, result):
     finally:
         if os.path.exists(temporary): os.unlink(temporary)
 
-def normalize(create_response, fixture_trace, observer_export, observer_snapshot, sample_class):
+def normalize(create_response, fixture_trace, observer_export, pre_close_snapshot, observer_snapshot, sample_class):
     """Derive one analyzer row. Inputs are retained private records, never live ports."""
     if sample_class not in ("warm", "cold"): _fail("invalid_sample_class")
     # These are owner-private retained inputs and necessarily contain the fixture
     # close capability. Redaction is enforced on the only public product below.
-    for value in (create_response, fixture_trace, observer_export, observer_snapshot): _reject_private_leak(value)
+    _reject_private_leak(create_response, permit_fixture_token=True)
+    _reject_private_leak(fixture_trace, permit_fixture_token=True)
+    _reject_private_leak(observer_export)
+    _reject_private_leak(pre_close_snapshot)
+    _reject_private_leak(observer_snapshot)
     response = _dict(create_response, "create_response")
     if response.get("status") != "accepted": _fail("create_not_accepted")
     sample_id, fixture_alias = _string(response, "sample_id"), _alias(response, "correlation_alias")
@@ -126,7 +130,7 @@ def normalize(create_response, fixture_trace, observer_export, observer_snapshot
     # retained generation evidence; a cold trace therefore must contain one create.
     generation = create_index + 1
     if sample_class == "cold" and generation != 1: _fail("cold_generation_not_one")
-    if close.get("origin") != "ipc": _fail("invalid_close_origin")
+    if close.get("origin") != "ipc" or close.get("sample_id") != sample_id: _fail("invalid_close_sample")
     if records.index(close) <= records.index(create): _fail("fixture_close_order")
     close_ns = _fixture_ns(close)
     events = _events(observer_export)
@@ -155,6 +159,12 @@ def normalize(create_response, fixture_trace, observer_export, observer_snapshot
     if not durations: _fail("empty_callback_durations_ms")
     finished = _one([e for e in scoped if e.get("marker") == "correlation_finished"], "ambiguous_correlation_finish")
     if finished.get("correlation_armed") is not False or finished.get("correlation_map_count") != 0: _fail("invalid_finish_event")
+    pre_close = _dict(pre_close_snapshot, "pre_close_snapshot")
+    pre_correlation = _dict(pre_close.get("correlation"), "pre_close_correlation")
+    pre_sources = _dict(pre_correlation.get("candidate_sources"), "pre_close_candidate_sources")
+    if (pre_correlation.get("armed") is not True or pre_correlation.get("map_count") != 1
+            or pre_correlation.get("candidate_source") != "direct_ax" or pre_sources.get("direct_ax") is not False
+            or pre_sources.get("filter") is not False or pre_sources.get("count") != 0 or pre_sources.get("complete") is not False): _fail("invalid_pre_close_correlation")
     snapshot = _dict(observer_snapshot, "observer_snapshot")
     correlation = _dict(snapshot.get("correlation"), "snapshot_correlation")
     candidate_sources = _dict(correlation.get("candidate_sources"), "snapshot_candidate_sources")
@@ -167,7 +177,7 @@ def normalize(create_response, fixture_trace, observer_export, observer_snapshot
     # consistent about counters, but lifecycle is intentionally the snapshot fact.
     for key in ("active_timers", "window_effects"):
         _integer(snapshot, key)
-    map_count_before_close = sum(e.get("marker") == "correlation_observed" and e.get("correlation_alias") == fixture_alias for e in scoped)
+    map_count_before_close = pre_correlation["map_count"]
     row = {"sample_id": sample_id, "generation": generation, "source": observed["source"], "fixture_alias": fixture_alias, "observer_alias": observer_alias,
       "create_count": sum(r.get("event") == "create_requested" and r.get("sample_id") == sample_id for r in records), "close_count": sum(r.get("event") == "native_close_completed" for r in records[create_position + 1:next_create_position]),
       "map_count_before_close": map_count_before_close, "direct_constructions": direct_constructions, "direct_identifier_reads": direct_reads, "filter_constructions": filter_constructions, "filter_identifier_reads": filter_reads,
@@ -181,11 +191,11 @@ def normalize(create_response, fixture_trace, observer_export, observer_snapshot
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Pure POC-001 evidence normalizer; not a live runner.")
-    parser.add_argument("sample_class", choices=("warm", "cold")); parser.add_argument("create_response", type=Path); parser.add_argument("fixture_trace", type=Path); parser.add_argument("observer_export", type=Path); parser.add_argument("observer_snapshot", type=Path); parser.add_argument("output", type=Path)
+    parser.add_argument("sample_class", choices=("warm", "cold")); parser.add_argument("create_response", type=Path); parser.add_argument("fixture_trace", type=Path); parser.add_argument("observer_export", type=Path); parser.add_argument("pre_close_snapshot", type=Path); parser.add_argument("observer_snapshot", type=Path); parser.add_argument("output", type=Path)
     args = parser.parse_args(argv)
     try:
-        for path in (args.create_response, args.fixture_trace, args.observer_export, args.observer_snapshot): _private_dir(path.parent)
-        result = normalize(_read_private_json(args.create_response), _read_private_ndjson(args.fixture_trace), _read_private_json(args.observer_export), _read_private_json(args.observer_snapshot), args.sample_class)
+        for path in (args.create_response, args.fixture_trace, args.observer_export, args.pre_close_snapshot, args.observer_snapshot): _private_dir(path.parent)
+        result = normalize(_read_private_json(args.create_response), _read_private_ndjson(args.fixture_trace), _read_private_json(args.observer_export), _read_private_json(args.pre_close_snapshot), _read_private_json(args.observer_snapshot), args.sample_class)
         code = 0
     except (NormalizerError, OSError, json.JSONDecodeError):
         result, code = {"analysis_status": "indeterminate", "outcome": "normalizer_error"}, 2

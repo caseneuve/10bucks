@@ -49,6 +49,13 @@ class Tests(unittest.TestCase):
   with self.assertRaises(analyzer.AnalyzerError): analyzer.analyze_class([sample()],"warm",final_cleanup())
   bad=final_cleanup(); del bad["legacy_restarted"]
   with self.assertRaises(analyzer.AnalyzerError): analyzer.analyze_class([sample(f"warm-{n:02d}",n) for n in range(1,31)],"warm",bad)
+ def test_cold_class_accepts_five_fresh_generation_one_samples_in_exact_order(self):
+  cold=[sample(f"cold-{n:02d}",1,"cold") for n in range(1,6)]
+  self.assertEqual(analyzer.analyze_class(cold,"cold",final_cleanup())["outcome"],"pass")
+  cold[1]["sample_id"]="cold-01"
+  with self.assertRaisesRegex(analyzer.AnalyzerError,"unexpected_sample_id_order"): analyzer.analyze_class(cold,"cold",final_cleanup())
+  cold=[sample(f"cold-{n:02d}",1,"cold") for n in range(1,6)]; cold[2]["generation"]=2
+  with self.assertRaisesRegex(analyzer.AnalyzerError,"cold_generation_not_one"): analyzer.analyze_class(cold,"cold",final_cleanup())
  def test_sample_cli_and_atomic_no_follow_output(self):
   with tempfile.TemporaryDirectory() as directory:
    os.chmod(directory,0o700); d=pathlib.Path(directory); source=d/"sample.json"; output=d/"out.json"

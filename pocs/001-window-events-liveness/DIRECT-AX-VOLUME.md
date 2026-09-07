@@ -5,8 +5,8 @@ performed.** `direct_ax_volume_analyzer.py` is a retained pure normal-record
 validator, not an orchestrator. `direct_ax_volume_normalizer.py` is the
 reviewed pure/private evidence adapter, not live orchestration: it reads one
 already-retained create response, cumulative fixture NDJSON trace, stopped
-observer export, and after-generation observer snapshot, then writes one
-private analyzer row. It joins fixture and observer only by the frozen full
+observer export, a pre-close observer status snapshot, and a post-finish
+observer status snapshot, then writes one private analyzer row. It joins fixture and observer only by the frozen full
 alias; fixture trace intervals isolate a generation without exporting or
 joining on the private close capability. This document provides the later live
 batches rather than claiming that orchestration exists.
@@ -17,14 +17,24 @@ The only source is `direct_ax`; exactly 30 warm and 5 cold samples are fixed.
 Warm uses one observer and one fixture process across generations 1..30. Each
 warm generation must finish/reset its correlation map/source but must **not**
 stop the observer or fixture. Cold uses one fresh observer/cache and fixture
-per sample, with global sample generations 1..5. Every generation requires:
+per sample; each fresh fixture trace and observer arm is generation 1, while
+class order is fixed by sample IDs `cold-01` through `cold-05`. Every generation requires:
 
-- exactly one create/close; map count 1 before close; one direct construction
+- exactly one create/close with the frozen request/trace sample ID
+  `warm-01`…`warm-30` or `cold-01`…`cold-05`; the accepted create response,
+  `create_requested`, and `native_close_completed` must name that same sample;
+  map count 1 before close; one direct construction
   and `AXIdentifier` read; zero filter constructions/reads;
 - exact full alias equality; exactly one alias-bearing direct/filter destruction
   candidate, each <=1,000 ms after native close;
 - successful `finish_fixture_correlation`: map 0, armed false, candidate source
   null; zero effects, permanent polls, and steady global queries.
+
+The required pre-close status snapshot must report correlation `map_count=1`,
+`armed=true`, `candidate_source=direct_ax`, and no destruction candidate source
+consumed. The distinct post-finish snapshot must report map zero, unarmed,
+null candidate source, and both candidate-source flags reset. These snapshots
+are evidence fields, not values inferred from correlation events.
 
 Warm direct-correlation p95 <=100 ms. Callback p95 <=50 ms and max <=100 ms.
 Every cold direct correlation is <=3,000 ms. Stop a class on its first
@@ -63,7 +73,8 @@ private analyzer output is reviewed:
 ```sh
 # Per generation, the pure normalizer consumes only already-retained private files.
 # It performs no launch, socket, Hammerspoon, or process action and writes ROW_JSON mode 0600.
-python3 pocs/001-window-events-liveness/direct_ax_volume_normalizer.py warm "$CREATE_RESPONSE" "$FIXTURE_TRACE" "$OBSERVER_EXPORT" "$OBSERVER_SNAPSHOT" "$ROW_JSON"
+# PRE_CLOSE_STATUS is captured before close; POST_FINISH_STATUS is captured after finish.
+python3 pocs/001-window-events-liveness/direct_ax_volume_normalizer.py warm "$CREATE_RESPONSE" "$FIXTURE_TRACE" "$OBSERVER_EXPORT" "$PRE_CLOSE_STATUS" "$POST_FINISH_STATUS" "$ROW_JSON"
 # After it has written the analyzer schema row:
 python3 pocs/001-window-events-liveness/direct_ax_volume_analyzer.py sample warm "$ROW_JSON" "$SAMPLE_RESULT"
 python3 pocs/001-window-events-liveness/direct_ax_volume_analyzer.py sample cold "$SAMPLE_JSON" "$SAMPLE_RESULT"
