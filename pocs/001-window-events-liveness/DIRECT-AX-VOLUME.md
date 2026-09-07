@@ -48,13 +48,21 @@ python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py warm-star
 python3 pocs/001-window-events-liveness/direct_ax_volume_controller.py abort-cleanup --execute --approval-file /absolute/private/approval.json --run-dir /tmp/p1d.XXXXXX
 ```
 
+Before `prepare` creates a directory, the adapter captures and validates
+redacted macOS build, architecture, Hammerspoon version, branch/full commit,
+built-in display identity, and required-settings evidence. Missing evidence is
+a refusal, not a best-effort record.
+
 `warm-start` invokes only the canonical fixture build script
 `fixture/scripts/build-fixture.sh`, spawns the canonical bundle binary with
 `POC001_FIXTURE_CLOCK_KIND=mach_absolute`, persists the cleanup intent before
-any legacy mutation, and waits for `run_started` then `socket_ready`. It
+any legacy mutation, and waits for schema-valid `run_started` and
+`socket_ready` records whose fixture `sample_id` is exactly `startup`. It
 captures the exact legacy restoration baseline: started state, configured
 hotkey count (the current configured **26**-style count), installed binding
-count, lifecycle filter, reconcile timer, and bar state. It then stops and
+count, lifecycle filter, reconcile timer, bar timer, and exact canvas count.
+It operates only on the already-loaded `spoon['10bucks']` object—never a
+second `dofile` object. It then stops and
 verifies legacy, clears only `trace`, `lifecycle`, `ownership`,
 `private_export`, `correlation`, and `observer`, and starts/verifies the
 observer.
@@ -62,6 +70,9 @@ observer.
 Cleanup is idempotent: abort correlation, stop/export observer and verify zero
 open callbacks/timers/window effects/correlation map, request fixture shutdown,
 terminate/wait only if still alive, and verify the PID and socket are absent.
+Before any signal, the persisted PID identity is rechecked against the exact
+canonical fixture executable and its `POC001_FIXTURE_RUN_DIR` environment, so
+PID reuse cannot target an unrelated process.
 It then performs one semantic legacy restore: `start()`, **explicit
 `bindHotkeys()`**, and exact comparison of the complete captured baseline.
 Any cleanup or restoration uncertainty persists `indeterminate`, returns

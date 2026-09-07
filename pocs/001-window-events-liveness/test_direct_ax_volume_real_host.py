@@ -19,7 +19,8 @@ class FakeRunner:
         if "cat-file" in argv: return Result()
         if argv[0].endswith("hs"):
             # Every host snippet receives strict JSON only.
-            return Result('{"started":true,"configured_hotkey_count":26,"binding_count":26,"lifecycle_watcher_active":true,"reconcile_active":true,"bar_active":true}\n')
+            if "o:start()" in argv[2]: return Result('{"running":true}\n')
+            return Result('{"started":true,"configured_hotkey_count":26,"binding_count":26,"lifecycle_watcher_active":true,"reconcile_active":true,"bar_timer_active":true,"bar_canvas_count":1}\n')
         return Result()
     def spawn(self, argv, *, env): self.calls.append(("spawn", argv, env)); return self.pid
 
@@ -37,9 +38,22 @@ class RealHostTests(unittest.TestCase):
         actual = ports.legacy("restore", expected={"binding_count": 26})
         snippet = runner.calls[-1][1][2]
         self.assertIn("t:start(); t:bindHotkeys();", snippet)
+        self.assertIn("spoon['10bucks']", snippet)
+        self.assertNotIn("dofile(", snippet)
         self.assertIn("configured_hotkey_count=n", snippet)
-        self.assertIn("binding_count=#(t.hotkeyBindings or {})", snippet)
+        self.assertIn("for _ in pairs(t.hotkeyBindings or {})", snippet)
+        self.assertIn("bar_timer_active=b.timer ~= nil", snippet)
+        self.assertIn("bar_canvas_count=cc", snippet)
         self.assertEqual(actual["binding_count"], 26)
+
+    def test_observer_fresh_load_sets_absolute_package_path_and_one_known_global(self):
+        runner = FakeRunner(); ports = real_host.RealHostPorts(ROOT.parents[1], runner)
+        self.assertTrue(ports.observer("start")["running"])
+        snippet = runner.calls[-1][1][2]
+        self.assertIn("package.path=", snippet)
+        self.assertIn(str(ROOT) + "/", snippet)
+        self.assertIn("_G.__poc001_observer", snippet)
+        self.assertIn("dofile(", snippet)
 
     def test_private_atomic_json_rejects_symlink_and_keeps_0600(self):
         runner = FakeRunner(); ports = real_host.RealHostPorts(ROOT.parents[1], runner)
@@ -57,6 +71,11 @@ class RealHostTests(unittest.TestCase):
         self.assertNotIn("subprocess", tests.split("class FakeRunner", 1)[0])
         self.assertIn("hs.json.encode", source)
         self.assertIn("t:bindHotkeys();", source)
+        self.assertIn("package.path=", source)
+        self.assertIn("POC001_FIXTURE_RUN_DIR=", source)
+        self.assertIn("-wwE", source)
+        self.assertIn("unsafe opened private file", source)
+        self.assertIn('row.get("sample_id") == sample_id', source)
         self.assertIn("POC001_FIXTURE_CLOCK_KIND=\"mach_absolute\"", source)
 
 if __name__ == "__main__": unittest.main()

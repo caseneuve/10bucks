@@ -20,7 +20,8 @@ RUN_PREFIX = "/tmp/p1d."
 STATE_NAME = "controller-state.json"
 EVIDENCE_NAME = "controller-evidence.json"
 APPROVED_MODULES = ("trace", "lifecycle", "ownership", "private_export", "correlation", "observer")
-LEGACY_SEMANTIC_KEYS = ("started", "configured_hotkey_count", "binding_count", "lifecycle_watcher_active", "reconcile_active", "bar_active")
+LEGACY_SEMANTIC_KEYS = ("started", "configured_hotkey_count", "binding_count", "lifecycle_watcher_active", "reconcile_active", "bar_timer_active", "bar_canvas_count")
+ENVIRONMENT_KEYS = ("macos_build", "architecture", "hammerspoon_version", "branch", "head", "display", "settings")
 MAX_TIMEOUT_SECONDS = 120
 STARTUP_TIMEOUT_SECONDS = 30
 SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
@@ -45,17 +46,18 @@ class Ports(Protocol):
     def read_private_json(self, path: str) -> dict[str, Any]: ...
     def run(self, argv: tuple[str, ...], *, timeout: int) -> None: ...
     def spawn_fixture(self, run_dir: str, *, clock_kind: str, timeout: int) -> int: ...
-    def process_alive(self, pid: int) -> bool: ...
+    def fixture_identity(self, pid: int, run_dir: str) -> dict[str, str]: ...
+    def process_alive(self, pid: int, identity: dict[str, str] | None = None) -> bool: ...
     def socket_exists(self, path: str) -> bool: ...
-    def wait_marker(self, trace_path: str, marker: str, *, timeout: int) -> None: ...
+    def wait_marker(self, trace_path: str, marker: str, *, sample_id: str, timeout: int) -> None: ...
     # `restore` is one semantic action: start, rebind configured hotkeys, then
     # return an observed state for exact comparison with `capture`.
     def legacy(self, action: str, **kwargs: Any) -> dict[str, Any]: ...
     def clear_modules(self, modules: tuple[str, ...]) -> None: ...
     def observer(self, action: str, **kwargs: Any) -> dict[str, Any]: ...
     def fixture_shutdown(self, run_dir: str, *, timeout: int) -> None: ...
-    def terminate(self, pid: int, *, timeout: int) -> None: ...
-    def wait_process(self, pid: int, *, timeout: int) -> bool: ...
+    def terminate(self, pid: int, identity: dict[str, str], *, timeout: int) -> None: ...
+    def wait_process(self, pid: int, identity: dict[str, str], *, timeout: int) -> bool: ...
 
 
 @dataclass
@@ -138,14 +140,19 @@ class DirectAXVolumeController:
     def prepare(self, *, execute: bool, approval_file: str) -> str:
         self._require_execute(execute)
         commit = self._freeze(approval_file)
+        environment = self.ports.environment()
+        if not isinstance(environment, dict) or any(not isinstance(environment.get(key), str) or not environment[key] for key in ENVIRONMENT_KEYS):
+            raise ControllerError("refused: incomplete environment evidence")
+        if environment["head"] != commit:
+            raise ControllerError("refused: environment HEAD differs from freeze")
         run_dir = self.ports.make_private_run_dir(RUN_PREFIX)
         self._valid_run_dir(run_dir)
         state = {"schema": "poc001-direct-ax-controller-v1", "run_dir": run_dir, "frozen_commit": commit,
-                 "phase": "prepared", "fixture_pid": None, "socket": run_dir + "/poc001-fixture.sock",
+                 "phase": "prepared", "fixture_pid": None, "fixture_identity": None, "socket": run_dir + "/poc001-fixture.sock",
                  "legacy_stopped": False, "legacy_baseline": None, "observer_started": False, "events": []}
         # State/evidence are opened privately by the filesystem port before any write.
         self._save(state)
-        self._record(state, "prepared", environment=self.ports.environment())
+        self._record(state, "prepared", environment=environment)
         self._save(state)
         return run_dir
 
@@ -162,7 +169,7 @@ class DirectAXVolumeController:
                 or not isinstance(baseline["configured_hotkey_count"], int)
                 or baseline["configured_hotkey_count"] != baseline["binding_count"]):
             raise ControllerError("legacy capture is not shortcut-ready")
-        if any(not isinstance(baseline[key], bool) for key in ("lifecycle_watcher_active", "reconcile_active", "bar_active")):
+        if any(not isinstance(baseline[key], bool) for key in ("lifecycle_watcher_active", "reconcile_active", "bar_timer_active")) or isinstance(baseline["bar_canvas_count"], bool) or not isinstance(baseline["bar_canvas_count"], int) or baseline["bar_canvas_count"] < 0:
             raise ControllerError("legacy capture has invalid lifecycle state")
         return {key: baseline[key] for key in LEGACY_SEMANTIC_KEYS}
 
@@ -180,7 +187,7 @@ class DirectAXVolumeController:
         pid = state.get("fixture_pid")
         # Redacted status intentionally has no private path, token, PID, or alias.
         return {"phase": state.get("phase"), "fixture_expected": isinstance(pid, int),
-                "fixture_alive": isinstance(pid, int) and self.ports.process_alive(pid),
+                "fixture_alive": isinstance(pid, int) and self.ports.process_alive(pid, state.get("fixture_identity")),
                 "socket_present": self.ports.socket_exists(state["socket"]),
                 "legacy_stopped": state.get("legacy_stopped") is True,
                 "observer_started": state.get("observer_started") is True}
@@ -190,7 +197,7 @@ class DirectAXVolumeController:
         state = self._load(run_dir)
         if state.get("phase") != "prepared":
             raise ControllerError("refused: warm-start requires prepared state")
-        if state.get("fixture_pid") is not None or self.ports.socket_exists(state["socket"]):
+        if state.get("fixture_pid") is not None or state.get("fixture_identity") is not None or self.ports.socket_exists(state["socket"]):
             raise ControllerError("refused: stale fixture PID or socket state")
         if self._freeze(approval_file) != state.get("frozen_commit"):
             raise ControllerError("refused: current freeze differs from prepared state")
@@ -206,12 +213,14 @@ class DirectAXVolumeController:
             pid = self.ports.spawn_fixture(run_dir, clock_kind="mach_absolute", timeout=MAX_TIMEOUT_SECONDS)
             if not isinstance(pid, int) or pid <= 0:
                 raise ControllerError("fixture launch failed")
-            state["fixture_pid"] = pid
+            identity = self.ports.fixture_identity(pid, run_dir)
+            if not isinstance(identity, dict): raise ControllerError("fixture identity capture failed")
+            state["fixture_pid"], state["fixture_identity"] = pid, identity
             self._record(state, "fixture_launched")
             self._save(state)
-            self.ports.wait_marker(run_dir + "/trace.ndjson", "run_started", timeout=STARTUP_TIMEOUT_SECONDS)
-            self.ports.wait_marker(run_dir + "/trace.ndjson", "socket_ready", timeout=STARTUP_TIMEOUT_SECONDS)
-            if not self.ports.process_alive(pid) or not self.ports.socket_exists(state["socket"]):
+            self.ports.wait_marker(run_dir + "/trace.ndjson", "run_started", sample_id="startup", timeout=STARTUP_TIMEOUT_SECONDS)
+            self.ports.wait_marker(run_dir + "/trace.ndjson", "socket_ready", sample_id="startup", timeout=STARTUP_TIMEOUT_SECONDS)
+            if not self.ports.process_alive(pid, identity) or not self.ports.socket_exists(state["socket"]):
                 raise ControllerError("fixture startup stale or partial")
             stopped = self.ports.legacy("stop")
             if not isinstance(stopped, dict) or stopped.get("started") is not False:
@@ -249,17 +258,17 @@ class DirectAXVolumeController:
             if not self._zero_observer(stopped): failures.append("observer_not_quiescent")
         except Exception:
             failures.append("observer_cleanup")
-        pid = state.get("fixture_pid")
-        if isinstance(pid, int):
+        pid, identity = state.get("fixture_pid"), state.get("fixture_identity")
+        if isinstance(pid, int) and isinstance(identity, dict):
             try: self.ports.fixture_shutdown(state["run_dir"], timeout=MAX_TIMEOUT_SECONDS)
             except Exception: failures.append("fixture_shutdown")
-            if self.ports.process_alive(pid):
-                try: self.ports.terminate(pid, timeout=MAX_TIMEOUT_SECONDS)
+            if self.ports.process_alive(pid, identity):
+                try: self.ports.terminate(pid, identity, timeout=MAX_TIMEOUT_SECONDS)
                 except Exception: failures.append("fixture_terminate")
             try:
-                if not self.ports.wait_process(pid, timeout=MAX_TIMEOUT_SECONDS): failures.append("fixture_wait")
+                if not self.ports.wait_process(pid, identity, timeout=MAX_TIMEOUT_SECONDS): failures.append("fixture_wait")
             except Exception: failures.append("fixture_wait")
-        if isinstance(pid, int) and self.ports.process_alive(pid): failures.append("fixture_still_alive")
+        if isinstance(pid, int) and (not isinstance(identity, dict) or self.ports.process_alive(pid, identity)): failures.append("fixture_still_alive")
         if self.ports.socket_exists(state["socket"]): failures.append("socket_present")
         try:
             if not self._legacy_restored(state):

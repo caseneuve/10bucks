@@ -19,7 +19,7 @@ class FakePorts:
  def repo_changes(self): return deepcopy(self.changes)
  def head_commit(self): return self.head
  def commit_exists(self, commit): return commit == COMMIT
- def environment(self): return {"os":"redacted", "commit":COMMIT}
+ def environment(self): return {"macos_build":"26A1", "architecture":"arm64", "hammerspoon_version":"1.1.1", "branch":"test", "head":COMMIT, "display":"built-in", "settings":"separate_spaces"}
  def make_private_run_dir(self, prefix): self.calls.append(("mkdtemp",prefix)); return "/tmp/p1d.abc123"
  def private_dir(self,path): return path in self.dirs
  def private_file(self,path): return path in self.private_files
@@ -28,14 +28,15 @@ class FakePorts:
  def read_private_json(self,path): return json.loads(self.files[path])
  def run(self,argv,timeout): self.calls.append(("run",argv,timeout)); assert timeout <= 120
  def spawn_fixture(self,run_dir,clock_kind,timeout): self.calls.append(("spawn",clock_kind,timeout)); self.alive=True; self.socket=True; return self.pid
- def process_alive(self,pid): return self.alive and pid == self.pid
+ def fixture_identity(self,pid,run_dir): return {"executable":"fixture", "run_dir":run_dir}
+ def process_alive(self,pid,identity=None): return self.alive and pid == self.pid and (identity is None or identity.get("run_dir") == "/tmp/p1d.abc123")
  def socket_exists(self,path): return self.socket
- def wait_marker(self,path,marker,timeout):
-  self.calls.append(("marker",marker,timeout)); assert timeout <= 120
+ def wait_marker(self,path,marker,sample_id,timeout):
+  self.calls.append(("marker",marker,sample_id,timeout)); assert timeout <= 120; assert sample_id == "startup"
   if self.fail_marker: raise RuntimeError("timeout")
  def legacy(self,action,**kwargs):
   self.calls.append(("legacy",action))
-  def snapshot(): return {"started":self.legacy_running,"configured_hotkey_count":self.binding_count,"binding_count":self.binding_count,"lifecycle_watcher_active":True,"reconcile_active":True,"bar_active":True}
+  def snapshot(): return {"started":self.legacy_running,"configured_hotkey_count":self.binding_count,"binding_count":self.binding_count,"lifecycle_watcher_active":True,"reconcile_active":True,"bar_timer_active":True,"bar_canvas_count":1}
   if action == "capture": return snapshot()
   if action == "stop": self.legacy_running=False; self.binding_count=0; return snapshot()
   if action == "restore":
@@ -51,8 +52,8 @@ class FakePorts:
   if action == "stop_export": self.observer_running=False; return {"running":False,"callbacks_open":0,"active_timers":0,"window_effects":0,"direct_application_watchers":0,"direct_window_watchers":0,"target_binding_armed":False,"correlation":{"map_count":0}}
   raise AssertionError(action)
  def fixture_shutdown(self,run_dir,timeout): self.calls.append(("shutdown",timeout)); self.alive=False; self.socket=False
- def terminate(self,pid,timeout): self.calls.append(("terminate",timeout)); self.alive=False
- def wait_process(self,pid,timeout): self.calls.append(("wait",timeout)); return not self.alive
+ def terminate(self,pid,identity,timeout): self.calls.append(("terminate",timeout)); self.alive=False
+ def wait_process(self,pid,identity,timeout): self.calls.append(("wait",timeout)); return not self.alive
 
 def prepared():
  ports=FakePorts(); machine=controller.DirectAXVolumeController(ports); run=machine.prepare(execute=True,approval_file="/approval"); return ports,machine,run

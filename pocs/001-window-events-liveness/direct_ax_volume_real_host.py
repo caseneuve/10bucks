@@ -94,7 +94,15 @@ class RealHostPorts:
         return result.returncode == 0
 
     def environment(self) -> dict[str, str]:
-        return {"head": self.head_commit(), "python": sys.version.split()[0], "platform": sys.platform}
+        def text(argv: tuple[str, ...]) -> str:
+            return self._checked(argv, 30).stdout.strip()
+        # Hammerspoon provides the version/display/settings through one strict,
+        # redacted JSON response; no raw defaults or display records are emitted.
+        hs = self._hs("local s=hs.screen.primaryScreen(); print(hs.json.encode({hammerspoon_version=tostring(hs.processInfo.version or ''),display=s and tostring(s:getUUID()) or '',settings=(hs.spaces and hs.spaces.screensHaveSeparateSpaces and hs.spaces.screensHaveSeparateSpaces()) and 'separate_spaces' or 'settings_unavailable'}))")
+        branch = text(("/usr/bin/git", "-C", str(self.root), "branch", "--show-current"))
+        return {"macos_build": text(("/usr/bin/sw_vers", "-buildVersion")), "architecture": text(("/usr/bin/uname", "-m")),
+                "hammerspoon_version": hs.get("hammerspoon_version", ""), "branch": branch,
+                "head": self.head_commit(), "display": hs.get("display", ""), "settings": hs.get("settings", "")}
 
     def make_private_run_dir(self, prefix: str) -> str:
         old = os.umask(0o077)
@@ -107,7 +115,10 @@ class RealHostPorts:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(path, flags)
         try:
-            return os.read(fd, os.fstat(fd).st_size + 1).decode("utf-8")
+            meta = os.fstat(fd)
+            if not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.getuid() or stat.S_IMODE(meta.st_mode) != 0o600:
+                raise HostError("unsafe opened private file")
+            return os.read(fd, meta.st_size + 1).decode("utf-8")
         finally: os.close(fd)
 
     def read_text(self, path: str) -> str: return self._read_nofollow(path)
@@ -145,16 +156,23 @@ class RealHostPorts:
         env = dict(os.environ, POC001_FIXTURE_RUN_DIR=run_dir, POC001_FIXTURE_CLOCK_KIND="mach_absolute")
         return self.runner.spawn((str(self.app),), env=env)
 
-    def process_alive(self, pid: int) -> bool:
+    def fixture_identity(self, pid: int, run_dir: str) -> dict[str, str]:
+        identity = {"executable": str(self.app), "run_dir": run_dir}
+        if not self.process_alive(pid, identity): raise HostError("fixture identity mismatch")
+        return identity
+
+    def process_alive(self, pid: int, identity: dict[str, str] | None = None) -> bool:
         try: os.kill(pid, 0)
-        except ProcessLookupError: return False
-        except PermissionError: return False
-        return True
+        except (ProcessLookupError, PermissionError): return False
+        if identity is None: return True
+        result = self.runner.run(("/bin/ps", "-p", str(pid), "-wwE", "-o", "command="), timeout=30)
+        command = result.stdout.strip()
+        return result.returncode == 0 and command.startswith(identity.get("executable", "")) and ("POC001_FIXTURE_RUN_DIR=" + identity.get("run_dir", "")) in command
     def socket_exists(self, path: str) -> bool:
         try: return stat.S_ISSOCK(os.lstat(path).st_mode)
         except OSError: return False
 
-    def wait_marker(self, trace_path: str, marker: str, *, timeout: int) -> None:
+    def wait_marker(self, trace_path: str, marker: str, *, sample_id: str, timeout: int) -> None:
         if timeout > MAX_TIMEOUT_SECONDS: raise HostError("timeout exceeds 120 seconds")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -165,7 +183,8 @@ class RealHostPorts:
                     if not line.endswith("\n"): break # incomplete NDJSON is never parsed
                     row = json.loads(line)
                     if not isinstance(row, dict): raise HostError("invalid complete trace record")
-                    if row.get("event") == marker: return
+                    if row.get("schema") != "poc001-fixture-v1" or row.get("sample_id") is None: raise HostError("invalid fixture trace schema")
+                    if row.get("event") == marker and row.get("sample_id") == sample_id: return
             except FileNotFoundError: pass
             except json.JSONDecodeError: raise HostError("malformed complete trace record") from None
             time.sleep(0.05)
@@ -180,9 +199,8 @@ class RealHostPorts:
         return value
 
     def legacy(self, action: str, **kwargs: Any) -> dict[str, Any]:
-        init = json.dumps(str(self.root / "10bucks.spoon/init.lua"))
-        base = "_G.__poc001_legacy=_G.__poc001_legacy or dofile(" + init + "); local t=_G.__poc001_legacy; local function out(x) print(hs.json.encode(x)) end; "
-        inspect = "local l=t.lifecycle or {}; local b=t.bar or {}; local n=0; for _,v in pairs((t.config or {}).hotkeys or {}) do if v ~= false then n=n+1 end end; return {started=t.started == true,configured_hotkey_count=n,binding_count=#(t.hotkeyBindings or {}),lifecycle_watcher_active=l.filter ~= nil,reconcile_active=l.reconcileTimer ~= nil,bar_active=b.canvas ~= nil}"
+        base = "local t=spoon['10bucks']; if type(t) ~= 'table' then error('missing loaded spoon') end; local function out(x) print(hs.json.encode(x)) end; "
+        inspect = "local l=t.lifecycle or {}; local b=t.bar or {}; local n,c=0,0; for _,v in pairs((t.config or {}).hotkeys or {}) do if v ~= false then n=n+1 end end; for _ in pairs(t.hotkeyBindings or {}) do c=c+1 end; local cc=0; for _ in pairs(b.canvases or {}) do cc=cc+1 end; return {started=t.started == true,configured_hotkey_count=n,binding_count=c,lifecycle_watcher_active=l.filter ~= nil,reconcile_active=l.reconcileTimer ~= nil,bar_timer_active=b.timer ~= nil,bar_canvas_count=cc}"
         if action == "capture": body = base + "out((function() " + inspect + " end)())"
         elif action == "stop": body = base + "t:stop(); out((function() " + inspect + " end)())"
         elif action == "restore":
@@ -197,8 +215,9 @@ class RealHostPorts:
         self._hs("local m={" + paths + "}; for _,n in ipairs(m) do package.loaded[n]=nil end; _G.__poc001_observer=nil; print(hs.json.encode({ok=true}))")
 
     def observer(self, action: str, **kwargs: Any) -> dict[str, Any]:
+        observer_dir = json.dumps(str(self.root / "pocs/001-window-events-liveness") + "/")
         observer = json.dumps(str(self.root / "pocs/001-window-events-liveness/observer.lua"))
-        base = "_G.__poc001_observer=_G.__poc001_observer or dofile(" + observer + "); local o=_G.__poc001_observer; local function out(x) print(hs.json.encode(x)) end; "
+        base = "package.path=" + observer_dir + " .. '?.lua;' .. package.path; _G.__poc001_observer=_G.__poc001_observer or dofile(" + observer + "); local o=_G.__poc001_observer; local function out(x) print(hs.json.encode(x)) end; "
         if action == "start": body = base + "o:start(); out({running=o:status().lifecycle == 'running'})"
         elif action == "abort_correlation": body = base + "o:abort_fixture_correlation('controller_abort'); out({ok=true})"
         elif action == "stop_export":
@@ -210,12 +229,12 @@ class RealHostPorts:
     def fixture_shutdown(self, run_dir: str, *, timeout: int) -> None:
         if self.socket_exists(run_dir + "/poc001-fixture.sock"):
             self._checked((str(self.fixturectl), run_dir, "shutdown", "controller-abort", "controller-abort"), timeout)
-    def terminate(self, pid: int, *, timeout: int) -> None:
+    def terminate(self, pid: int, identity: dict[str, str], *, timeout: int) -> None:
         if timeout > MAX_TIMEOUT_SECONDS: raise HostError("timeout exceeds 120 seconds")
-        if self.process_alive(pid): os.kill(pid, signal.SIGTERM)
-    def wait_process(self, pid: int, *, timeout: int) -> bool:
+        if self.process_alive(pid, identity): os.kill(pid, signal.SIGTERM)
+    def wait_process(self, pid: int, identity: dict[str, str], *, timeout: int) -> bool:
         deadline = time.monotonic() + min(timeout, MAX_TIMEOUT_SECONDS)
         while time.monotonic() < deadline:
-            if not self.process_alive(pid): return True
+            if not self.process_alive(pid, identity): return True
             time.sleep(0.05)
-        return not self.process_alive(pid)
+        return not self.process_alive(pid, identity)
