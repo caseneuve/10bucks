@@ -48,8 +48,11 @@ counterparts), a non-exact current full `HEAD`, or a changed HEAD after
 preparation. Its executable entry point propagates the controller result as the
 process exit status. Before dynamically importing the real-host adapter it
 sets `sys.dont_write_bytecode`, so launching the controller cannot create a
-repository `__pycache__` artifact before its clean-tree preflight. `status`
-requires neither flag nor approval; it is read-only and returns only phase and
+repository `__pycache__` artifact before its clean-tree preflight. The
+real-host Hammerspoon adapter accepts a reviewed Lua body only when it calls
+the injected `__poc001_out(...)` exactly once; it never rewrites Lua source
+text before execution. `status` requires neither flag nor approval; it is
+read-only and returns only phase and
 redacted booleans—never paths, PIDs, sockets, tokens, aliases, responses, or
 trace records.
 

@@ -98,7 +98,7 @@ class RealHostPorts:
             return self._checked(argv, 30).stdout.strip()
         # Hammerspoon provides the version/display/settings through one strict,
         # redacted JSON response; no raw defaults or display records are emitted.
-        hs = self._hs("local s=hs.screen.primaryScreen(); print(hs.json.encode({hammerspoon_version=tostring(hs.processInfo.version or ''),display=s and tostring(s:getUUID()) or '',settings=(hs.spaces and hs.spaces.screensHaveSeparateSpaces and hs.spaces.screensHaveSeparateSpaces()) and 'separate_spaces' or 'settings_unavailable'}))")
+        hs = self._hs("local s=hs.screen.primaryScreen(); __poc001_out({hammerspoon_version=tostring(hs.processInfo.version or ''),display=s and tostring(s:getUUID()) or '',settings=(hs.spaces and hs.spaces.screensHaveSeparateSpaces and hs.spaces.screensHaveSeparateSpaces()) and 'separate_spaces' or 'settings_unavailable'})")
         branch = text(("/usr/bin/git", "-C", str(self.root), "branch", "--show-current"))
         return {"macos_build": text(("/usr/bin/sw_vers", "-buildVersion")), "architecture": text(("/usr/bin/uname", "-m")),
                 "hammerspoon_version": hs.get("hammerspoon_version", ""), "branch": branch,
@@ -223,7 +223,11 @@ class RealHostPorts:
         # explicitly framed JSON object; diagnostics are discarded, never
         # retained or reflected to the caller.
         emitter = "local function __poc001_out(x) io.write('__POC001_SAFE_JSON__ '..hs.json.encode(x)..'\\n') end; "
-        body = body.replace("print(hs.json.encode(", "__poc001_out(")
+        # Every reviewed body must explicitly emit one envelope.  Do not rewrite
+        # source text here: a textual replacement can unbalance Lua delimiters
+        # and turn a harness defect into an opaque host-command failure.
+        if body.count("__poc001_out(") != 1:
+            raise HostError("invalid Hammerspoon envelope body")
         result = self._checked((self.hs, "-c", emitter + body), timeout)
         marked = [line[len(self._HS_ENVELOPE):] for line in result.stdout.splitlines()
                   if line.startswith(self._HS_ENVELOPE)]
@@ -235,55 +239,55 @@ class RealHostPorts:
         return value
 
     def legacy(self, action: str, **kwargs: Any) -> dict[str, Any]:
-        base = "local t=spoon['10bucks']; if type(t) ~= 'table' then error('missing loaded spoon') end; local function out(x) __poc001_out(x) end; "
+        base = "local t=spoon['10bucks']; if type(t) ~= 'table' then error('missing loaded spoon') end; "
         inspect = "local l=t.lifecycle or {}; local b=t.bar or {}; local n,c=0,0; for _,v in pairs((t.config or {}).hotkeys or {}) do if v ~= false then n=n+1 end end; for _ in pairs(t.hotkeyBindings or {}) do c=c+1 end; local cc=0; for _ in pairs(b.canvases or {}) do cc=cc+1 end; return {started=t.started == true,configured_hotkey_count=n,binding_count=c,lifecycle_watcher_active=l.filter ~= nil,reconcile_active=l.reconcileTimer ~= nil,bar_timer_active=b.timer ~= nil,bar_canvas_count=cc}"
-        if action in {"capture", "inspect"}: body = base + "out((function() " + inspect + " end)())"
-        elif action == "stop":  body = base + "t:stop(); out((function() " + inspect + " end)())"
+        if action in {"capture", "inspect"}: body = base + "__poc001_out((function() " + inspect + " end)())"
+        elif action == "stop":  body = base + "t:stop(); __poc001_out((function() " + inspect + " end)())"
         elif action == "restore":
             # bindHotkeys is deliberately explicit and verified in the returned baseline.
-            body = base + "t:start(); t:bindHotkeys(); out((function() " + inspect + " end)())"
+            body = base + "t:start(); t:bindHotkeys(); __poc001_out((function() " + inspect + " end)())"
         else: raise HostError("unapproved legacy action")
         return self._hs(body, kwargs.get("timeout", 30))
 
     def clear_modules(self, modules: tuple[str, ...]) -> None:
         if modules != APPROVED_MODULES: raise HostError("unapproved modules")
         paths = ",".join(json.dumps(m) for m in modules)
-        self._hs("local m={" + paths + "}; for _,n in ipairs(m) do package.loaded[n]=nil end; _G.__poc001_observer=nil; print(hs.json.encode({ok=true}))")
+        self._hs("local m={" + paths + "}; for _,n in ipairs(m) do package.loaded[n]=nil end; _G.__poc001_observer=nil; __poc001_out({ok=true})")
 
     def observer(self, action: str, **kwargs: Any) -> dict[str, Any]:
         observer_dir = json.dumps(str(self.root / "pocs/001-window-events-liveness") + "/")
         observer = json.dumps(str(self.root / "pocs/001-window-events-liveness/observer.lua"))
-        base = "package.path=" + observer_dir + " .. '?.lua;' .. package.path; _G.__poc001_observer=_G.__poc001_observer or dofile(" + observer + "); local o=_G.__poc001_observer; local function out(x) print(hs.json.encode(x)) end; "
-        if action == "start": body = base + "o:start(); out({running=o:status().lifecycle == 'running'})"
+        base = "package.path=" + observer_dir + " .. '?.lua;' .. package.path; _G.__poc001_observer=_G.__poc001_observer or dofile(" + observer + "); local o=_G.__poc001_observer; "
+        if action == "start": body = base + "o:start(); __poc001_out({running=o:status().lifecycle == 'running'})"
         elif action == "arm_correlation":
             # Scope arm/observed/candidate events to the exact warm sample
             # before any correlation callback can arrive.
-            body = base + "o.trace:set_sample(" + json.dumps(kwargs["sample_id"]) + "); local ok=o:arm_fixture_correlation(" + str(int(kwargs["generation"])) + "," + json.dumps(kwargs["source"]) + "); out({armed=ok})"
+            body = base + "o.trace:set_sample(" + json.dumps(kwargs["sample_id"]) + "); local ok=o:arm_fixture_correlation(" + str(int(kwargs["generation"])) + "," + json.dumps(kwargs["source"]) + "); __poc001_out({armed=ok})"
         elif action == "wait_correlation":
             stage, timeout = kwargs.get("stage"), kwargs.get("timeout")
             if stage not in {"map_ready", "candidates_complete"} or not isinstance(timeout, int) or timeout > MAX_TIMEOUT_SECONDS:
                 raise HostError("invalid correlation wait")
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
-                status = self._hs("local s=_G.__poc001_observer:status().correlation; print(hs.json.encode({armed=s.armed,candidate_source=s.candidate_source,map_count=s.map_count,candidates_complete=s.candidate_sources.complete}))")
+                status = self._hs("local s=_G.__poc001_observer:status().correlation; __poc001_out({armed=s.armed,candidate_source=s.candidate_source,map_count=s.map_count,candidates_complete=s.candidate_sources.complete})")
                 ready = (status.get("armed") is True and status.get("candidate_source") == "direct_ax" and status.get("map_count") == 1) if stage == "map_ready" else status.get("candidates_complete") is True
                 if ready: return {"ready": True}
                 time.sleep(0.05) # external controller wait; observer owns no poll/timer.
             return {"ready": False, "timed_out": True}
         elif action == "correlation_ready":
-            body = base + "local s=o:status().correlation; out({ready=s.armed and s.map_count == 1,candidates_complete=s.candidate_sources.complete,map_count=s.map_count})"
+            body = base + "local s=o:status().correlation; __poc001_out({ready=s.armed and s.map_count == 1,candidates_complete=s.candidate_sources.complete,map_count=s.map_count})"
         elif action == "finish_correlation":
-            body = base + "local ok=o:finish_fixture_correlation(); out({finished=ok})"
+            body = base + "local ok=o:finish_fixture_correlation(); __poc001_out({finished=ok})"
         elif action == "snapshot":
             output = json.dumps(str(Path(kwargs["path"]).resolve()))
-            body = base + "o:export_snapshot(" + output + "); out(o:status())"
+            body = base + "o:export_snapshot(" + output + "); __poc001_out(o:status())"
         elif action == "export_running":
             output = json.dumps(str(Path(kwargs["path"]).resolve()))
-            body = base + "o:export_running(" + output + "); out({ok=true})"
-        elif action == "abort_correlation": body = base + "o:abort_fixture_correlation('controller_abort'); out({ok=true})"
+            body = base + "o:export_running(" + output + "); __poc001_out({ok=true})"
+        elif action == "abort_correlation": body = base + "o:abort_fixture_correlation('controller_abort'); __poc001_out({ok=true})"
         elif action == "stop_export":
             export = json.dumps(str(Path(kwargs["path"]).resolve()))
-            body = base + "o:stop(); o:export(" + export + "); local s=o:status(); out({running=s.lifecycle == 'stopped',callbacks_open=s.callbacks.open,active_timers=s.active_timers,window_effects=s.window_effects,direct_application_watchers=s.direct_application_watchers,direct_window_watchers=s.direct_window_watchers,target_binding_armed=s.target_binding_armed,correlation={map_count=s.correlation.map_count}})"
+            body = base + "o:stop(); o:export(" + export + "); local s=o:status(); __poc001_out({running=s.lifecycle == 'stopped',callbacks_open=s.callbacks.open,active_timers=s.active_timers,window_effects=s.window_effects,direct_application_watchers=s.direct_application_watchers,direct_window_watchers=s.direct_window_watchers,target_binding_armed=s.target_binding_armed,correlation={map_count=s.correlation.map_count}})"
         else: raise HostError("unapproved observer action")
         return self._hs(body, kwargs.get("timeout", 30))
 

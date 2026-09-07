@@ -55,14 +55,46 @@ class RealHostTests(unittest.TestCase):
         self.assertIn("_G.__poc001_observer", snippet)
         self.assertIn("dofile(", snippet)
 
-    def test_hs_envelope_accepts_hotkey_diagnostics_but_rejects_multiple_or_malformed_markers(self):
+    def test_hs_envelope_requires_one_explicit_emitter_and_rejects_bad_responses(self):
         runner = FakeRunner(); ports = real_host.RealHostPorts(ROOT.parents[1], runner)
         runner.run = lambda argv, *, timeout, env=None: Result('hotkey diagnostic\n__POC001_SAFE_JSON__ {"ok":true}\n')
-        self.assertEqual(ports._hs("print(hs.json.encode({ok=true}))"), {"ok": True})
+        self.assertEqual(ports._hs("__poc001_out({ok=true})"), {"ok": True})
+        with self.assertRaisesRegex(real_host.HostError, "envelope body"): ports._hs("print(hs.json.encode({ok=true}))")
+        with self.assertRaisesRegex(real_host.HostError, "envelope body"): ports._hs("__poc001_out({ok=true}); __poc001_out({ok=false})")
         runner.run = lambda argv, *, timeout, env=None: Result('__POC001_SAFE_JSON__ {"ok":true}\n__POC001_SAFE_JSON__ {"ok":false}\n')
-        with self.assertRaises(real_host.HostError): ports._hs("print(hs.json.encode({ok=true}))")
+        with self.assertRaises(real_host.HostError): ports._hs("__poc001_out({ok=true})")
         runner.run = lambda argv, *, timeout, env=None: Result('__POC001_SAFE_JSON__ not-json\n')
-        with self.assertRaises(real_host.HostError): ports._hs("print(hs.json.encode({ok=true}))")
+        with self.assertRaises(real_host.HostError): ports._hs("__poc001_out({ok=true})")
+
+    def test_every_approved_lua_body_is_balanced_and_has_one_explicit_envelope(self):
+        runner = FakeRunner(); ports = real_host.RealHostPorts(ROOT.parents[1], runner)
+        ports.environment()
+        ports.legacy("restore", expected={"binding_count": 26})
+        ports.clear_modules(real_host.APPROVED_MODULES)
+        ports.observer("start")
+        ports.observer("arm_correlation", sample_id="warm-01", generation=1, source="direct_ax")
+        ports.observer("correlation_ready")
+        ports.observer("finish_correlation")
+        snippets = [call[1][2] for call in runner.calls if call[0] == "run" and call[1][0].endswith("hs")]
+        self.assertGreaterEqual(len(snippets), 7)
+        for snippet in snippets:
+            self.assertEqual(snippet.count("__poc001_out("), 2) # injected definition + body call
+            self.assertNotIn("print(hs.json.encode", snippet)
+            self._assert_balanced_lua(snippet)
+
+    @staticmethod
+    def _assert_balanced_lua(source):
+        pairs = {")": "(", "]": "[", "}": "{"}; stack = []; quote = None; escaped = False
+        for char in source:
+            if quote:
+                if escaped: escaped = False
+                elif char == "\\": escaped = True
+                elif char == quote: quote = None
+            elif char in "'\"": quote = char
+            elif char in "([{": stack.append(char)
+            elif char in pairs:
+                if not stack or stack.pop() != pairs[char]: raise AssertionError("unbalanced Lua snippet")
+        if quote or stack: raise AssertionError("unbalanced Lua snippet")
 
     def test_private_atomic_json_rejects_symlink_and_keeps_0600(self):
         runner = FakeRunner(); ports = real_host.RealHostPorts(ROOT.parents[1], runner)
