@@ -128,6 +128,16 @@ return {
     equal(state.selectedId, "three")
   end,
 
+  ["LAY-003 STACK-002: synchronize retains surviving order, appends missing members, aligns focus, and is idempotent"] = function()
+    local state = Stack.initialState({ "one", "two", "three" })
+    state = Stack.reduce(state, { type = "ManagedFocusObserved", memberId = "two" }, context())
+    state = Stack.reduce(state, { type = "Synchronize", memberIds = { "one", "three", "four" } }, context({ focusedMemberId = "three" }))
+    assert(deepEqual(state.members, { "one", "three", "four" }))
+    equal(state.selectedId, "three")
+    assert(Stack.reduce(state, { type = "Synchronize", memberIds = { "one", "three", "four" } }, context({ focusedMemberId = "three" })) == state)
+    assertValid(state, { "one", "three", "four" })
+  end,
+
   ["STATE-003: validation rejects malformed plain data, duplicate/unknown members, invalid selection, and member-set disagreement"] = function()
     local validState = Stack.initialState({ "one", "two" })
     local cases = {

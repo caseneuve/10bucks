@@ -220,6 +220,20 @@ return {
     equal(state.ratio, 0.7)
   end,
 
+  ["LAY-003 COL-003: synchronize retains columns and ratio, removes absent IDs, appends missing by active-column admission, and aligns focus"] = function()
+    local state = Columns.initialState({ "one", "two", "three" }, context())
+    state = Columns.reduce(state, { type = "ManagedFocusObserved", memberId = "two" }, context())
+    state = Columns.reduce(state, { type = "ResizeRatio", ratio = 0.7 }, context())
+    state = Columns.reduce(state, { type = "Synchronize", memberIds = { "one", "three", "four" } }, context({ focusedMemberId = "four" }))
+    assert(deepEqual(state.stacks[1].members, { "one", "four" }))
+    assert(deepEqual(state.stacks[2].members, { "three" }))
+    equal(state.activeStack, 1)
+    equal(state.stacks[1].selectedId, "four")
+    equal(state.ratio, 0.7)
+    assert(Columns.reduce(state, { type = "Synchronize", memberIds = { "one", "three", "four" } }, context({ focusedMemberId = "four" })) == state)
+    assertValid(state, { "one", "three", "four" })
+  end,
+
   ["COL-001 STATE-003: validation rejects empty/extra stacks, duplicates, member disagreement, bad selections/active/ratio, malformed arrays, and non-plain state"] = function()
     local valid = Columns.initialState({ "one", "two" }, context())
     local cases = {

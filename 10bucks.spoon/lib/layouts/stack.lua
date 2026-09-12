@@ -3,6 +3,11 @@
 -- false, or unknown entries are unavailable for that operation.
 local Stack = { id = "stack" }
 
+function Stack.supports(eventType)
+  return eventType == "Admit" or eventType == "Remove" or eventType == "ManagedFocusObserved"
+    or eventType == "FocusNext" or eventType == "FocusPrevious" or eventType == "Synchronize"
+end
+
 local function validId(value)
   if type(value) == "string" then return value ~= "" end
   return type(value) == "number" and value == value
@@ -118,10 +123,36 @@ function Stack.initialState(memberIds)
   return state
 end
 
+function Stack.memberIds(state)
+  if type(state) ~= "table" or type(state.members) ~= "table" then return {} end
+  return copyMembers(state.members)
+end
+
 function Stack.reduce(state, event, context)
   requireValid(state, state.members, 2)
   if not plain(event) or type(event) ~= "table" or type(event.type) ~= "string" then
     error("stack event must be plain data with a type", 2)
+  end
+
+  if event.type == "Synchronize" then
+    local expected, err = memberSet(event.memberIds)
+    if not expected then error(err, 2) end
+    local members, seen = {}, {}
+    for _, memberId in ipairs(state.members) do
+      if expected[memberId] then members[#members + 1] = memberId; seen[memberId] = true end
+    end
+    for _, memberId in ipairs(event.memberIds) do
+      if not seen[memberId] then members[#members + 1] = memberId; seen[memberId] = true end
+    end
+    local selectedId = state.selectedId
+    if selectedId ~= nil and not seen[selectedId] then selectedId = members[#members] end
+    if context and validId(context.focusedMemberId) and seen[context.focusedMemberId] then
+      selectedId = context.focusedMemberId
+    end
+    local unchanged = selectedId == state.selectedId and #members == #state.members
+    if unchanged then for index, memberId in ipairs(members) do if state.members[index] ~= memberId then unchanged = false; break end end end
+    if unchanged then return state end
+    return copyStateWith(state, members, selectedId)
   end
 
   if event.type == "Admit" then

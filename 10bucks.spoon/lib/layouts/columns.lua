@@ -2,6 +2,13 @@
 -- right. Availability is ephemeral and never changes this durable structure.
 local Columns = { id = "columns" }
 
+function Columns.supports(eventType)
+  return eventType == "Admit" or eventType == "Remove" or eventType == "ManagedFocusObserved"
+    or eventType == "FocusNext" or eventType == "FocusPrevious" or eventType == "FocusNextGroup"
+    or eventType == "FocusPreviousGroup" or eventType == "MoveFocusedToOther" or eventType == "SwapGroups"
+    or eventType == "ResizeRatio" or eventType == "ResetRatio" or eventType == "Synchronize"
+end
+
 local function validId(value)
   if type(value) == "string" then return value ~= "" end
   return type(value) == "number" and value == value
@@ -191,6 +198,17 @@ function Columns.initialState(memberIds, context)
   return state
 end
 
+function Columns.memberIds(state)
+  if type(state) ~= "table" or type(state.stacks) ~= "table" then return {} end
+  local members = {}
+  for _, stack in ipairs(state.stacks) do
+    if type(stack) == "table" and type(stack.members) == "table" then
+      for _, memberId in ipairs(stack.members) do members[#members + 1] = memberId end
+    end
+  end
+  return members
+end
+
 function Columns.reduce(state, event, context)
   requireValid(state, (function()
     local members = {}
@@ -202,6 +220,25 @@ function Columns.reduce(state, event, context)
   end
   local config, configError = ratioConfig(context)
   if not config then error(configError, 2) end
+
+  if event.type == "Synchronize" then
+    local expected, err = memberSet(event.memberIds)
+    if not expected then error(err, 2) end
+    local nextState = state
+    local existing = Columns.memberIds(nextState)
+    for _, memberId in ipairs(existing) do
+      if not expected[memberId] then nextState = Columns.reduce(nextState, { type = "Remove", memberId = memberId }, context) end
+    end
+    for _, memberId in ipairs(event.memberIds) do
+      if not stackIndexForMember(nextState, memberId) then
+        nextState = Columns.reduce(nextState, { type = "Admit", memberId = memberId }, context)
+      end
+    end
+    if context and validId(context.focusedMemberId) and stackIndexForMember(nextState, context.focusedMemberId) then
+      nextState = Columns.reduce(nextState, { type = "ManagedFocusObserved", memberId = context.focusedMemberId }, context)
+    end
+    return nextState
+  end
 
   if event.type == "Admit" then
     if not validId(event.memberId) then error("Admit requires a memberId", 2) end

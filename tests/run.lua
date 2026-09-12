@@ -7,6 +7,7 @@ local tests = {
   require("tests.test_runtime"),
   require("tests.test_stack"),
   require("tests.test_columns"),
+  require("tests.test_layout_coordinator"),
   require("tests.test_state"),
   require("tests.test_geometry"),
   require("tests.test_config"),
