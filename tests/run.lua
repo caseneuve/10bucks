@@ -3,6 +3,7 @@ local root = source:match("(.*/)tests/") or "./"
 package.path = root .. "10bucks.spoon/?.lua;" .. package.path
 
 local tests = {
+  require("tests.test_model"),
   require("tests.test_state"),
   require("tests.test_geometry"),
   require("tests.test_config"),
