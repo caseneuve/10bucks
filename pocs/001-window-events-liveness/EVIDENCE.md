@@ -91,17 +91,42 @@ reload, live POC load, or live action was performed for this checkpoint.
 ## Framework-internal query/lifecycle caveats
 
 - **Verified:** installed `hs/window_filter.lua` `startGlobalWatcher()` calls
-  `window._orderedwinids()` and `application.runningApplications()` when its
-  global watcher begins. This harness does **not** treat that framework work as
-  POC-issued queries. It is a source-inspected candidate-framework fact, not a
-  claim that it is zero.
-- **Verified:** the same installed filter source’s Space-change path can call
-  `getCurrentSpaceWindows()`; comments state it is inefficient because it
-  relies on `hs.window.allWindows()`. This 2A harness subscribes only to
-  create/focus/destroy and does not use a Space-aware filter, but source
-  inspection alone does not prove that all relevant framework refreshes are
-  absent. The eventual selection gate remains **unknown** pending instrumented
-  live evidence.
+  `window._orderedwinids()` and `application.runningApplications()` **when its
+  global watcher begins**, before ordinary filter callbacks while that watcher
+  remains active. Tag-matched Hammerspoon 1.1.1 source implements the former
+  with an on-screen CoreGraphics window-list snapshot and the latter by
+  enumerating `NSWorkspace` running applications. This harness does **not**
+  treat that startup framework work as POC-issued queries. It is a
+  source-inspected candidate-framework fact, not a claim that it is zero.
+- **Verified:** the same installed filter source’s Space-refresh path can call
+  `getCurrentSpaceWindows()`, which calls `hs.application:allWindows()` once
+  for every tracked application; it does **not** call public
+  `hs.window.allWindows()`. Tag-matched Hammerspoon 1.1.1 source implements
+  that per-application enumeration with
+  `AXUIElementCopyAttributeValues(..., kAXWindowsAttribute, 0, 100, ...)`.
+  Space-aware filter rules/subscriptions, or
+  `forceRefreshOnSpaceChange == true`, can therefore cause broad
+  per-application AX enumeration on an active-Space refresh; with a
+  Space-aware filter, visible creation/unhide paths can also refresh that
+  application. The POC filter's `new(true, ...)` configuration and selected
+  events do not independently enable this path, but the filter module's
+  Space-aware instance state is shared, so another active filter is an
+  unresolved host-state condition. The selection gate remains **unknown**
+  pending the required isolation/instrumented evidence.
+- **Verified:** loading installed `hs/window_filter.lua` unconditionally
+  constructs and starts an `hs.spaces.watcher`. Tag-matched Hammerspoon 1.1.1
+  watcher source registers for `NSWorkspaceActiveSpaceDidChangeNotification`
+  and, before Lua dispatch, calls
+  `CGWindowListCopyWindowInfo(kCGWindowListOptionAll |
+  kCGWindowListOptionOnScreenOnly, ...)` to scan for
+  `kCGWindowWorkspace`. This is a broad WindowServer/CoreGraphics scan, not an
+  AX enumeration and not `hs.window.allWindows()`. The POC separately starts a
+  second direct `hs.spaces.watcher`, so both watcher registrations have this
+  source-level scan path. Source establishes neither installed-binary
+  provenance beyond the observed Hammerspoon version nor callback delivery
+  frequency/coalescing, scan cost/main-thread effect, or reliable workspace
+  availability on this host; those are **unknown** C/framework behavior, not
+  zero framework refresh.
 - **Verified:** installed `hs/uielement.lua` creates and starts a module-global
   `hs.application.watcher` to stop UI-element watchers on app termination.
   `hs.uielement.watcher:start()` also automatically adds an element-destroyed
