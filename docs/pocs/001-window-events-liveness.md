@@ -1,15 +1,15 @@
 # POC-001 — Window events and liveness
 
 ## Status
-hypothesis
+superseded
 
-This remains a pre-run protocol. A disposable POC-only observer currently
-exists through step 2C (source comparison, targeted metadata/Space reads, and
-pure correlation); no production runtime changed. Terminal manual regular-Space
-move retry 005 and Chromium sample 006 are recorded below as narrow evidence
-only. POC-001 remains `hypothesis`: neither sample selects a source or
-destruction authority, establishes an action-to-detection latency result, or
-advances the remaining live matrix. The companion
+**Historical Hypothesis; no broad pass.** The broad POC-001 protocol is superseded, not retroactively passed: the recorded fixture, direct-AX, filter, Terminal, Chromium, failed-threshold, interrupted, and unmeasured results below remain exactly the evidence they were when recorded. No failed threshold is relaxed and no incomplete sample is promoted to a result.
+
+## Target adapter policy
+
+For the initial implementation, the reducer treats normalized `AXUIElementDestroyed` and application-termination observations as removal facts. This is a chosen conservative **Target** policy, not a verified POC-001 delivery or reliability conclusion. The adapter uses direct application/UI-element AX events, rejects `hs.window.filter` as its primary lifecycle source, and retains uncertainty non-destructively when an event is missed, delayed, contradictory, or unavailable. A missed event may leave stale durable state; it must not delete a possibly live window. `_orderedwinids()`, visibility, z-order, and eligible/onscreen snapshots remain forbidden liveness evidence. Chromium and the full app matrix are deferred to ordinary slice acceptance/dogfood, not POC certification.
+
+No further broad POC-001 matrix, fixture volume, or observer comparison is authorized for this initial adapter decision. The retained POC-only observer and fixtures are historical diagnostics only unless a future, separately scoped engineering need is approved. The companion
 [`pocs/001-window-events-liveness/README.md`](../../pocs/001-window-events-liveness/README.md)
 now freezes the separately gated AppKit fixture **implementation handoff**.
 Its approved narrow source/test revision measures
@@ -21,15 +21,10 @@ implementation or live action. One approved
 [fixture-only one-sample live-calibration](../../pocs/001-window-events-liveness/fixture/LIVE-CALIBRATION.md)
 has now been recorded below. The [one-sample fixture--observer
 live-correlation guide](../../pocs/001-window-events-liveness/LIVE-CORRELATION.md)
-has now completed once, as recorded below. **POC-001 remains `hypothesis`; these
-documents authorize neither another fixture action nor a POC-001 live action.**
+has now completed once, as recorded below. **At that historical controller checkpoint, POC-001 remained a `hypothesis`; those documents authorize neither another fixture action nor a POC-001 live action.**
 
 ## Decision enabled
-Select the narrowest Hammerspoon window-observation combination (`hs.window.filter`,
-direct application/UI-element watchers, or a combination) that supplies the
-normalized lifecycle events required by the target adapter. Select an
-authoritative permanent-destruction path and an event-triggered, targeted
-manual regular-Space-move check if callbacks alone do not establish the move.
+**Target decision:** use direct application/UI-element watchers as the initial normalized lifecycle adapter. The reducer treats normalized `AXUIElementDestroyed` and owning-application-termination observations as removal inputs. This is a Target adapter policy, not a POC-verified delivery/reliability conclusion. `hs.window.filter` is not the primary adapter. Manual regular-Space movement and any targeted query remain ordinary adapter/slice work; an unresolved private mechanism there requires a minimal just-in-time POC, not revival of this broad protocol.
 
 The decision must preserve LIFE-001/LIFE-002, FS-002, WIN-004 through WIN-006,
 STATE-004/STATE-005/STATE-008, DISC-001/DISC-002, and PERF-001/PERF-002. It
@@ -48,22 +43,10 @@ destructive evidence. The frozen fixture procedure and its 30-warm/5-cold
 fixture handoff; they are fixture-local and do not satisfy this POC's readiness
 or destruction gates.
 
-## Hypothesis
-A POC-only Hammerspoon observer can, without permanent polling or a global AX
-enumeration from a steady-state callback, correlate application and window
-callbacks plus bounded event-triggered targeted observations so that each
-covered lifecycle condition (minimized, application-hidden, native-fullscreen,
-and inactive regular Space) remains independently represented as a tri-state
-observation. Candidate filter/direct-AX facts remain isolated while they are
-compared; only app hide is shared. Permanent removal has authoritative evidence
-or a bounded targeted check, and a manual
-regular-Space move is detected within its bound.
+## Historical hypothesis and protocol
+The remaining procedure, thresholds, and matrix below are preserved as the historical broad hypothesis and protocol. They are no longer an open gate and must not be used to claim a broad pass. Their observations informed the narrow direct-AX decision above; they do not certify all lifecycle delivery, manual movement, readiness, destruction latency, or representative applications.
 
-This is falsified by any false death in the covered matrix; by lifecycle facts
-that cannot be distinguished under an overlap or callback ordering; by no
-reliable authoritative destruction path and no bounded targeted alternative;
-by an undetected/tardy manual move; or by a stated latency/query threshold
-below being missed.
+The Target production policy remains stricter where it needs to be: lifecycle conditions are independently represented; selected explicit destruction/termination observations remove; and absence or uncertainty never removes. Any future unresolved private or undocumented mechanism receives a new minimal POC at its implementation slice, with its own fixed threshold.
 
 ## Environment
 
@@ -711,9 +694,7 @@ pocs/001-window-events-liveness/test_direct_ax_volume_analyzer.py
 ```
 
 This is a documentation/freeze checkpoint only. **No new live evidence has
-occurred.** The POC remains a **Hypothesis**: source and pure tests neither
-select destruction authority nor establish the POC-001 liveness/readiness
-result. The private analyzer/normalizer classify malformed or unsafe retained
+occurred.** At this historical freeze checkpoint, POC-001 remained a **Hypothesis**: source and pure tests neither selected destruction authority nor established the POC-001 liveness/readiness result. The private analyzer/normalizer classify malformed or unsafe retained
 evidence as `analyzer_error`/`indeterminate`; that classification is not
 platform evidence. Every mutating controller command remains behind both
 `--execute` and an existing absolute owner-private `0600` approval JSON file
@@ -733,7 +714,7 @@ the listed code/test paths are the byte-matched implementation freeze.
 
 **Classification:** `cold-01` is an **indeterminate controller/harness interruption**, not platform evidence. The retained controller evidence does not contain a durable correlation-timeout or terminal-sample record, so it does **not** establish that the fixed wait elapsed. The absent filter candidate was observed only at abort/export time; it must not be used to infer filter reliability or unreliability. There is no retained stale-session or analyzer/normalizer failure finding. The terminal controller state was cleaned but retained the active cold index; that is controller bookkeeping evidence, not a completed sample result. Do not retry this sample.
 
-**Verified cleanup/restoration for the interruption:** abort cleanup recorded no cleanup failures. Fixture/socket absence and observer quiescence were verified by the controller, and legacy again exactly matched its semantic baseline: started, **26/26** configured/installed bindings, lifecycle watcher, reconciliation timer, bar timer, and bar-canvas count. Cold samples `cold-02` through `cold-05` were not run. **No further live action is authorized by this result.** POC-001 remains a **Hypothesis**; there is no cold aggregate, latency claim, source selection, or destruction-authority conclusion.
+**Verified cleanup/restoration for the interruption:** abort cleanup recorded no cleanup failures. Fixture/socket absence and observer quiescence were verified by the controller, and legacy again exactly matched its semantic baseline: started, **26/26** configured/installed bindings, lifecycle watcher, reconciliation timer, bar timer, and bar-canvas count. Cold samples `cold-02` through `cold-05` were not run. **No further live action is authorized by this result.** At that historical interruption checkpoint, POC-001 remained a **Hypothesis**; there is no cold aggregate, latency claim, source selection, or destruction-authority conclusion.
 
 ### Fixture--observer correlation volume — stopped warm class; five cold samples
 
@@ -809,25 +790,10 @@ does not satisfy any observer, liveness, readiness, destruction-authority, or
 warm-p95 gate.
 
 ## Conclusion
-Pending. This protocol proves no macOS/Hammerspoon behavior yet.
+**Superseded — historical Hypothesis; no broad pass.** Recorded successes, failures, interrupted runs, and unknowns remain bounded to their stated samples and thresholds. They are not reclassified by this status.
 
 ## Production consequence
-Pending result. Until this POC passes, do not freeze the event adapter, use an
-event as authoritative destruction, add a safety poll, or begin the control-
-plane replacement that depends on lifecycle observation. A failure may justify
-a narrower adapter experiment or the least-frequent non-destructive targeted
-check; it does not justify treating absence from `_orderedwinids()` or a global
-snapshot as death.
+The Target adapter policy above permits the initial direct application/UI-element AX adapter. It does not establish reliable delivery of destruction or termination callbacks. No absence other than a normalized removal observation selected by that policy is destructive. `hs.window.filter` is rejected as the primary adapter. Do not add a safety poll or destructive snapshot reconciliation. A future targeted query is allowed only after a minimal just-in-time POC proves the specific silent gap and a non-destructive algorithm. The core reducer/layout/transaction replacement may begin without waiting for this former broad protocol.
 
 ## Cleanup
-The step-2C POC-only observer is retained for evidence already collected and
-for any separately approved future POC-001 run; it is not production code.
-There is no currently authorized live operator action. Every future run must
-stop the observer, export locally, and restore legacy bindings before legacy
-starts. Its isolated traces and any temporary timers/watchers used by later
-runs are deleted before a production replacement unless a named reusable
-diagnostic has an ongoing owner, a documented use, and measured negligible idle
-cost. The standalone fixture implementation handoff in the POC README is POC-only;
-its source/test checkpoint and generated build artifact are not production
-runtime evidence. Any later fixture and its POC-only artifacts must be removed
-unless separately retained under the same gate.
+**Slice-2 disposition:** delete every runnable POC-001 surface—the observer and supporting Lua modules, fixture source/build artifacts/controller, volume-controller Python tools, instrumentation, and their tests—when the direct-AX core swap is composed. Retain this historical Markdown record and any result-only Markdown evidence under `docs/pocs/`; they are not runnable diagnostics. No POC code or instrumentation is retained unless a later decision names its POC-only owner, diagnostic purpose, invocation boundary, and measured negligible production idle cost. Any future live evidence must be a separately approved, minimal POC for an unresolved mechanism at the slice that needs it.

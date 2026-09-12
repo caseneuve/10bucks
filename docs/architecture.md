@@ -33,11 +33,15 @@ Primary API references:
 - [Hammerspoon `hs.canvas`](https://www.hammerspoon.org/docs/hs.canvas.html)
 - Apple SDK: `AXUIElement.h`, `AXNotificationConstants.h`, `NSWorkspace.h`, `NSWindow.h`
 
-### Platform decision gate
+### Platform and adapter decisions
 
 Start with a pure-Lua core and thin Hammerspoon adapters. Do not rewrite in Swift merely because the legacy Lua is tangled: a native implementation would still use Accessibility and private/UI-automation Space mechanisms.
 
-Hammerspoon remains provisional until the event/liveness, Space, bar, and latency POCs pass. If an intrinsic Hammerspoon boundary fails, POC a minimal native adapter for that boundary before considering a wholesale native rewrite.
+**Verified:** Apple's Accessibility headers document `AXUIElementDestroyed`; application termination is observable through the selected application-watcher API. **Target adapter policy:** the initial window adapter uses direct application and UI-element Accessibility events, and the reducer treats normalized destruction and application-termination observations as removal facts. A missed, delayed, contradictory, or unavailable event is uncertainty and retains the member. This is not a verified claim that either callback is reliably delivered in all cases. `hs.window.filter` is rejected as the primary lifecycle adapter because its refresh behavior is expensive/opaque and because the engine does not need it to preserve liveness safely. `_orderedwinids()`, visibility, z-order, and eligible/onscreen snapshots are not liveness evidence. There is no destructive reconciliation or permanent liveness poll.
+
+This Target policy is a narrow engineering decision, not a claim that the broad POC-001 matrix passed. Its recorded failures and incomplete thresholds remain historical evidence in [`pocs/001-window-events-liveness.md`](pocs/001-window-events-liveness.md). Chromium and the full app matrix are deferred to ordinary slice acceptance and dogfood.
+
+Run a minimal POC only immediately before a slice relies on an unresolved private or undocumented mechanism: Space operations before the workspace rewrite, fullscreen confirmation before fullscreen effects, and canvas handoff before the bar rewrite. If a completed slice exposes an intrinsic Hammerspoon boundary failure, POC the smallest native adapter for that boundary before considering a wholesale native rewrite.
 
 No target approach may require disabling SIP, root access, a privileged helper, AeroSpace, or yabai.
 
@@ -158,13 +162,15 @@ Ephemeral adapter data:
 
 ### Liveness
 
-A window leaves durable state only after authoritative evidence:
+Under the **Target adapter policy**, a window leaves durable state only after the reducer receives a selected removal observation:
 
-- a destruction event proved reliable by the event POC
-- owning application termination
-- a POC-validated targeted native membership/liveness query
+- normalized direct UI-element destruction (`AXUIElementDestroyed`)
+- normalized owning-application termination
+- a targeted native membership/liveness query only when a future slice has proved that specific query necessary and non-destructive
 
-Absence from onscreen, visible, eligible, focused, or one AX snapshot is not evidence of death. If liveness is uncertain, retaining a stale entry is safer than deleting a live stack member.
+The first two are policy-selected removal inputs, not a POC-verified callback-reliability guarantee.
+
+Absence from onscreen, visible, eligible, focused, or one AX snapshot is not evidence of death. If liveness is uncertain—including a missed direct event—retaining a stale entry is safer than deleting a live stack member.
 
 ## 5. Normalized events and transactions
 
@@ -303,7 +309,7 @@ Consequently, “global managed chooser” means every window 10bucks has discov
 
 The window adapter owns:
 
-- event subscriptions selected by the event POC
+- direct application and UI-element AX subscriptions; `hs.window.filter` is not the primary lifecycle source
 - readiness/metadata normalization
 - an ID-to-`hs.window` handle cache
 - targeted native Space/liveness observations
@@ -333,7 +339,7 @@ It does not own layout state, stable labels, or persisted ID-to-number maps.
 
 For deletion, a previous-window destination is eligible only when its actual target Space is confirmed and differs from the source; otherwise try the next fallback without issuing an effect. If an issued destination fails to leave the source, abort rather than cascading more potentially late effects. Every path still performs the fresh final source check.
 
-Switching implementation is selected by POC: native numbered shortcuts if reliable/fast, otherwise the best proven no-SIP path. Creation/deletion may use slower Mission Control Accessibility automation.
+Immediately before the workspace rewrite, a minimal Space POC selects the switching implementation: native numbered shortcuts if reliable/fast, otherwise the best proven no-SIP path. Creation/deletion may use slower Mission Control Accessibility automation.
 
 ## 10. Bar seam
 

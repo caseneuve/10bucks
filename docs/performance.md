@@ -1,6 +1,6 @@
 # Performance Contract
 
-> **Status: target release gates.** Performance claims require measurements on the supported Mac and representative application matrix.
+> **Status: target release gates.** Performance claims require measurements on the supported Mac. The representative application matrix is ordinary slice acceptance and release dogfood, not broad pre-implementation platform certification.
 
 10bucks runs inside Hammerspoon's single Lua/main-thread environment. A blocking Accessibility or private Spaces call delays hotkeys, bar updates, timers, and every other callback. The design therefore optimizes query count and placement of work before micro-optimizing Lua.
 
@@ -60,7 +60,7 @@ For each benchmark:
 - fix operation-specific timeout and eventual-detection thresholds in the POC before running it
 - record failures/timeouts and late completions, not only successful samples
 
-Representative applications:
+Representative applications for slice acceptance and release dogfood:
 
 - Terminal
 - Chromium-based browser/app
@@ -69,6 +69,8 @@ Representative applications:
 - Thunderbird
 - Claude
 - Zoom
+
+Chromium and the rest of this list do not select production adapter policy. A finding may justify a generic, measured adapter correction; app-specific production behavior remains forbidden.
 
 ## Baseline evidence from the legacy runtime
 
@@ -79,16 +81,16 @@ These measurements motivate the plan; POCs must reproduce/replace them with comm
 - A current-machine `hs` CLI no-op benchmark (`n=25`) measured about 21 ms median, 39 ms p95, and a 310 ms maximum. This is why CLI/skhd dispatch is deferred from MVP.
 - Spot—not statistically sufficient—private Space reads on the current machine were around 4.6–7.1 ms. They are reasonable when event-driven and a tax when polled/repeated.
 
-## Hammerspoon viability gate
+## Hammerspoon viability and escalation
 
-Keep Hammerspoon when POCs show:
+Start the pure core and direct-AX adapter without broad platform certification. Evaluate Hammerspoon through the measurements attached to each composed slice:
 
-- event callbacks can be normalized without destructive global refreshes
-- hotkey, layout, chooser, and bar budgets pass
-- manual Space moves and destruction can be recovered with events/targeted checks
-- overlay bar behavior is reliable across regular/fullscreen Spaces
+- event callbacks normalize without destructive global refreshes;
+- hotkey, layout, chooser, and bar budgets pass where those slices exist;
+- manual Space moves and destruction use explicit facts or a proven non-destructive targeted check; and
+- the overlay bar is reliable when the bar slice is undertaken.
 
-If an intrinsic boundary fails, POC the smallest native Swift/Objective-C adapter for that boundary. A native rewrite is not justified by legacy architecture or Lua line count alone.
+If a completed slice exposes an intrinsic boundary failure, POC the smallest native Swift/Objective-C adapter for that boundary. A native rewrite is not justified by legacy architecture or Lua line count alone.
 
 ## Release evidence
 
