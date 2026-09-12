@@ -17,6 +17,20 @@ Read these before changing runtime behavior:
 
 If code and target documentation disagree during the rewrite, do not silently “fix” either side. Identify whether the slice is still legacy or whether the target contract needs a deliberate revision.
 
+## Shared work-state protocol
+
+Agents working in a checkout that contains `.pi/WORK_STATE.md` MUST use it as the operational handoff:
+
+1. Read it before planning or editing, then read every canonical document and handoff it names.
+2. Verify its branch, HEAD, working-tree, and runtime-safety facts with local commands. Correct stale facts explicitly; do not silently trust them.
+3. Before starting a step, update **Current step** with the agent/session, narrow scope, status, and timestamp.
+4. After each reviewed checkpoint, commit, blocker, failed check, or change of next action, replace the relevant sections. Do not leave completion updates until a later agent.
+5. Before the final response, update the timestamp, current status, completed work, exact checks/results, blockers, runtime-safety state, and one concrete next action.
+
+Keep this file concise and current rather than appending a transcript. Retain only a short recent-checkpoint list. Use **Verified**, **Target**, **Hypothesis**, and **Deferred** precisely. Never put private window titles, URLs, messages, account data, raw AX values, or native IDs in it.
+
+`.pi/WORK_STATE.md` is operational state, not a behavior contract. `docs/invariants.md`, `docs/architecture.md`, and `docs/rewrite-plan.md` remain authoritative. If several agents run concurrently, the orchestrator is the single state-document writer and consolidates worker results after reviewing them.
+
 ## Non-negotiable implementation rules
 
 - Maintain one runtime path. Do not add shadow, legacy, compatibility, or indefinite feature-flag implementations.
