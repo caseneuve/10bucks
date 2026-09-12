@@ -127,6 +127,20 @@ reload, live POC load, or live action was performed for this checkpoint.
   frequency/coalescing, scan cost/main-thread effect, or reliable workspace
   availability on this host; those are **unknown** C/framework behavior, not
   zero framework refresh.
+- **Verified (installed Lua):** the installed Hammerspoon **1.1.1**
+  `hs/window_filter.lua` owns a per-window UI-element watcher that requests
+  `AXUIElementDestroyed` and derives `windowDestroyed` from that callback. The
+  POC direct watcher separately requests the same notification. Paired
+  filter/direct candidates are consequently separate subscribers/derivations
+  of one AX mechanism, not independent native corroboration. On application
+  termination the filter can synthesize `windowDestroyed` for each tracked
+  window; `hs.uielement.lua` instead silently stops registered UI-element
+  watchers for a matching terminated application. `WF:getWindows()` also has
+  an `isRunning()` fallback that can invoke the filter destruction path. The
+  normal AX-destroy-to-filter-destroy path has no source-visible enumeration or
+  delay. These installed-Lua paths establish neither native notification
+  delivery nor destruction authority: all remain candidate-only, never
+  `destruction_confirmed`; POC-001 remains a **hypothesis**.
 - **Verified (provenance limited):** the installed Hammerspoon **1.1.1** Lua
   wrapper `Resources/extensions/hs/uielement.lua` byte-matches the inspected
   retained source `extensions/uielement/uielement.lua`; the retained native
