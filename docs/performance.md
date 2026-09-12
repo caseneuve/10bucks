@@ -45,6 +45,8 @@ The legacy 150 ms bar refresh and 250 ms destructive reconciliation timer are no
 
 ## Measurement method
 
+Sample the applicable gates and counters during every scheduled implementation canary, rather than deferring all measurement to final dogfood or release. Canary measurements validate the active development composition; they are not a new POC or broad certification program.
+
 For each benchmark:
 
 - record OS build, Hammerspoon version, 10bucks commit, display setup, and relevant settings

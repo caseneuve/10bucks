@@ -2,7 +2,7 @@
 
 > **Status: evidence policy for the rewrite.** A POC proves one unresolved macOS/Hammerspoon mechanism when the implementation slice needs it. It is not a broad pre-implementation certification program.
 
-POCs use disposable code or instrumentation and never create a second production path. Pure reducer/layout/transaction work does not need a POC. A completed replacement deletes its old production path and obsolete tests in the same slice.
+POCs use disposable code or instrumentation and never create a second production path. Pure reducer/layout/transaction work does not need a POC. Scheduled canary acceptance validates a composed implementation; it is not another POC or a broad certification program. During a canary, stable and development runtimes are never active simultaneously. A completed replacement deletes its old production path and obsolete tests in the same slice.
 
 ## Evidence rules
 

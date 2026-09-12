@@ -61,7 +61,25 @@ POCs are now just-in-time, minimal evidence for an unresolved private or undocum
 
 Implementation may be built and tested as pure modules before composition, but it must not be composed beside the legacy runtime. Each completed vertical slice swaps once and deletes the legacy production path and obsolete tests it replaces. Git history is rollback.
 
-## 4. Canonical documents and checkpoints
+## 4. Stable runtime, development worktree, and canaries
+
+Keep the installed Spoon on a known-good stable checkout/commit. Do ordinary implementation and pure checks only in a separate rewrite worktree; do not install, reload, repoint the installed symlink, or run live Hammerspoon actions during ordinary development. Creating that worktree or changing its runtime topology requires prior human approval of the exact path, branch, installed symlink target, and rollback procedure.
+
+A scheduled canary is the only exception for loading the rewrite worktree. State its expected duration and disruption, obtain explicit human approval, capture the stable symlink target/commit and semantic baseline, then stop stable before atomically pointing to and loading development. **Stable and development runtimes are never active simultaneously.** Verify that only the intended runtime is active. After an early canary or any failure, stop development, restore the stable target atomically, reload stable, and verify semantic restoration. Memory-only layout state may reset; rollback preserves the usable stable runtime, not layout persistence.
+
+Semantic restoration is not `started == true` alone. It requires the exact captured configured/installed hotkey binding count (currently 26 at the recorded baseline), lifecycle watcher state, reconciliation and bar timer state, and bar/canvas state to match the pre-canary baseline. Capture the count rather than assuming 26 remains correct after configuration changes. Keep the rollback command with that baseline.
+
+Early canaries may compose an intentionally incomplete development runtime while stable is stopped. Missing behavior must be explicitly absent; it must never delegate to legacy code. They MUST NOT add a compatibility façade, legacy fallback, shadow execution, permanent runtime selector, or feature flag. These are staged acceptance compositions within Slice 2, not separate completed replacement slices. Temporary development composition does not relax the completed-slice gate: before Slice 2 is complete or merged, its legacy core paths/tests and runnable POC-001 machinery are deleted as specified below.
+
+Run the following thin ladder sequentially, restoring stable after A/B unless the canary is explicitly approved to remain active:
+
+- **Canary A — stack path:** direct-AX create/destroy → normalized event → committed reducer state → stack projection → deduplicated frame/focus effect, with minimal previous/next navigation. In a short scheduled session using disposable Terminal windows, check admission, stable order, focus navigation, destruction removal, no snapshot pruning, and at most one frame write per affected window/transaction.
+- **Canary B — columns and availability:** add first split/active-column admission, minimize/restore, app hide/unhide, focus recovery, stable-slot retention, and unavailable-column projection. In a short Terminal session, check independent lifecycle conditions, that clearing one condition cannot make a window available while another unavailable condition remains set, and absence of destructive polling or `hs.window.get()` loops.
+- **Canary C — daily-driver integration:** add current workspace context, required daily bindings/commands, cached chooser, managed focus history, retained bar fed only by replacement read models, and startup/stop/cleanup semantics. Once daily essentials pass, development may remain the sole active runtime for normal-work dogfood, with the known-good stable target ready for immediate rollback. Chromium is optional ordinary acceptance, never a special gate.
+
+Canary acceptance validates the implementation; it is not another POC or a broad certification program. Sample the applicable performance budgets and query/frame/timer counters during every canary, then turn dogfood failures into narrow invariant/sequence regressions and generic fixes, never app-specific branches.
+
+## 5. Canonical documents and checkpoints
 
 - [`invariants.md`](invariants.md): normative contracts; revise only deliberately.
 - [`architecture.md`](architecture.md): target module boundaries and selected adapters.
@@ -72,7 +90,7 @@ Implementation may be built and tested as pure modules before composition, but i
 
 A green checkpoint records the changed/deleted surface, invariant IDs, pure checks, targeted acceptance, relevant benchmark, and the next slice. It does not require a broad app matrix or unrelated POC to be complete.
 
-## 5. Vertical implementation slices
+## 6. Vertical implementation slices
 
 ### Slice 1 — Pure state, reducer, and transaction seam
 
@@ -146,7 +164,7 @@ A green checkpoint records the changed/deleted surface, invariant IDs, pure chec
 
 **Release gate:** all invariants are implemented, deliberately revised, or explicitly deferred; pure suite and applicable targeted acceptance/benchmarks pass; no permanent unexplained poll, app-specific production branch, or duplicate runtime remains.
 
-## 6. POC schedule
+## 7. POC schedule
 
 | Need | When | Scope |
 |---|---|---|
@@ -159,14 +177,14 @@ A green checkpoint records the changed/deleted surface, invariant IDs, pure chec
 
 POC-004 is `superseded` as a standalone exercise. Its useful content is Slice 1 pure coverage and Slice 2 targeted acceptance; no disposable transactional-layout runtime is composed.
 
-## 7. Test and acceptance strategy
+## 8. Test and acceptance strategy
 
 Replace, rather than retain, tests that encode snapshot-as-liveness, polling, legacy labels, unmanaged picker/history scope, or mutable engine APIs. Retain only leaf tests after contract review.
 
 New tests assert complete reducer state, layout contracts, independent lifecycle conditions, callback-order variants already observed, and query/effect/frame counts. Pure fakes model adapter facts, not imaginary macOS guarantees.
 
-Targeted acceptance happens at each vertical swap. The full Terminal/Chromium/Slack/Signal/Thunderbird/Claude/Zoom matrix is deferred to Slice 7 dogfood and release readiness. A failure there may motivate a generic adapter correction backed by narrow evidence; it never creates an app-specific production conditional.
+Targeted acceptance happens at each vertical swap and its applicable Canary A/B/C session; sample the relevant performance gates rather than deferring measurements to release. The full Terminal/Chromium/Slack/Signal/Thunderbird/Claude/Zoom matrix is deferred to Slice 7 dogfood and release readiness. A failure there may motivate a generic adapter correction backed by narrow evidence; it never creates an app-specific production conditional.
 
-## 8. Deferred work
+## 9. Deferred work
 
 The existing invariant deferrals remain: multiple displays, managed floating, CLI/skhd, persistence/reload snapshots, dedicated desktop after spawn-fullscreen exit, third-party plugin distribution, and version support shims. No implementation slice adds them merely to make an abstraction look complete.
