@@ -176,7 +176,9 @@ function Stack.reduce(state, event, context)
     table.remove(members, removedIndex)
     local selectedId = state.selectedId
     if selectedId == event.memberId then
-      selectedId = members[math.min(removedIndex, #members)]
+      -- FOCUS-004: recover to the stable predecessor, wrapping after the
+      -- first slot, rather than selecting the successor at the removed index.
+      selectedId = members[removedIndex == 1 and #members or removedIndex - 1]
     end
     return copyStateWith(state, members, selectedId)
   end
