@@ -127,13 +127,42 @@ reload, live POC load, or live action was performed for this checkpoint.
   frequency/coalescing, scan cost/main-thread effect, or reliable workspace
   availability on this host; those are **unknown** C/framework behavior, not
   zero framework refresh.
-- **Verified:** installed `hs/uielement.lua` creates and starts a module-global
-  `hs.application.watcher` to stop UI-element watchers on app termination.
-  `hs.uielement.watcher:start()` also automatically adds an element-destroyed
-  watch for non-application elements unless requested. Therefore `stop()` in
-  this POC stops every watcher it owns, but cannot unload the Hammerspoon
-  module-global cleanup watcher; its host/module lifetime is an explicit
-  framework-internal caveat, not a leaked POC-owned watcher.
+- **Verified (provenance limited):** the installed Hammerspoon **1.1.1** Lua
+  wrapper `Resources/extensions/hs/uielement.lua` byte-matches the inspected
+  retained source `extensions/uielement/uielement.lua`; the retained native
+  sources were inspected with it. This verifies the installed Lua wrapper plus
+  the stated retained-source behavior, **not** compiled-binary source
+  provenance. The wrapper creates and starts a module-global
+  `hs.application.watcher` which, on a usable matching-PID termination
+  callback, native-stops registered UI-element watchers. It cannot be unloaded
+  by POC-owned `stop()`; its host/module lifetime is a framework-internal
+  caveat, not a leaked POC-owned watcher.
+- **Verified (same provenance limit):** starting a non-application
+  `hs.uielement.watcher` automatically subscribes it to
+  `AXUIElementDestroyed`. The wrapper forwards that event only when it was
+  explicitly requested; otherwise it uses it for cleanup and does not call the
+  client callback. On delivery it may use the retained watched element because
+  the dead-element wrapper can lack PID/ID fields, then stops the watcher.
+  Native `AXObserverAddNotification` results are ignored, so source does not
+  prove every requested notification registered successfully.
+- **Verified (same provenance limit):** direct AX callback payload conversion
+  synchronously performs per-element role/minimized checks and, for a window
+  wrapper, PID/private native-window-ID conversion before Lua callback
+  dispatch. The inspected direct UI-element watcher, module-global termination
+  cleanup, and direct application-watcher start/callback paths contain no
+  source-visible running-application enumeration, all-window snapshot, or
+  `AXWindows` enumeration. This does not establish lower-level framework/OS
+  work, runtime callback frequency/cost/main-thread impact, notification
+  delivery, ordering, duplication, or latency; all remain **unknown**, not
+  zero.
+- **Verified (same provenance limit):** the direct application watcher uses
+  NSWorkspace termination notifications, whose documented termination payload
+  may have a nil name and an application object useful only for PID. Neither
+  that event nor `AXUIElementDestroyed` is declared authoritative by inspected
+  source. Both remain independently recorded destruction candidates only, not
+  `destruction_confirmed` or a selected authority. POC-001 remains a
+  **hypothesis** pending its controlled live/correlation and query-gate
+  evidence.
 
 ## Step 2C Space ownership/readiness source findings
 
