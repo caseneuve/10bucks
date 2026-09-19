@@ -38,9 +38,19 @@ def require_owner_private_regular(path, label, *, exact_mode=None):
         required = ("mode %04o" % exact_mode) if exact_mode is not None else "owner-private mode"
         raise RuntimeError(label + " must be owned by current UID and " + required)
 
-def atomic_regular_replace(source, target, target_mode, label):
-    require_owner_private_regular(source, label + " source")
-    require_owner_private_regular(target, label + " destination")
+def require_owner_owned_nonwritable_regular(path, label, *, exact_mode=None):
+    """Validate the pre-existing stable config without resolving a symlink."""
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise RuntimeError(label + " must be a regular non-symlink file")
+    actual_mode = stat.S_IMODE(info.st_mode)
+    if info.st_uid != os.getuid() or (actual_mode & 0o022) != 0 or (exact_mode is not None and actual_mode != exact_mode):
+        required = ("mode %04o" % exact_mode) if exact_mode is not None else "no group/other write bits"
+        raise RuntimeError(label + " must be owned by current UID and have " + required)
+
+def atomic_regular_replace(source, target, target_mode, label, *, destination_mode=None):
+    require_owner_private_regular(source, label + " source", exact_mode=0o600)
+    require_owner_owned_nonwritable_regular(target, label + " destination", exact_mode=destination_mode)
     fd, temporary = tempfile.mkstemp(prefix=target.name + ".", dir=target.parent)
     try:
         with os.fdopen(fd, "wb") as output:
@@ -52,7 +62,7 @@ def atomic_regular_replace(source, target, target_mode, label):
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
-    require_owner_private_regular(target, label + " destination")
+    require_owner_owned_nonwritable_regular(target, label + " destination", exact_mode=target_mode)
     if mode(target) != target_mode: raise RuntimeError(label + " replacement did not preserve mode")
 
 def parse_envelope(text):
@@ -143,7 +153,7 @@ def require_runtime_watcher_shapes():
 
 def preflight(link, config):
     if not SPOON.is_dir(): raise RuntimeError("candidate Spoon missing")
-    require_owner_private_regular(config, "config")
+    require_owner_owned_nonwritable_regular(config, "config")
     if run(["git", "status", "--porcelain"]): raise RuntimeError("candidate working tree is not clean")
     version = hs_query("return {version=hs.processInfo.version}").get("version")
     if version != "1.1.1": raise RuntimeError("unsupported Hammerspoon version: " + repr(version))
@@ -165,7 +175,7 @@ def stop_stable():
 
 def restore(state, link, config):
     before, backup = state["before"], Path(state["backup"])
-    try: require_owner_private_regular(backup, "config backup")
+    try: require_owner_private_regular(backup, "config backup", exact_mode=0o600)
     except OSError as error: raise RuntimeError("exact config backup unavailable: " + str(error))
     if digest(backup) != before["configSha256"] or mode(backup) != before["configMode"]: raise RuntimeError("exact config backup unavailable")
     target = Path(before["linkTarget"])
@@ -180,18 +190,18 @@ def restore(state, link, config):
 def start_capture(args):
     before = preflight(args.link, args.config); require_approval(args.approval, before["candidateCommit"])
     temporary = Path(args.temporary_config)
-    require_owner_private_regular(temporary, "temporary config")
+    require_owner_private_regular(temporary, "temporary config", exact_mode=0o600)
     if "canaryInstrumentation = true" not in temporary.read_text(): raise RuntimeError("temporary config must explicitly enable instrumentation")
     backup = args.state.with_suffix(".config-backup"); backup.parent.mkdir(parents=True, exist_ok=True)
     fd, backup_name = tempfile.mkstemp(prefix=backup.name + ".", dir=backup.parent)
     with os.fdopen(fd, "wb") as output: output.write(args.config.read_bytes())
-    os.chmod(backup_name, before["configMode"]); os.replace(backup_name, backup)
-    require_owner_private_regular(backup, "config backup")
+    os.chmod(backup_name, 0o600); os.replace(backup_name, backup)
+    require_owner_private_regular(backup, "config backup", exact_mode=0o600)
     state = {"before":before,"backup":str(backup),"startedAt":time.time()}; save_state(state,args.state)
     stopped = False
     try:
         stop_stable(); stopped = True
-        atomic_regular_replace(temporary, args.config, before["configMode"], "candidate config"); atomic_symlink(SPOON,args.link); reload_and_wait()
+        atomic_regular_replace(temporary, args.config, 0o600, "candidate config", destination_mode=before["configMode"]); atomic_symlink(SPOON,args.link); reload_and_wait()
         probe = candidate_probe(); canary = probe.get("canary") or {}
         if not (probe.get("started") and probe.get("bindings") == 3 and canary.get("enabled") and canary.get("activeTimers") == 0):
             raise RuntimeError("candidate startup verification failed: " + json.dumps(probe, sort_keys=True))
