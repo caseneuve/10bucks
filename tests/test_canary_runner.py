@@ -71,15 +71,21 @@ class CanaryRunnerTest(unittest.TestCase):
             self.assertEqual(target.read_text(), "candidate")
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
 
-    def test_atomic_regular_replace_preserves_captured_stable_mode(self):
+    def test_restore_accepts_private_backup_for_readable_original_and_restores_original_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
-            source, target = directory / "backup", directory / "config"
-            source.write_text("stable"); os.chmod(source, 0o600)
-            target.write_text("candidate"); os.chmod(target, 0o644)
-            runner.atomic_regular_replace(source, target, 0o644, "config restore")
-            self.assertEqual(target.read_text(), "stable")
-            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644)
+            backup, config, stable = directory / "backup", directory / "config", directory / "stable"
+            backup.write_text("stable"); os.chmod(backup, 0o600)
+            config.write_text("candidate"); os.chmod(config, 0o600)
+            stable.mkdir(); link = directory / "installed"
+            before = {"configSha256":runner.digest(backup), "configMode":0o644, "linkTarget":str(stable), "stableCommit":"stable", "baseline":{"ok":True}}
+            state = {"before":before, "backup":str(backup)}
+            with patch.object(runner, "run", return_value="stable"), patch.object(runner, "reload_and_wait"), patch.object(runner, "hs_query"), patch.object(runner, "stable_probe", return_value={"ok":True}), patch.object(runner, "equal_baseline", return_value=True):
+                runner.restore(state, link, config)
+            self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o600)
+            self.assertEqual(config.read_text(), "stable")
+            self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o644)
+            self.assertEqual(os.readlink(link), str(stable))
 
     def test_framed_hs_response_ignores_logs_and_requires_one_marker(self):
         value = runner.parse_envelope("load log\n" + runner.MARKER + '{"ok":true,"value":{"version":"1.1.1"}}\nmore log')
@@ -96,11 +102,11 @@ class CanaryRunnerTest(unittest.TestCase):
             return Result(0, runner.MARKER + '{"ok":true,"value":{"version":"1.1.1"}}\n')
         with patch.object(runner, "shell", fake_shell): self.assertEqual(runner.reload_and_wait()["version"], "1.1.1")
 
-    def test_start_failure_attempts_in_process_rollback(self):
+    def test_start_failure_after_successful_automatic_restore_cleans_state_and_private_backup(self):
         with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory); config = directory / "config"; config.write_text("stable"); os.chmod(config, 0o600); temp = directory / "temp"; temp.write_text("canaryInstrumentation = true"); os.chmod(temp, 0o600)
+            directory = Path(directory); config = directory / "config"; config.write_text("stable"); os.chmod(config, 0o644); temp = directory / "temp"; temp.write_text("canaryInstrumentation = true"); os.chmod(temp, 0o600)
             args = type("A", (), {"link":directory / "link", "config":config, "approval":self.approval(directory), "temporary_config":str(temp), "state":directory / "state"})()
-            before = {"candidateCommit":"candidate", "configMode":0o600, "baseline":{}, "configSha256":runner.digest(config)}
+            before = {"candidateCommit":"candidate", "configMode":0o644, "baseline":{}, "configSha256":runner.digest(config)}
             with patch.object(runner, "preflight", return_value=before), patch.object(runner, "stop_stable"), patch.object(runner, "reload_and_wait", side_effect=RuntimeError("candidate load failed")), patch.object(runner, "restore", return_value={} ) as restore:
                 with self.assertRaisesRegex(RuntimeError, "candidate start failed"):
                     runner.start_capture(args)

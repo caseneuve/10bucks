@@ -12,7 +12,15 @@ function Context.snapshot(hs, builtInDisplayUUID)
   if type(hs.spaces.spaceType) == "function" then
     assert(hs.spaces.spaceType(space) == "user", "10bucks Canary A requires an active regular user Space")
   end
-  return { displayId = builtInDisplayUUID, regularSpaceId = space, workArea = selected:frame(), screen = selected }
+  -- hs.geometry exposes x/y/w/h through its metatable while pairs() exposes
+  -- private _x/_y/_w/_h storage. Keep only primitive geometry across the
+  -- adapter boundary so downstream defensive copies preserve the work area.
+  local frame = selected:frame()
+  local workArea = { x = frame.x, y = frame.y, w = frame.w, h = frame.h }
+  assert(type(workArea.x) == "number" and type(workArea.y) == "number"
+      and type(workArea.w) == "number" and type(workArea.h) == "number",
+    "10bucks built-in display frame must provide numeric x/y/w/h")
+  return { displayId = builtInDisplayUUID, regularSpaceId = space, workArea = workArea, screen = selected }
 end
 
 -- The Space watcher owns only confirmed context changes. It deliberately does

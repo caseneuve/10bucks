@@ -4,13 +4,35 @@ return {
     local screen = { getUUID = function() return "built-in" end, frame = function() return { x = 0, y = 0, w = 1, h = 1 } end }
     local hs = { screen = { allScreens = function() return { screen } end }, spaces = { activeSpaceOnScreen = function() return "space" end, spaceType = function() return "user" end } }
     local context = Context.snapshot(hs, "built-in"); assert(context.displayId == "built-in")
+    assert(context.workArea.x == 0 and context.workArea.y == 0 and context.workArea.w == 1 and context.workArea.h == 1)
     hs.spaces.spaceType = function() return "fullscreen" end
     assert(not pcall(Context.snapshot, hs, "built-in"))
     assert(not pcall(Context.snapshot, hs, "missing"))
   end,
+  ["context snapshot normalizes hs.geometry public properties before generic copies"] = function()
+    local geometry = setmetatable({ _x = 10, _y = 20, _w = 30, _h = 40 }, {
+      __index = function(value, key)
+        return ({ x = value._x, y = value._y, w = value._w, h = value._h })[key]
+      end,
+    })
+    local rawCopy = {}; for key, value in pairs(geometry) do rawCopy[key] = value end
+    assert(rawCopy.x == nil and rawCopy.y == nil and rawCopy.w == nil and rawCopy.h == nil)
+    assert(rawCopy._x == 10 and rawCopy._y == 20 and rawCopy._w == 30 and rawCopy._h == 40)
+    local screen = { getUUID = function() return "built-in" end, frame = function() return geometry end }
+    local hs = { screen = { allScreens = function() return { screen } end }, spaces = {
+      activeSpaceOnScreen = function() return "space" end, spaceType = function() return "user" end,
+    } }
+    local context = Context.snapshot(hs, "built-in")
+    local copied = {}; for key, value in pairs(context.workArea) do copied[key] = value end
+    assert(copied.x == 10 and copied.y == 20 and copied.w == 30 and copied.h == 40)
+    assert(not pcall(function()
+      screen.frame = function() return setmetatable({}, { __index = function() return "not-a-number" end }) end
+      Context.snapshot(hs, "built-in")
+    end))
+  end,
   ["context watcher stops on start failure and ignores callbacks after detach"] = function()
     local stopped, callback = 0, nil
-    local screen = { getUUID = function() return "built-in" end, frame = function() return {} end }
+    local screen = { getUUID = function() return "built-in" end, frame = function() return { x = 0, y = 0, w = 1, h = 1 } end }
     local watcher = { start = function() error("start failed") end, stop = function() stopped = stopped + 1 end }
     local hs = { screen = { allScreens = function() return { screen } end }, spaces = { activeSpaceOnScreen = function() return "space" end,
       spaceType = function() return "user" end, watcher = { new = function(cb) callback = cb; return watcher end } } }

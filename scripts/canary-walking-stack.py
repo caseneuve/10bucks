@@ -177,7 +177,7 @@ def restore(state, link, config):
     before, backup = state["before"], Path(state["backup"])
     try: require_owner_private_regular(backup, "config backup", exact_mode=0o600)
     except OSError as error: raise RuntimeError("exact config backup unavailable: " + str(error))
-    if digest(backup) != before["configSha256"] or mode(backup) != before["configMode"]: raise RuntimeError("exact config backup unavailable")
+    if digest(backup) != before["configSha256"]: raise RuntimeError("exact config backup unavailable")
     target = Path(before["linkTarget"])
     if not target.is_dir() or run(["git", "-C", target, "rev-parse", "HEAD"]) != before["stableCommit"]: raise RuntimeError("stable target/commit changed")
     atomic_regular_replace(backup, config, before["configMode"], "config restore"); atomic_symlink(target, link); reload_and_wait()
