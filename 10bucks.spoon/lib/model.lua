@@ -94,6 +94,15 @@ function Model.validate(state)
       or (window.observations.visible ~= nil and type(window.observations.visible) ~= "boolean") then
       return fail("window observations are malformed")
     end
+    if window.ruleAction ~= "manage" then return fail("managed window rule decision is malformed") end
+    if window.readiness ~= nil and (type(window.readiness) ~= "table"
+      or (window.readiness.origin ~= "created" and window.readiness.origin ~= "bootstrap" and window.readiness.origin ~= "targetedReadiness")
+      or type(window.readiness.createdAfterStart) ~= "boolean"
+      or type(window.readiness.role) ~= "string" or type(window.readiness.subrole) ~= "string"
+      or type(window.readiness.modal) ~= "boolean" or type(window.readiness.movable) ~= "boolean"
+      or type(window.readiness.resizable) ~= "boolean" or type(window.readiness.selfProcess) ~= "boolean") then
+      return fail("window readiness is malformed")
+    end
     if not state.displays[window.actualDisplayId] or not state.spaces[window.actualSpaceId]
       or state.spaces[window.actualSpaceId].displayId ~= window.actualDisplayId
       or window.placementSpaceId ~= memberships[windowId] then
@@ -188,6 +197,15 @@ local function normalizeReady(state, event)
     error("WindowReady must name a known regular Space on its display", 3)
   end
   if not plain(event) then error("normalized events must contain plain Lua values", 3) end
+  local metadata = event.metadata
+  local decision = event.decision
+  if metadata ~= nil or decision ~= nil then
+    if type(metadata) ~= "table" or type(decision) ~= "table" or metadata.id ~= event.id
+      or metadata.displayId ~= event.displayId or metadata.spaceId ~= event.spaceId
+      or metadata.application ~= event.application or decision.action ~= "manage" then
+      return nil
+    end
+  end
   return {
     id = event.id,
     application = { pid = event.application.pid, bundleID = event.application.bundleID, name = event.application.name },
@@ -195,6 +213,12 @@ local function normalizeReady(state, event)
     actualDisplayId = event.displayId,
     actualSpaceId = event.spaceId,
     placementSpaceId = event.spaceId,
+    ruleAction = metadata and decision.action or "manage",
+    readiness = metadata and {
+      origin = metadata.origin, createdAfterStart = metadata.createdAfterStart,
+      role = metadata.role, subrole = metadata.subrole, modal = metadata.modal,
+      movable = metadata.movable, resizable = metadata.resizable, selfProcess = metadata.selfProcess,
+    } or nil,
     lifecycle = { minimized = false, appHidden = false, nativeFullscreen = false },
     observations = {},
   }
@@ -209,6 +233,7 @@ function Model.reduce(state, event)
     if state.windows[event.id] then return state end
     local nextState = copy(state)
     local window = normalizeReady(nextState, event)
+    if not window then return state end
     nextState.windows[window.id] = window
     table.insert(nextState.spaces[window.placementSpaceId].memberIds, window.id)
     requireValid(nextState)
