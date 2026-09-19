@@ -1,0 +1,45 @@
+local Context = {}
+
+function Context.snapshot(hs, builtInDisplayUUID)
+  assert(type(builtInDisplayUUID) == "string" and builtInDisplayUUID ~= "",
+    "10bucks Canary A requires config.builtInDisplayUUID before switching runtime")
+  local selected
+  for _, screen in ipairs(hs.screen.allScreens()) do
+    if screen:getUUID() == builtInDisplayUUID then selected = screen; break end
+  end
+  assert(selected, "10bucks built-in display UUID is not connected; verify config.builtInDisplayUUID before switching runtime")
+  local space = assert(hs.spaces.activeSpaceOnScreen(selected), "10bucks requires an active regular Space")
+  if type(hs.spaces.spaceType) == "function" then
+    assert(hs.spaces.spaceType(space) == "user", "10bucks Canary A requires an active regular user Space")
+  end
+  return { displayId = builtInDisplayUUID, regularSpaceId = space, workArea = selected:frame(), screen = selected }
+end
+
+-- The Space watcher owns only confirmed context changes. It deliberately does
+-- not infer a new scope from a watcher payload: a fresh explicit snapshot is
+-- the confirmation boundary.
+function Context.watch(hs, builtInDisplayUUID, callback)
+  assert(type(callback) == "function", "context watcher requires a callback")
+  assert(hs.spaces.watcher and hs.spaces.watcher.new,
+    "10bucks requires hs.spaces.watcher for active-Space context")
+  local watcher, stopped, generation
+  stopped, generation = false, 0
+  local function detach()
+    if stopped then return end
+    stopped, generation = true, generation + 1
+    if watcher and watcher.stop then pcall(watcher.stop, watcher) end
+  end
+  watcher = hs.spaces.watcher.new(function()
+    local captured = generation
+    if stopped then return end
+    local ok, snapshot = pcall(Context.snapshot, hs, builtInDisplayUUID)
+    if not ok or stopped or captured ~= generation then return end
+    callback(snapshot, captured)
+  end)
+  -- Own it before start. A failed start can leave a native watcher live.
+  local ok, err = pcall(watcher.start, watcher)
+  if not ok then detach(); error(err, 0) end
+  return { detach = detach }
+end
+
+return Context

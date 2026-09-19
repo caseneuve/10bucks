@@ -9,19 +9,7 @@ superseded
 
 For the initial implementation, the reducer treats normalized `AXUIElementDestroyed` and application-termination observations as removal facts. This is a chosen conservative **Target** policy, not a verified POC-001 delivery or reliability conclusion. The adapter uses direct application/UI-element AX events, rejects `hs.window.filter` as its primary lifecycle source, and retains uncertainty non-destructively when an event is missed, delayed, contradictory, or unavailable. A missed event may leave stale durable state; it must not delete a possibly live window. `_orderedwinids()`, visibility, z-order, and eligible/onscreen snapshots remain forbidden liveness evidence. Chromium and the full app matrix are deferred to ordinary slice acceptance/dogfood, not POC certification.
 
-No further broad POC-001 matrix, fixture volume, or observer comparison is authorized for this initial adapter decision. The retained POC-only observer and fixtures are historical diagnostics only unless a future, separately scoped engineering need is approved. The companion
-[`pocs/001-window-events-liveness/README.md`](../../pocs/001-window-events-liveness/README.md)
-now freezes the separately gated AppKit fixture **implementation handoff**.
-Its approved narrow source/test revision measures
-`fixture_create_visible_completed` from `create_requested` using the public
-AppKit occlusion callback and visible bit. The unapproved draft
-[fixture--observer correlation research handoff](../../pocs/001-window-events-liveness/CORRELATION-HANDOFF.md)
-defines the public-AX/SHA-256-alias candidate and explicitly authorizes no
-implementation or live action. One approved
-[fixture-only one-sample live-calibration](../../pocs/001-window-events-liveness/fixture/LIVE-CALIBRATION.md)
-has now been recorded below. The [one-sample fixture--observer
-live-correlation guide](../../pocs/001-window-events-liveness/LIVE-CORRELATION.md)
-has now completed once, as recorded below. **At that historical controller checkpoint, POC-001 remained a `hypothesis`; those documents authorize neither another fixture action nor a POC-001 live action.**
+No further broad POC-001 matrix, fixture volume, or observer comparison is authorized for this initial adapter decision. The retained POC-only observer and fixtures are historical diagnostics only unless a future, separately scoped engineering need is approved. The former runnable observer, fixture, controller, instrumentation, tests, and build artifacts were deleted with the Slice 2 replacement. Historical results remain recorded in this document only. **POC-001 remained a `hypothesis`; this history authorizes neither another fixture action nor a POC-001 live action.**
 
 ## Decision enabled
 **Target decision:** use direct application/UI-element watchers as the initial normalized lifecycle adapter. The reducer treats normalized `AXUIElementDestroyed` and owning-application-termination observations as removal inputs. This is a Target adapter policy, not a POC-verified delivery/reliability conclusion. `hs.window.filter` is not the primary adapter. Manual regular-Space movement and any targeted query remain ordinary adapter/slice work; an unresolved private mechanism there requires a minimal just-in-time POC, not revival of this broad protocol.
@@ -666,11 +654,8 @@ behavior, readiness/admission, liveness, or destruction authority.
 
 ### Direct-AX volume controller checkpoint
 
-**Verified (reviewed source/test implementation at
-`81ab86bf54e44cfd1d808774d2d944e68f692aaa`):** the retained POC-only
-[`direct-AX volume controller procedure`](../../pocs/001-window-events-liveness/DIRECT-AX-VOLUME.md)
-now includes the implemented controller and real-host adapter, alongside the
-private normalizer and analyzer. The controller exposes separately invoked,
+**Historical record (reviewed source/test implementation at
+`81ab86bf54e44cfd1d808774d2d944e68f692aaa`):** the deleted POC-only direct-AX volume controller procedure included the controller and real-host adapter, alongside the private normalizer and analyzer. The controller exposes separately invoked,
 explicitly approved commands for exactly 30 ordered warm `direct_ax` samples
 and, only after a passing warm finalization, five fresh cold samples. It uses
 one shared monotonic command deadline of **at most 120 seconds**; all work

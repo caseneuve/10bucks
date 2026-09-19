@@ -1,96 +1,70 @@
 <p align="center">
-  <img src="assets/10bucks-logo.png" alt="obligatory AI generated logo that makes no sense" width="160">
+  <img src="assets/10bucks-logo.png" alt="10bucks logo" width="160">
 </p>
 
-# 10bucks
+# 10bucks — Canary A candidate
 
-Opinionated macOS tiling window manager built on
-[Hammerspoon](https://www.hammerspoon.org/).  Pure vibe slop.  GPT Terra wrote it for me
-for $10.  Works, all things considered.
+10bucks is an opinionated, keyboard-first macOS tiling-window-manager rewrite built on [Hammerspoon](https://www.hammerspoon.org/). This checkout is the **Canary A candidate**, not a general release and not a replacement that may be switched on without approval.
 
-## Features
+Canary A manages the confirmed original regular Space with the replacement direct-AX event path and stack projection. It is intentionally narrow: it is for scheduled, disposable-window acceptance after explicit human approval.
 
-- Tabbed stacks and two-column window layouts.
-- Keyboard-driven focus, layout, and divider controls.
-- Native macOS Space navigation, creation, and removal.
-- Configurable rules to open matching new windows in native macOS fullscreen.
-- A per-display status bar with workspace and layout state.
-- A fuzzy window picker and global previous-window focus.
+## Included in this candidate
 
-## Requirements
+- Direct application/UI-element AX lifecycle observation for the active original regular Space.
+- Stack navigation and zero-duration reflow effects.
+- Only three configurable Hyper bindings: `j` (next), `k` (previous), and `r` (reflow).
+- A required explicit built-in-display UUID preflight before startup.
 
-- macOS with Hammerspoon (tested on 1.1.1).
+## Explicitly absent
+
+Canary A does **not** include a bar, chooser, native-Space commands or navigation, fullscreen commands/effects, configured rules, columns controls, legacy workspace/modal controls, or compatibility behavior. Do not rely on legacy documentation or older releases for this candidate's behavior.
+
+A confirmed switch away from the original regular Space suspends this candidate non-destructively. It does not adopt or manage the new Space. Commands reject while suspended; returning to the original confirmed Space restarts observation and retains the original replacement Core state.
+
+## Requirements and switch gate
+
+- macOS 26.x on Apple Silicon, Hammerspoon 1.1.1, SIP enabled, and the built-in display; see [macOS settings](docs/macos-settings.md).
 - Accessibility access granted to Hammerspoon.
+- A verified built-in display UUID placed in the config before startup.
+- **Explicit human approval** for the duration and disruption of a Canary A switch. Normal development must not install, reload, repoint the Spoon symlink, or start this runtime.
 
-## Install
+Before any approved switch, capture the stable runtime target and semantic baseline, stop it completely, then load only the candidate. Restore stable after the session unless approval explicitly says otherwise. See [the rewrite plan](docs/rewrite-plan.md) for the required canary/rollback process.
 
-1. Install [Hammerspoon](https://www.hammerspoon.org/) and grant it Accessibility access.
-2. Download [`10bucks.spoon.zip`](https://github.com/caseneuve/10bucks/releases/latest/download/10bucks.spoon.zip) from the latest release. Uncompress it if your browser does not, then double-click `10bucks.spoon` in Finder.
-3. Create your configuration from the installed example:
+## Candidate configuration
 
-   ```sh
-   mkdir -p ~/.config/10bucks
-   cp ~/.hammerspoon/Spoons/10bucks.spoon/config.example.lua ~/.config/10bucks/config.lua
-   ```
+Copy `10bucks.spoon/config.example.lua` to `~/.config/10bucks/config.lua`, replace the placeholder with the UUID recorded during the approved switch preflight, and keep only the supported `hotkeys` entries. The UUID is machine-specific: do not commit it.
 
-4. Add this to `~/.hammerspoon/init.lua`:
-
-   ```lua
-   local tenbucks = hs.loadSpoon("10bucks")
-   tenbucks:configureFile()
-   tenbucks:bindHotkeys()
-   tenbucks:start()
-   ```
-
-Edit `~/.config/10bucks/config.lua`, then reload Hammerspoon. The installed `config.example.lua` documents every available setting.
-
-## Default controls
-
-All defaults use `Hyper` (`cmd` + `alt` + `ctrl` + `shift`).
-
-| Key               | Action                                           |
-|-------------------|--------------------------------------------------|
-| `space`           | Toggle one tabbed stack / two columns            |
-| `h` / `l`         | Focus previous / next column                     |
-| `;`               | Focus the previously focused standard app window |
-| `j` / `k`         | Focus next / previous window in the active stack |
-| `[` / `]`         | Move the column divider left / right             |
-| `0`               | Reset the column split                           |
-| `g`               | Swap the columns                                 |
-| `o`               | Move the focused window to the other stack       |
-| `n` / `p`         | Focus next / previously focused desktop          |
-| `1`–`9`           | Focus or create the corresponding numbered desktop |
-| `u`, then `1`–`9` | Choose a numbered desktop in selection mode     |
-| `w`               | Find and focus a window                          |
-| `delete`          | Remove the empty current desktop                 |
-| `r`               | Reflow the current screen/Space                  |
-
-## Rewrite design
-
-The current runtime is undergoing a POC-first selective redesign. The target contracts and replacement plan are documented in:
-
-- [`docs/invariants.md`](docs/invariants.md)
-- [`docs/architecture.md`](docs/architecture.md)
-- [`docs/rewrite-plan.md`](docs/rewrite-plan.md)
-- [`docs/performance.md`](docs/performance.md)
-- [`docs/macos-settings.md`](docs/macos-settings.md)
-- [`docs/pocs/`](docs/pocs/)
-
-These documents describe the approved target, not behavior already implemented by the legacy runtime.
-
-## Development
-
-```sh
-git clone https://github.com/caseneuve/10bucks.git
-cd 10bucks
-lua tests/run.lua
-./scripts/install-local.sh
+```lua
+local hyper = { "cmd", "alt", "ctrl", "shift" }
+return {
+  builtInDisplayUUID = "UUID-FROM-APPROVED-PREFLIGHT",
+  hotkeys = {
+    focusNext = { hyper, "j" },
+    focusPrevious = { hyper, "k" },
+    reflow = { hyper, "r" },
+  },
+}
 ```
 
-`install-local.sh` stops the loaded 10bucks instance, syncs the working-tree
-Spoon to `~/.hammerspoon/Spoons/10bucks.spoon`, and reloads
-Hammerspoon. It requires the Hammerspoon `hs` CLI. The same workflows are
-available as `just test` and `just install` when
-[just](https://github.com/casey/just) is installed.
+Set one of these three named bindings to `false` to disable it. No other configuration keys or bindings are supported by Canary A.
 
-See [the release procedure](docs/RELEASING.md) when preparing a release.
+## Rewrite contracts
+
+The target contracts remain authoritative; they describe the approved rewrite, not all behavior implemented by this candidate:
+
+- [Target invariants](docs/invariants.md)
+- [Architecture](docs/architecture.md)
+- [Rewrite plan](docs/rewrite-plan.md)
+- [Performance contract](docs/performance.md)
+- [POC evidence policy](docs/pocs/README.md)
+
+## Development checks
+
+Pure/fake checks do not authorize a live switch:
+
+```sh
+lua tests/run.lua
+git diff --check
+```
+
+Do not run the local install script or reload Hammerspoon from this rewrite worktree without the approval described above.
