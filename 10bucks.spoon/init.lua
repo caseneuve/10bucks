@@ -164,7 +164,11 @@ end
 
 function Tenbucks:bindHotkeys(mapping)
   assert(not self.started, "Stop 10bucks before changing hotkeys")
-  self.config = Config.build({ builtInDisplayUUID = self.config.builtInDisplayUUID, hotkeys = mapping or self.config.hotkeys })
+  -- Rebuild the complete validated plain config so binding changes cannot discard
+  -- semantic fields supplied by configureFile (or later explicit config fields).
+  local complete = Config.build(self.config)
+  complete.hotkeys = mapping or complete.hotkeys
+  self.config = Config.build(complete)
   return self
 end
 

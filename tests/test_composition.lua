@@ -42,6 +42,18 @@ local function load(f)
   return ten
 end
 
+local function loadConfiguredFile(f, config)
+  package.loaded["init"] = nil
+  local Config = require("lib.config")
+  local original = Config.loadFile
+  Config.loadFile = function(path) assert(path == "test-config.lua"); return config end
+  local ten = dofile("10bucks.spoon/init.lua")
+  local ok, err = pcall(function() ten:configureFile("test-config.lua"):bindHotkeys():start() end)
+  Config.loadFile = original
+  assert(ok, err)
+  return ten
+end
+
 return {
   ["composition bootstrap and reflow deduplicate actual frames then correct drift"] = function()
     local f = fakeHs(); local ten = load(f); ten:start()
@@ -73,6 +85,14 @@ return {
     f = fakeHs({ bootstrapFails = true }); ten = load(f); ten:start()
     assert(ten.started and ten.host and not ten.core:state().manager.windows[9], "one app bootstrap failure must defer rather than abort startup")
     ten:stop()
+  end,
+  ["configureFile then bindHotkeys then start retains canary instrumentation"] = function()
+    local f = fakeHs()
+    local ten = loadConfiguredFile(f, { builtInDisplayUUID = "built-in", canaryInstrumentation = true })
+    local status = ten:canaryStatus()
+    assert(ten.config.canaryInstrumentation == true)
+    assert(status.enabled and status.started and not status.suspended and status.memberCount == 1 and status.activeTimers == 0)
+    ten:stop(); assert(ten:canaryStatus().started == false)
   end,
   ["Canary A instrumentation exposes only aggregate runtime status"] = function()
     local f = fakeHs(); local ten = load(f)
