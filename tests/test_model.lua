@@ -111,6 +111,22 @@ return {
     assertValid(state)
   end,
 
+  ["LIFE-003 WIN-002: title changes copy-on-write for managed IDs only and never reclassify or reorder"] = function()
+    local state = Model.reduce(initial(), ready("one"))
+    state = Model.reduce(state, ready("two"))
+    local before = state
+    local updated = Model.reduce(state, { type = "WindowTitleChanged", id = "one", title = "Renamed" })
+    assert(updated ~= before)
+    equal(before.windows.one.title, "Example window")
+    equal(updated.windows.one.title, "Renamed")
+    equal(updated.windows.one.ruleAction, "manage")
+    equal(updated.spaces["space-1"].memberIds[1], "one")
+    equal(updated.spaces["space-1"].memberIds[2], "two")
+    assert(Model.reduce(updated, { type = "WindowTitleChanged", id = "one", title = "Renamed" }) == updated)
+    assert(Model.reduce(updated, { type = "WindowTitleChanged", id = "unknown", title = "Ignored" }) == updated)
+    assertValid(updated)
+  end,
+
   ["FOCUS-003 WIN-002: focus neither admits unknown windows nor reorders members"] = function()
     local state = Model.reduce(initial(), ready("one"))
     state = Model.reduce(state, ready("two"))

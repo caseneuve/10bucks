@@ -282,6 +282,15 @@ function Model.reduce(state, event)
         changed = true
       end
     end
+  elseif event.type == "WindowTitleChanged" then
+    if not validId(event.id) or type(event.title) ~= "string" then
+      error("WindowTitleChanged requires an id and string title", 2)
+    end
+    local window = nextState.windows[event.id]
+    if window and window.title ~= event.title then
+      window.title = event.title
+      changed = true
+    end
   elseif event.type == "ActualFocusChanged" then
     if not validId(event.id) then error("ActualFocusChanged requires an id", 2) end
     nextState.focus.actualWindow = { id = event.id, title = event.title, applicationName = event.applicationName }

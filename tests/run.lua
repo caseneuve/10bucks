@@ -6,6 +6,7 @@ local tests = {
   require("tests.test_model"),
   require("tests.test_runtime"),
   require("tests.test_rules"),
+  require("tests.test_macos_windows"),
   require("tests.test_stack"),
   require("tests.test_columns"),
   require("tests.test_layout_coordinator"),
