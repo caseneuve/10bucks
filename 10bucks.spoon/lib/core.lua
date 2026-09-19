@@ -180,7 +180,7 @@ function Core.new(options)
       end
       return intents
     end,
-    observeIntents = function(intents) core.observer(copy(intents)) end,
+    observeIntents = function(intents, version) core.observer(copy(intents), version) end,
   })
   return core
 end

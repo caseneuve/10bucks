@@ -28,9 +28,13 @@ local function booleanOrNil(value)
   return nil
 end
 
-function Host.new(hs, context)
-  return setmetatable({ hs = hs, context = context, generation = 0, started = false,
+function Host.new(hs, context, instrumentation)
+  return setmetatable({ hs = hs, context = context, instrumentation = instrumentation, generation = 0, started = false,
     owned = {}, appOwned = {}, handles = {}, frames = {} }, Host)
+end
+
+function Host:_record(kind)
+  if self.instrumentation then self.instrumentation:record(kind) end
 end
 
 function Host:_detach(record)
@@ -76,6 +80,7 @@ end
 
 function Host:_regularOwner(id)
   local spaces = self.hs.spaces
+  self:_record("targetedOwnershipQueries")
   local owners = spaces and moduleCall(spaces.windowSpaces, id)
   if type(owners) ~= "table" or #owners ~= 1 or owners[1] ~= self.context.regularSpaceId then return false end
   if type(spaces.spaceType) == "function" and moduleCall(spaces.spaceType, owners[1]) ~= "user" then return false end
@@ -113,10 +118,14 @@ end
 
 function Host:subscribeWindow(window, callback)
   local id, generation = call(window, "id"), self.generation
-  local element = self.hs.axuielement.windowElement(window)
-  if not element then return { detach = function() end } end
+  -- Verified by read-only installed-runtime query: focused hs.window.newWatcher
+  -- is a function, its AX element's newWatcher is nil, and application.newWatcher
+  -- is a function. Installed hs.window.filter source also calls win:newWatcher.
+  -- The AX element is retained only for metadata; wrapper source is not evidence
+  -- that a different userdata exposes the same method (Canary A proved it does not).
+  if not id or type(window.newWatcher) ~= "function" then return { detach = function() end } end
   local knownFullscreen = call(window, "isFullScreen")
-  local watcher = element:newWatcher(function(_, event)
+  local watcher = window:newWatcher(function(_, event)
     if not self.started or generation ~= self.generation then return end
     local kinds = { AXUIElementDestroyed = "destroyed", AXWindowMiniaturized = "minimized", AXWindowDeminiaturized = "restored", AXTitleChanged = "titleChanged" }
     if event == "AXUIElementDestroyed" then self:_forget(id); callback({ kind = "destroyed", id = id })
@@ -136,7 +145,8 @@ end
 
 function Host:_attachApp(app, callback)
   local pid, generation = call(app, "pid"), self.generation
-  -- An ordinary running/background application may not expose an AX watcher.
+  -- Read-only runtime preflight separately requires application.newWatcher on
+  -- the focused app. An ordinary running/background application may still not expose an AX watcher.
   -- Its absence is uncertainty: defer it without disturbing other apps.
   local ok, watcher = pcall(app.newWatcher, app, function(element, event)
     if not self.started or generation ~= self.generation then return end
@@ -171,8 +181,10 @@ end
 function Host:subscribeExistingWindows(callback)
   self.windowCallback = callback
   local members = {}
+  self:_record("bootstrapSpaceQueries")
   -- One relevant active-Space membership snapshot; absence only defers admission.
   for _, id in ipairs(self.hs.spaces.windowsForSpace(self.context.regularSpaceId) or {}) do members[id] = true end
+  self:_record("bootstrapApplicationQueries")
   for _, app in ipairs(self.hs.application.runningApplications()) do
     self:_attachApp(app, callback)
     -- Enumeration is bootstrap-only. Failure for one app is non-destructive
@@ -211,11 +223,16 @@ function Host:execute(adapter, intents)
       local actual = call(window, "frame")
       local previous = self.frames[intent.windowId]
       local same = actual and actual.x == intent.frame.x and actual.y == intent.frame.y and actual.w == intent.frame.w and actual.h == intent.frame.h
+      self:_record("frameRequests")
       if not same and (actual or not previous or previous.x ~= intent.frame.x or previous.y ~= intent.frame.y or previous.w ~= intent.frame.w or previous.h ~= intent.frame.h) then
         window:setFrame(intent.frame, 0)
+        self:_record("frameWrites")
       end
       self.frames[intent.windowId] = { x = intent.frame.x, y = intent.frame.y, w = intent.frame.w, h = intent.frame.h }
-    elseif window and intent.kind == "focus" then window:focus() end
+    elseif window and intent.kind == "focus" then
+      self:_record("focusRequests")
+      window:focus()
+    end
   end
 end
 

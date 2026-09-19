@@ -3,11 +3,14 @@ local Host = require("lib.macos.window_host")
 local function fake()
   local f = { scans = 0, stops = 0, membershipQueries = 0, ownerQueries = 0, owners = { 9 }, members = { 9 } }
   local function watcher(callback) return { start = function(self) self.callback = callback; if f.failStart == self then error("start failed") end end, stop = function(self) if not self.stopped then self.stopped = true; f.stops = f.stops + 1 end end } end
-  local element = { asHSWindow = function() return f.window end, attributeValue = function(_, key) return key == "AXModal" and false end, isAttributeSettable = function() return true end, newWatcher = function(_, callback) f.windowWatcher = watcher(callback); return f.windowWatcher end }
+  -- Installed Hammerspoon 1.1.1: docs.json describes hs.uielement:newWatcher,
+  -- but axuielement.windowElement(window) is a different userdata with no watcher.
+  local element = { asHSWindow = function() return f.window end, attributeValue = function(_, key) return key == "AXModal" and false end, isAttributeSettable = function() return true end }
+  local function windowWatcher(callback) f.windowWatcher = watcher(callback); return f.windowWatcher end
   local app = { pid = function() return 7 end, name = function() return "App" end, bundleID = function() return "app" end, allWindows = function() f.scans = f.scans + 1; return { f.window } end, newWatcher = function(_, callback) local w = watcher(callback); f.appWatchers[#f.appWatchers + 1] = w; return w end }
   f.appWatchers = {}
   f.actual = { x = 0, y = 0, w = 10, h = 10 }
-  f.window = { id = function() return 9 end, title = function() return "Title" end, application = function() return app end, role = function() return "AXWindow" end, subrole = function() return "AXStandardWindow" end, isFullScreen = function() return f.fullscreen end, frame = function() return f.actual end, setFrame = function(_, frame, duration) f.duration = duration; f.writes = (f.writes or 0) + 1; f.actual = frame end, focus = function() f.focused = true end }
+  f.window = { id = function() return 9 end, title = function() return "Title" end, application = function() return app end, role = function() return "AXWindow" end, subrole = function() return "AXStandardWindow" end, isFullScreen = function() return f.fullscreen end, newWatcher = function(_, callback) return windowWatcher(callback) end, frame = function() return f.actual end, setFrame = function(_, frame, duration) f.duration = duration; f.writes = (f.writes or 0) + 1; f.actual = frame end, focus = function() f.focused = true end }
   f.hs = { processInfo = { processID = 1 }, axuielement = { windowElement = function(value) assert(value == f.window, "reverse conversion forbidden"); return element end }, spaces = { windowsForSpace = function() f.membershipQueries = f.membershipQueries + 1; return f.members end, windowSpaces = function(id) assert(id == 9); f.ownerQueries = f.ownerQueries + 1; return f.owners end, spaceType = function(id) assert(id == 9); return f.spaceType or "user" end }, application = { runningApplications = function() return { app } end, watcher = { new = function(callback) f.lifecycle = watcher(callback); return f.lifecycle end, terminated = 3, hidden = 4, unhidden = 5, launched = 2 } } }
   return f, app, element
 end
@@ -53,8 +56,7 @@ return {
         app.newWatcher = function() return { start = function() error("start failed") end, stop = function() f.stops = f.stops + 1 end } end
         return f, function() host:_attachApp(app, function() end) end
       end
-      local element = f.hs.axuielement.windowElement(f.window)
-      element.newWatcher = function() return { start = function() error("start failed") end, stop = function() f.stops = f.stops + 1 end } end
+      f.window.newWatcher = function() return { start = function() error("start failed") end, stop = function() f.stops = f.stops + 1 end } end
       return f, function() host:subscribeWindow(f.window, function() end) end
     end
     for _, kind in ipairs({ "application", "appAX", "windowAX" }) do

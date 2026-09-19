@@ -10,6 +10,7 @@ local Context = require("lib.macos.context")
 local Host = require("lib.macos.window_host")
 local Windows = require("lib.macos.windows")
 local Bindings = require("lib.bindings")
+local CanaryInstrumentation = require("lib.macos.canary_instrumentation")
 
 local Tenbucks = {}
 Tenbucks.__index = Tenbucks
@@ -17,6 +18,27 @@ Tenbucks.name, Tenbucks.version = "10bucks", "Canary A"
 Tenbucks.defaultHotkeys = Config.defaults.hotkeys
 
 function Tenbucks.new() return setmetatable({ hotkeyBindings = {}, getenv = os.getenv }, Tenbucks):configure({}) end
+
+function Tenbucks:_record(kind)
+  if self.instrumentation then self.instrumentation:record(kind) end
+end
+
+function Tenbucks:canaryStatus()
+  if not self.instrumentation then return nil end
+  local result = self.instrumentation:status()
+  result.started, result.suspended = self.started == true, self.suspended == true
+  result.memberCount, result.version = 0, self.core and self.core:version() or 0
+  if self.core then
+    local state = self.core:state()
+    local space = state.manager.spaces[self.core.spaceId]
+    result.memberCount = space and #space.memberIds or 0
+  end
+  return result
+end
+
+function Tenbucks:canaryExport()
+  return self.instrumentation and self.instrumentation:export() or nil
+end
 function Tenbucks:configure(options) assert(not self.started, "Stop 10bucks before changing configuration"); self.config = Config.build(options); return self end
 function Tenbucks:configureFile(path)
   assert(not self.started, "Stop 10bucks before changing configuration")
@@ -50,17 +72,25 @@ end
 function Tenbucks:_startHost(context)
   local host, adapter
   local ok, err = pcall(function()
-    host = Host.new(hs, context):start()
+    host = Host.new(hs, context, self.instrumentation):start()
     local native = {
       subscribeApplications = function(callback) return host:subscribeApplications(callback) end,
       subscribeExistingWindows = function(callback) return host:subscribeExistingWindows(callback) end,
       subscribeWindow = function(handle, callback) return host:subscribeWindow(handle, callback) end,
       probeReadiness = function(id, callback) return host:probeReadiness(id, callback) end,
+      record = function(kind) self:_record(kind) end,
+      recordEvent = function(eventType) if self.instrumentation then self.instrumentation:recordEvent(eventType) end end,
     }
     adapter = Windows.new({ native = native, sink = function(event)
       local accepted, failure = self.core:submit(event); if not accepted then error(failure, 0) end
     end })
-    self.core.observer = function(intents) host:execute(adapter, intents) end
+    self.core.observer = function(intents, version)
+      if version > (self.canaryObservedVersion or 0) then
+        self.canaryObservedVersion = version
+        self:_record("reducerCommitVersions")
+      end
+      host:execute(adapter, intents)
+    end
     adapter:start() -- bootstrap/re-synchronize only this confirmed original Space.
     self.context, self.host, self.windows = context, host, adapter
   end)
@@ -98,6 +128,9 @@ end
 
 function Tenbucks:start()
   if self.started then return self end
+  self.instrumentation = self.config.canaryInstrumentation and CanaryInstrumentation.new() or nil
+  self.canaryObservedVersion = 0
+  if self.instrumentation then self.instrumentation:setActiveTimers(0) end
   local bindings, contextSubscription
   local ok, err = pcall(function()
     self:_beginContext(Context.snapshot(hs, self.config.builtInDisplayUUID))
@@ -111,7 +144,7 @@ function Tenbucks:start()
   end)
   if not ok then
     if contextSubscription then contextSubscription.detach() end
-    Bindings.delete(bindings); self:_stopScope(); self.originContext = nil; error(err, 0)
+    Bindings.delete(bindings); self:_stopScope(); self.originContext = nil; self.instrumentation = nil; error(err, 0)
   end
   self.contextSubscription, self.hotkeyBindings, self.started = contextSubscription, bindings, true
   return self
@@ -123,6 +156,7 @@ function Tenbucks:stop()
   self.contextSubscription = nil
   self:_stopScope()
   self.originContext = nil
+  self.canaryObservedVersion = nil
   Bindings.delete(self.hotkeyBindings)
   self.hotkeyBindings = {}
   return self

@@ -12,15 +12,16 @@ local function fakeHs(options)
     return watcher
   end
   local screen = { getUUID = function() return "built-in" end, frame = function() return { x = 0, y = 0, w = 100, h = 80 } end }
+  -- Evidence-derived boundary: AX conversion provides metadata/asHSWindow only;
+  -- the per-window watcher is constructed by hs.window:newWatcher(handler).
   local element = { asHSWindow = function() return f.window end,
-    attributeValue = function(_, _) return false end, isAttributeSettable = function() return true end,
-    newWatcher = function(_, cb) f.windowWatcher = watcher(cb, "window"); return f.windowWatcher end }
+    attributeValue = function(_, _) return false end, isAttributeSettable = function() return true end }
   local app = { pid = function() return 8 end, name = function() return "App" end, bundleID = function() return "app" end,
     allWindows = function() f.scans = f.scans + 1; if options.bootstrapFails then error("bootstrap failed") end; return { f.window } end,
     newWatcher = function(_, cb) f.appWatcher = watcher(cb, "app"); return f.appWatcher end }
   f.window = { id = function() return 9 end, title = function() return "Window" end, application = function() return app end,
     role = function() return "AXWindow" end, subrole = function() return "AXStandardWindow" end,
-    isFullScreen = function() return f.fullscreen end, frame = function() return f.actual end,
+    isFullScreen = function() return f.fullscreen end, newWatcher = function(_, cb) f.windowWatcher = watcher(cb, "window"); return f.windowWatcher end, frame = function() return f.actual end,
     setFrame = function(_, frame, duration) assert(duration == 0); f.frames = f.frames + 1; f.actual = frame end,
     focus = function() f.focuses = f.focuses + 1 end }
   local bindCount = 0
@@ -72,6 +73,15 @@ return {
     f = fakeHs({ bootstrapFails = true }); ten = load(f); ten:start()
     assert(ten.started and ten.host and not ten.core:state().manager.windows[9], "one app bootstrap failure must defer rather than abort startup")
     ten:stop()
+  end,
+  ["Canary A instrumentation exposes only aggregate runtime status"] = function()
+    local f = fakeHs(); local ten = load(f)
+    ten:configure({ builtInDisplayUUID = "built-in", canaryInstrumentation = true })
+    ten:start()
+    local status = ten:canaryStatus()
+    assert(status.enabled and status.started and not status.suspended and status.memberCount == 1 and status.activeTimers == 0)
+    assert(status.counts["event.WindowReady"] == 1 and status.counts.reducerCommitVersions == 1)
+    ten:stop(); assert(ten:canaryStatus().started == false)
   end,
   ["Canary A context A-to-B-to-A suspends non-destructively and resumes original Core"] = function()
     local f = fakeHs(); local ten = load(f); ten:start()

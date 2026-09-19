@@ -56,6 +56,8 @@ end
 
 function Windows:_emit(event)
   if not plain(event) then error("adapter event must be plain data", 2) end
+  if self.native.recordEvent then self.native.recordEvent(event.type)
+  elseif self.native.record then self.native.record("normalizedEvents") end
   self.sink(event)
 end
 

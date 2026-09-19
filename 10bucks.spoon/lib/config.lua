@@ -7,6 +7,7 @@ Config.defaults = {
     focusNext = { { "cmd", "alt", "ctrl", "shift" }, "j" },
     reflow = { { "cmd", "alt", "ctrl", "shift" }, "r" },
   },
+  canaryInstrumentation = false,
 }
 
 local modifiers = { cmd = true, alt = true, ctrl = true, shift = true, fn = true }
@@ -25,9 +26,11 @@ local function chord(name, value)
 end
 function Config.build(override)
   override = override or {}; assert(type(override) == "table", "10bucks config must be a table")
-  for key in pairs(override) do assert(key == "hotkeys" or key == "builtInDisplayUUID", "10bucks Canary A does not support config." .. tostring(key)) end
+  for key in pairs(override) do assert(key == "hotkeys" or key == "builtInDisplayUUID" or key == "canaryInstrumentation", "10bucks Canary A does not support config." .. tostring(key)) end
   local config = copy(Config.defaults)
   if override.builtInDisplayUUID ~= nil then config.builtInDisplayUUID = override.builtInDisplayUUID end
+  if override.canaryInstrumentation ~= nil then config.canaryInstrumentation = override.canaryInstrumentation end
+  assert(type(config.canaryInstrumentation) == "boolean", "config.canaryInstrumentation must be boolean")
   assert(config.builtInDisplayUUID == nil or (type(config.builtInDisplayUUID) == "string" and config.builtInDisplayUUID ~= ""), "config.builtInDisplayUUID must be a non-empty string")
   if override.hotkeys ~= nil then
     assert(type(override.hotkeys) == "table", "hotkeys must be a table")
