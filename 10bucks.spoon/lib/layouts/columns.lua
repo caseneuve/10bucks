@@ -6,7 +6,7 @@ function Columns.supports(eventType)
   return eventType == "Admit" or eventType == "Remove" or eventType == "ManagedFocusObserved"
     or eventType == "FocusNext" or eventType == "FocusPrevious" or eventType == "FocusNextGroup"
     or eventType == "FocusPreviousGroup" or eventType == "MoveFocusedToOther" or eventType == "SwapGroups"
-    or eventType == "ResizeRatio" or eventType == "ResetRatio" or eventType == "Synchronize"
+    or eventType == "ResizeRatio" or eventType == "ResizeRatioDelta" or eventType == "ResetRatio" or eventType == "Synchronize"
 end
 
 local function validId(value)
@@ -368,10 +368,15 @@ function Columns.reduce(state, event, context)
     return copyState(state, stacks, state.activeStack == 1 and 2 or 1)
   end
 
-  if event.type == "ResizeRatio" then
-    if type(event.ratio) ~= "number" or event.ratio ~= event.ratio then error("ResizeRatio requires a numeric ratio", 2) end
-    if event.ratio < config.min or event.ratio > config.max or event.ratio == state.ratio then return state end
-    return copyState(state, nil, state.activeStack, event.ratio)
+  if event.type == "ResizeRatio" or event.type == "ResizeRatioDelta" then
+    local ratio = event.ratio
+    if event.type == "ResizeRatioDelta" then
+      if type(event.delta) ~= "number" or event.delta ~= event.delta then error("ResizeRatioDelta requires a numeric delta", 2) end
+      ratio = math.max(config.min, math.min(config.max, state.ratio + event.delta))
+    end
+    if type(ratio) ~= "number" or ratio ~= ratio then error("ResizeRatio requires a numeric ratio", 2) end
+    if ratio < config.min or ratio > config.max or ratio == state.ratio then return state end
+    return copyState(state, nil, state.activeStack, ratio)
   end
 
   if event.type == "ResetRatio" then

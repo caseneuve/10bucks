@@ -30,7 +30,7 @@
      --approval OWNER_PRIVATE_APPROVAL --temporary-config OWNER_PRIVATE_CONFIG
    ```
    The command first stops and verifies stable (zero bindings/lifecycle/reconcile/bar/canvas owners), then swaps. It automatically attempts rollback on any post-stop failure.
-5. Require candidate status: `started=true`, `bindings=8`, `canary.enabled=true`, `canary.activeTimers=0`, and `suspended=false`. Abort and run `finish` if any differs.
+5. Require candidate status: `started=true`, `bindings=11`, `canary.enabled=true`, `canary.activeTimers=0`, and `suspended=false`. Abort and run `finish` if any differs.
 
 ## Human-led actions and checks
 

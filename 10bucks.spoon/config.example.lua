@@ -12,6 +12,9 @@ return {
     focusNext = { hyper, "j" },
     moveFocusedToOtherGroup = { hyper, "o" },
     swapGroups = { hyper, "g" },
+    resizeLeft = { hyper, "[" },
+    resizeRight = { hyper, "]" },
+    resetRatio = { hyper, "=" },
     reflow = { hyper, "r" },
   },
 }

@@ -9,6 +9,9 @@ local actions = {
   focusNext = "FocusNext",
   moveFocusedToOtherGroup = "MoveFocusedToOther",
   swapGroups = "SwapGroups",
+  resizeLeft = { type = "ResizeRatioDelta", delta = -0.05 },
+  resizeRight = { type = "ResizeRatioDelta", delta = 0.05 },
+  resetRatio = "ResetRatio",
   reflow = "Reflow",
 }
 
@@ -25,6 +28,9 @@ function Bindings.bind(hs, submit, hotkeys)
         if seen[identity] then error("duplicate 10bucks hotkey chord", 2) end
         seen[identity] = true
         bindings[#bindings + 1] = hs.hotkey.bind(modifiers, key, function()
+          if type(command) == "table" then
+            return submit({ type = command.type, delta = command.delta })
+          end
           return submit({ type = command })
         end)
       end

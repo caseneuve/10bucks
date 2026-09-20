@@ -194,7 +194,7 @@ function Core:submit(input)
   local translated = input
   if input.type ~= "Command" and ({ CycleLayout = true, ActivateLayout = true, FocusNext = true, FocusPrevious = true,
       FocusNextGroup = true, FocusPreviousGroup = true, MoveFocusedToOther = true, SwapGroups = true,
-      ResizeRatio = true, ResetRatio = true, Synchronize = true, Reflow = true })[input.type] then
+      ResizeRatio = true, ResizeRatioDelta = true, ResetRatio = true, Synchronize = true, Reflow = true })[input.type] then
     translated = copy(input)
     translated.name = translated.type == "Reflow" and "Synchronize" or translated.type
     translated.type = "Command"
