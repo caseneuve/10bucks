@@ -210,9 +210,11 @@ function Coordinator.reduce(state, event, memberIds, context, dependencies)
   requireRetainedValid(state, context, dependencies, 2)
   if not plain(event) or type(event) ~= "table" or type(event.type) ~= "string" then error("layout event must be plain data with a type", 2) end
 
-  -- The reducer-owned list is authoritative for permanent membership. Prune
-  -- every instantiated layout before any active-layout-only operation.
-  state = pruneAbsent(state, memberIds, context, dependencies)
+  -- Explicit removal must reach layouts with its recovery context before the
+  -- generic authoritative-list pruning can erase the source selection/group.
+  if event.type ~= "Remove" then
+    state = pruneAbsent(state, memberIds, context, dependencies)
+  end
 
   if event.type == "CycleLayout" or event.type == "ActivateLayout" then
     local targetId
@@ -247,7 +249,9 @@ function Coordinator.reduce(state, event, memberIds, context, dependencies)
         if nextLayout ~= layoutState then layouts[id] = nextLayout; changed = true end
       end
     end
-    return complete(changed and stateWith(state, nil, layouts) or state, { handled = true }, memberIds, context, dependencies)
+    local nextState = changed and stateWith(state, nil, layouts) or state
+    nextState = pruneAbsent(nextState, memberIds, context, dependencies)
+    return complete(nextState, { handled = true }, memberIds, context, dependencies)
   end
 
   local layout = dependencies.registry[state.activeLayoutId]

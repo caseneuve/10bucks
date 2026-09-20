@@ -107,6 +107,24 @@ return {
     equal(columns.stacks[1].selectedId, "one")
   end,
 
+  ["FOCUS-004 COL-005: native focus fallback before destruction still recovers in the source column"] = function()
+    local observed = {}
+    local core = new(function(intents) observed[#observed + 1] = intents end)
+    core:submit(ready("a")); core:submit(ready("b"))
+    core:submit({ type = "CycleLayout" })
+    core:submit({ type = "ActualFocusChanged", id = "a" })
+    core:submit(ready("c2"))
+    core:submit({ type = "ActualFocusChanged", id = "c2" })
+    core:submit({ type = "WindowDestroyed", id = "c2" })
+    local state = core:state()
+    local columns = state.coordinators["space-1"].layouts.columns
+    equal(columns.activeStack, 1)
+    equal(columns.stacks[1].selectedId, "a")
+    local target
+    for _, intent in ipairs(observed[#observed]) do if intent.kind == "focus" then target = intent.windowId end end
+    equal(target, "a")
+  end,
+
   ["STATE-008 WIN-004 WIN-005 FOCUS-004: unavailable/destroyed selected member retains slots or removes them and recovers current-Space focus"] = function()
     local observed = {}
     local core = new(function(intents) observed[#observed + 1] = intents end)

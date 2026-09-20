@@ -269,7 +269,7 @@ function Columns.reduce(state, event, context)
     for index, memberId in ipairs(stack.members) do if memberId == event.memberId then removedIndex = index; break end end
     table.remove(stack.members, removedIndex)
     local active = state.activeStack
-    local removedActiveStack = active == stackIndex
+    local removedActiveStack = active == stackIndex or event.recoverSource == true
     if #stack.members == 0 then
       table.remove(stacks, stackIndex)
       if #stacks == 0 then
@@ -303,6 +303,7 @@ function Columns.reduce(state, event, context)
         local predecessor = removedIndex == 1 and #stack.members or removedIndex - 1
         stack.selectedId = stack.members[predecessor]
       end
+      if event.recoverSource == true then active = stackIndex end
     end
     return copyState(state, stacks, active)
   end

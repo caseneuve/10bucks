@@ -104,7 +104,8 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
 
   for _, id in ipairs(oldIds) do
     if not contains(newIds, id) then
-      coordinator = Coordinator.reduce(coordinator, { type = "Remove", memberId = id }, newIds,
+      coordinator = Coordinator.reduce(coordinator,
+        { type = "Remove", memberId = id, recoverSource = transaction.type == "WindowDestroyed" and id == before.focus.actualWindow.id }, newIds,
         context(manager, displayId, spaceId), dependencies)
     end
   end
