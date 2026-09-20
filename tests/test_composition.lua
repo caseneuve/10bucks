@@ -103,32 +103,30 @@ return {
     assert(status.counts["event.WindowReady"] == 1 and status.counts.reducerCommitVersions == 1)
     ten:stop(); assert(ten:canaryStatus().started == false)
   end,
-  ["Canary A context A-to-B-to-A suspends non-destructively and resumes original Core"] = function()
+  ["regular Spaces retain independent Core state across A-to-B-to-A activation"] = function()
     local f = fakeHs(); local ten = load(f); ten:start()
-    local originalCore, oldWindowWatcher, oldSpaceWatcher = ten.core, f.windowWatcher.callback, f.contextWatcher.callback
-    local before = ten.core:state().manager.spaces.space.memberIds[1]
+    local firstCore, oldWindowWatcher, oldSpaceWatcher = ten.core, f.windowWatcher.callback, f.contextWatcher.callback
+    local firstMember = firstCore:state().manager.spaces.space.memberIds[1]
     local scans, frames = f.scans, f.frames
 
-    -- A duplicate confirmed activation does not rebuild, bootstrap, or emit effects.
     f.contextWatcher.callback()
-    assert(ten.core == originalCore and f.scans == scans and f.frames == frames)
+    assert(ten.core == firstCore and f.scans == scans and f.frames == frames)
 
-    f.activeSpace, f.members = "next-space", {}
+    f.activeSpace, f.members, f.owners = "next-space", {}, { "next-space" }
     f.contextWatcher.callback()
-    assert(ten.suspended and ten.core == originalCore and ten.context.regularSpaceId == "next-space")
-    assert(ten.core:state().manager.spaces.space.memberIds[1] == before and f.frames == frames)
+    local secondCore = ten.core
+    assert(secondCore ~= firstCore and ten.context.regularSpaceId == "next-space")
+    assert(#secondCore:state().manager.spaces["next-space"].memberIds == 0)
     oldWindowWatcher(nil, "AXWindowMiniaturized")
-    assert(ten.core:state().manager.windows[9] and not ten.core:state().manager.windows[9].lifecycle.minimized)
-    assert(f.bindings[1].callback() == false, "commands reject while context differs")
+    assert(firstCore:state().manager.windows[9] and not firstCore:state().manager.windows[9].lifecycle.minimized)
 
     f.activeSpace, f.members, f.owners = "space", { 9 }, { "space" }
     f.contextWatcher.callback()
-    assert(not ten.suspended and ten.core == originalCore and ten.context.regularSpaceId == "space")
-    assert(ten.core:state().manager.spaces.space.memberIds[1] == before)
-    assert(f.windowWatcher, "resume starts a fresh host/adapter")
+    assert(ten.core == firstCore and ten.context.regularSpaceId == "space")
+    assert(firstCore:state().manager.spaces.space.memberIds[1] == firstMember)
     f.windowWatcher.callback(nil, "AXWindowMiniaturized")
-    assert(ten.core:state().manager.windows[9].lifecycle.minimized, "resumed callbacks reach original Core")
-    ten:stop(); oldSpaceWatcher()
-    assert(not ten.started)
+    assert(firstCore:state().manager.windows[9].lifecycle.minimized)
+    assert(ten.cores["next-space"] == secondCore)
+    ten:stop(); oldSpaceWatcher(); assert(not ten.started)
   end,
 }

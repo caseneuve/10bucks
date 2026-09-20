@@ -66,7 +66,12 @@ end
 
 function Tenbucks:_stopScope()
   self:_stopHost()
-  self.context, self.core, self.suspended = nil, nil, false
+  self.context, self.core, self.cores, self.suspended = nil, nil, nil, false
+end
+
+local function newCore(context)
+  return Core.new({ displayId = context.displayId, regularSpaceId = context.regularSpaceId,
+    workArea = context.workArea, layoutDependencies = layoutDependencies() })
 end
 
 function Tenbucks:_startHost(context)
@@ -102,28 +107,27 @@ function Tenbucks:_startHost(context)
 end
 
 function Tenbucks:_beginContext(context)
-  self.core = Core.new({ displayId = context.displayId, regularSpaceId = context.regularSpaceId,
-    workArea = context.workArea, layoutDependencies = layoutDependencies() })
+  self.cores = {}
+  self.core = newCore(context)
+  self.cores[context.regularSpaceId] = self.core
   self.originContext, self.suspended = context, false
   self:_startHost(context)
 end
 
--- Canary A owns one original regular Space. A different confirmed Space is a
--- non-destructive suspension boundary, not permission to rebuild Core state.
+-- A confirmed regular-Space activation switches the single native host to that
+-- Space's retained pure Core. A newly observed Space gets one bootstrap; a
+-- returning Space reuses its existing order, selection, and layout state.
 function Tenbucks:_contextChanged(context)
-  if not self.originContext then return end
-  if context.regularSpaceId == self.originContext.regularSpaceId then
-    if self.suspended then
-      self.suspended = false
-      self:_startHost(context)
-      self.core:submit({ type = "Reflow" })
-    end
-    return -- duplicate same-Space observation is a no-op.
+  if self.context and context.regularSpaceId == self.context.regularSpaceId then return end
+  self:_stopHost()
+  self.core = self.cores[context.regularSpaceId]
+  if not self.core then
+    self.core = newCore(context)
+    self.cores[context.regularSpaceId] = self.core
   end
-  if not self.suspended then
-    self:_stopHost()
-    self.context, self.suspended = context, true
-  end
+  self.suspended = false
+  self:_startHost(context)
+  self.core:submit({ type = "Reflow" })
 end
 
 function Tenbucks:start()
@@ -135,7 +139,6 @@ function Tenbucks:start()
   local ok, err = pcall(function()
     self:_beginContext(Context.snapshot(hs, self.config.builtInDisplayUUID))
     bindings = Bindings.bind(hs, function(command)
-      if self.suspended then return false, "10bucks Canary A is suspended outside its original regular Space" end
       return self.core:submit(command)
     end, self.config.hotkeys)
     contextSubscription = Context.watch(hs, self.config.builtInDisplayUUID, function(context)
