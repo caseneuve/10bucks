@@ -172,7 +172,17 @@ function Host:subscribeApplications(callback)
     if not self.started or generation ~= self.generation or not app then return end
     local pid = call(app, "pid")
     if event == self.hs.application.watcher.launched then
-      if self.windowCallback then self:_attachApp(app, self.windowCallback) end
+      if self.windowCallback then
+        -- One launch-scoped scan closes the attach-vs-first-window race. This
+        -- is event-triggered and app-local: no timer, global rescan, or poll.
+        self:_attachApp(app, self.windowCallback)
+        local ok, windows = pcall(app.allWindows, app)
+        if ok and type(windows) == "table" then
+          for _, window in ipairs(windows) do
+            self:_ready(window, "targetedReadiness", self.windowCallback)
+          end
+        end
+      end
     elseif event == self.hs.application.watcher.terminated then
       for _, record in ipairs(self.appOwned[pid] or {}) do self:_detach(record) end
       self.appOwned[pid] = nil; self:_forgetPid(pid); callback({ kind = "terminated", pid = pid })

@@ -79,8 +79,11 @@ return {
     host:probeReadiness(99, function(metadata) assert(metadata == nil) end); assert(f.scans == scans)
     f.windowWatcher.callback(nil, "AXWindowMiniaturized"); f.fullscreen = true; f.windowWatcher.callback(nil, "AXWindowResized"); f.windowWatcher.callback(nil, "AXUIElementDestroyed")
     assert(events[#events].kind == "destroyed"); host:probeReadiness(9, function(metadata) assert(metadata == nil) end)
-    local lifecycleCount = #events
-    f.lifecycle.callback(nil, 2, app); assert(#events == lifecycleCount, "launch lifecycle callback must not receive window data")
+    local lifecycleCount, scansBeforeLaunch = #events, f.scans
+    f.lifecycle.callback(nil, 2, app)
+    assert(#events == lifecycleCount + 1 and events[#events].kind == "ready")
+    assert(events[#events].metadata.origin == "targetedReadiness")
+    assert(f.scans == scansBeforeLaunch + 1, "launch must perform exactly one app-local readiness scan")
     f.appWatchers[#f.appWatchers].callback(f.window, "AXWindowCreated"); assert(events[#events].kind == "ready")
     local old = f.appWatchers[#f.appWatchers].callback
     f.lifecycle.callback(nil, 3, app); subscription.detach(); host:stop():stop(); assert(f.stops == 4)
