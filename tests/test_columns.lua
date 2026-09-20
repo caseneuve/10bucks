@@ -40,8 +40,8 @@ end
 
 return {
   ["COL-002 COL-003 WIN-003: admission splits a multi-member sole stack once, then appends to active column"] = function()
-    local state = Columns.initialState({ "one", "two", "old-right" }, context())
-    state = Columns.reduce(state, { type = "Remove", memberId = "old-right" }, context())
+    local state = { stacks = { { members = { "one", "two" }, selectedId = "two" } }, activeStack = 1, ratio = 0.5 }
+    assertValid(state, { "one", "two" })
     state = Columns.reduce(state, { type = "Admit", memberId = "three" }, context())
     assert(deepEqual(state.stacks[1].members, { "one", "two" }))
     assert(deepEqual(state.stacks[2].members, { "three" }))
@@ -78,18 +78,18 @@ return {
     assert(deepEqual(state, before))
   end,
 
-  ["COL-005 COL-002: permanent-empty removal deletes the column and the next admission splits the surviving stack"] = function()
-    local state = Columns.initialState({ "one", "two" }, context())
+  ["COL-005: permanent-empty removal re-splits two or more surviving windows"] = function()
+    local state = Columns.initialState({ "one", "two", "three" }, context())
+    state = Columns.reduce(state, { type = "Remove", memberId = "three" }, context())
+    equal(#state.stacks, 2)
+    assert(deepEqual(state.stacks[1].members, { "one" }))
+    assert(deepEqual(state.stacks[2].members, { "two" }))
+    assertValid(state, { "one", "two" })
+
     state = Columns.reduce(state, { type = "Remove", memberId = "two" }, context())
     equal(#state.stacks, 1)
     assert(deepEqual(state.stacks[1].members, { "one" }))
     equal(state.activeStack, 1)
-
-    state = Columns.reduce(state, { type = "Admit", memberId = "three" }, context())
-    assert(deepEqual(state.stacks[1].members, { "one" }))
-    assert(deepEqual(state.stacks[2].members, { "three" }))
-    equal(state.activeStack, 2)
-    assertValid(state, { "one", "three" })
   end,
 
   ["COL-006 WIN-002: guarded move preserves source order, appends/focuses destination, and never creates an empty placeholder"] = function()

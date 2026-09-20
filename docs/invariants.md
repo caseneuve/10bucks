@@ -134,7 +134,7 @@ If one column has no currently available members only because its durable member
 
 ### COL-005 — Permanent empty column
 
-Destroying or cross-Space-moving the last durable member removes that column. The next admission follows COL-002.
+Destroying or cross-Space-moving the last durable member removes that column. If at least two durable windows survive in the other column, columns immediately normalizes them back to two non-empty physical columns by retaining their order, keeping all but the newest on the left, and moving the newest to the right. With only one survivor, one column remains and the next admission follows COL-002.
 
 ### COL-006 — Move between columns
 

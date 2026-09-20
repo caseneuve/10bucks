@@ -271,9 +271,27 @@ function Columns.reduce(state, event, context)
     local active = state.activeStack
     if #stack.members == 0 then
       table.remove(stacks, stackIndex)
-      if #stacks == 0 then active = nil
-      elseif active == stackIndex then active = math.min(stackIndex, #stacks)
-      elseif active > stackIndex then active = active - 1 end
+      if #stacks == 0 then
+        active = nil
+      else
+        local survivor = stacks[1]
+        -- A permanent removal must not leave columns visually identical to
+        -- stack when at least two durable windows survive. Normalize surviving
+        -- content to physical left and split its newest member to the right.
+        if #survivor.members >= 2 then
+          local rightId = table.remove(survivor.members)
+          local activeId = survivor.selectedId
+          if activeId == rightId then
+            survivor.selectedId = survivor.members[#survivor.members]
+            active = 2
+          else
+            active = 1
+          end
+          stacks[2] = { members = { rightId }, selectedId = rightId }
+        else
+          active = 1
+        end
+      end
     else
       if stack.selectedId == event.memberId then
         local predecessor = removedIndex == 1 and #stack.members or removedIndex - 1
