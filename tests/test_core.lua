@@ -75,6 +75,11 @@ return {
     local columns = state.coordinators["space-1"].layouts.columns
     equal(columns.activeStack, 1)
     equal(columns.stacks[1].selectedId, "three")
+    core:submit({ type = "WindowTitleChanged", id = "one", title = "late callback" })
+    core:submit({ type = "WindowVisibilityObserved", id = "one", visible = true })
+    columns = core:state().coordinators["space-1"].layouts.columns
+    equal(columns.activeStack, 1)
+    equal(columns.stacks[1].selectedId, "three")
   end,
 
   ["FOCUS-003 WIN-002 FOCUS-006: focus observation never admits or reorders and requested focus changes only selection"] = function()

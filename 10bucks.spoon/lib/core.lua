@@ -94,11 +94,6 @@ local function validateComposite(state, displayId, spaceId, dependencies)
     context(state.manager, displayId, spaceId), dependencies)
 end
 
-local function synchronize(coordinator, manager, displayId, spaceId, dependencies)
-  return Coordinator.reduce(coordinator, { type = "Synchronize" }, members(manager, spaceId),
-    context(manager, displayId, spaceId), dependencies)
-end
-
 local function reduceComposite(current, transaction, displayId, spaceId, dependencies)
   if type(transaction) ~= "table" or type(transaction.type) ~= "string" then error("core input must be a normalized event or command", 2) end
   local before, manager = current.manager, current.manager
@@ -143,12 +138,11 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
     for key, value in pairs(transaction) do if key ~= "type" and key ~= "name" then event[key] = value end end
     coordinator = Coordinator.reduce(coordinator, event, newIds, context(manager, displayId, spaceId), dependencies)
   end
-  -- Membership/lifecycle observations synchronize layout state with actual focus.
-  -- A command has already reduced desired selection and must not be overwritten
-  -- by the still-unchanged native focus before its focus effect executes.
-  if not isCommand and transaction.type ~= "WindowReady" then
-    coordinator = synchronize(coordinator, manager, displayId, spaceId, dependencies)
-  end
+  -- Admission/removal are propagated explicitly above, focus observations use
+  -- ManagedFocusObserved, and layout activation synchronizes internally. Do not
+  -- run a blanket synchronization for title/lifecycle callbacks: one commonly
+  -- arrives between admission and native focus completion and would overwrite
+  -- the newer desired selection with stale actual focus.
   return { manager = manager, coordinators = { [spaceId] = coordinator } }
 end
 
