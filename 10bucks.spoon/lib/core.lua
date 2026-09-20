@@ -36,13 +36,24 @@ end
 local function context(manager, displayId, spaceId)
   local actual = manager.focus.actualWindow.id
   local available = availability(manager)
+  local focused = manager.windows[actual] and available[actual] and actual or nil
+  if not focused then
+    for index = #manager.focus.managedHistory, 1, -1 do
+      local candidate = manager.focus.managedHistory[index]
+      local window = manager.windows[candidate]
+      if window and window.placementSpaceId == spaceId and available[candidate] then
+        focused = candidate
+        break
+      end
+    end
+  end
   return {
     displayId = displayId,
     spaceId = spaceId,
     availableMembers = available,
-    -- An unavailable actual focus cannot overwrite the recovered desired
-    -- selection during coordinator synchronization.
-    focusedMemberId = manager.windows[actual] and available[actual] and actual or nil,
+    -- Layout activation follows actual managed focus, or the last available
+    -- managed focus when a popup/unmanaged window currently owns macOS focus.
+    focusedMemberId = focused,
   }
 end
 

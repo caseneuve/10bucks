@@ -82,6 +82,19 @@ return {
     equal(state.coordinators["space-1"].layouts.stack.selectedId, "one")
   end,
 
+  ["FOCUS-001 LAY-003: layout cycling retains last managed focus across unmanaged actual focus"] = function()
+    local core = new(function() end)
+    core:submit(ready("one")); core:submit(ready("two")); core:submit(ready("three"))
+    core:submit({ type = "CycleLayout" })
+    core:submit({ type = "ActualFocusChanged", id = "one" })
+    core:submit({ type = "ActualFocusChanged", id = "popup" })
+    core:submit({ type = "CycleLayout" }); core:submit({ type = "CycleLayout" })
+    local state = core:state()
+    local columns = state.coordinators["space-1"].layouts.columns
+    equal(columns.activeStack, 1)
+    equal(columns.stacks[1].selectedId, "one")
+  end,
+
   ["STATE-008 WIN-004 WIN-005 FOCUS-004: unavailable/destroyed selected member retains slots or removes them and recovers current-Space focus"] = function()
     local observed = {}
     local core = new(function(intents) observed[#observed + 1] = intents end)

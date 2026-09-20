@@ -269,6 +269,7 @@ function Columns.reduce(state, event, context)
     for index, memberId in ipairs(stack.members) do if memberId == event.memberId then removedIndex = index; break end end
     table.remove(stack.members, removedIndex)
     local active = state.activeStack
+    local removedActiveStack = active == stackIndex
     if #stack.members == 0 then
       table.remove(stacks, stackIndex)
       if #stacks == 0 then
@@ -283,11 +284,16 @@ function Columns.reduce(state, event, context)
           local activeId = survivor.selectedId
           if activeId == rightId then
             survivor.selectedId = survivor.members[#survivor.members]
+          end
+          stacks[2] = { members = { rightId }, selectedId = rightId }
+          if removedActiveStack then
+            -- Replace the emptied active physical side and keep focus there.
+            active = stackIndex
+          elseif activeId == rightId then
             active = 2
           else
             active = 1
           end
-          stacks[2] = { members = { rightId }, selectedId = rightId }
         else
           active = 1
         end

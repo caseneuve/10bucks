@@ -92,6 +92,17 @@ return {
     equal(state.activeStack, 1)
   end,
 
+  ["COL-005 FOCUS-004: removing sole focused column member keeps that physical column active after re-split"] = function()
+    local state = Columns.initialState({ "one", "two", "three" }, context())
+    equal(state.activeStack, 2)
+    state = Columns.reduce(state, { type = "Remove", memberId = "three" }, context())
+    equal(#state.stacks, 2)
+    equal(state.activeStack, 2)
+    equal(state.stacks[2].selectedId, "two")
+    assert(deepEqual(state.stacks[1].members, { "one" }))
+    assert(deepEqual(state.stacks[2].members, { "two" }))
+  end,
+
   ["COL-006 WIN-002: guarded move preserves source order, appends/focuses destination, and never creates an empty placeholder"] = function()
     local state = Columns.initialState({ "one", "two", "three" }, context())
     state = Columns.reduce(state, { type = "ManagedFocusObserved", memberId = "two" }, context())
