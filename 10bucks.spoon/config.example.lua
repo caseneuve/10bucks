@@ -4,5 +4,10 @@
 local hyper = { "cmd", "alt", "ctrl", "shift" }
 return {
   builtInDisplayUUID = "REPLACE-WITH-VERIFIED-BUILT-IN-DISPLAY-UUID",
-  hotkeys = { focusPrevious = { hyper, "k" }, focusNext = { hyper, "j" }, reflow = { hyper, "r" } },
+  hotkeys = {
+    cycleLayout = { hyper, "space" },
+    focusPrevious = { hyper, "k" },
+    focusNext = { hyper, "j" },
+    reflow = { hyper, "r" },
+  },
 }

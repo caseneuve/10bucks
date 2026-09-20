@@ -3,6 +3,7 @@ local Config = {}
 Config.defaults = {
   builtInDisplayUUID = nil,
   hotkeys = {
+    cycleLayout = { { "cmd", "alt", "ctrl", "shift" }, "space" },
     focusPrevious = { { "cmd", "alt", "ctrl", "shift" }, "k" },
     focusNext = { { "cmd", "alt", "ctrl", "shift" }, "j" },
     reflow = { { "cmd", "alt", "ctrl", "shift" }, "r" },

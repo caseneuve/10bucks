@@ -1,7 +1,12 @@
 -- Thin native hotkey adapter for the currently composed command registry.
 local Bindings = {}
 
-local actions = { focusPrevious = "FocusPrevious", focusNext = "FocusNext", reflow = "Reflow" }
+local actions = {
+  cycleLayout = "CycleLayout",
+  focusPrevious = "FocusPrevious",
+  focusNext = "FocusNext",
+  reflow = "Reflow",
+}
 
 function Bindings.bind(hs, submit, hotkeys)
   assert(type(submit) == "function", "bindings require a command sink")

@@ -39,7 +39,7 @@ return {
   ["Canary A bindings dispatch only validated commands and delete every binding"] = function()
     local calls, deleted, command = {}, 0, nil
     local hs = { hotkey = { bind = function(_, _, callback) calls[#calls + 1] = callback; return { delete = function() deleted = deleted + 1 end } end } }
-    local config = Config.build({ hotkeys = { focusPrevious = false, focusNext = { { "cmd" }, "j" }, reflow = false } })
+    local config = Config.build({ hotkeys = { cycleLayout = false, focusPrevious = false, focusNext = { { "cmd" }, "j" }, reflow = false } })
     local bound = Bindings.bind(hs, function(value) command = value end, config.hotkeys)
     assert(#bound == 1); calls[1](); assert(command.type == "FocusNext"); Bindings.delete(bound); assert(deleted == 1)
   end,
