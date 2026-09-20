@@ -7,6 +7,7 @@ local actions = {
   focusNextGroup = "FocusNextGroup",
   focusPrevious = "FocusPrevious",
   focusNext = "FocusNext",
+  moveFocusedToOtherGroup = "MoveFocusedToOther",
   reflow = "Reflow",
 }
 

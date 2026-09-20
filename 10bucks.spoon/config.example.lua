@@ -10,6 +10,7 @@ return {
     focusNextGroup = { hyper, "l" },
     focusPrevious = { hyper, "k" },
     focusNext = { hyper, "j" },
+    moveFocusedToOtherGroup = { hyper, "o" },
     reflow = { hyper, "r" },
   },
 }

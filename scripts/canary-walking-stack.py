@@ -203,7 +203,7 @@ def start_capture(args):
         stop_stable(); stopped = True
         atomic_regular_replace(temporary, args.config, 0o600, "candidate config", destination_mode=before["configMode"]); atomic_symlink(SPOON,args.link); reload_and_wait()
         probe = candidate_probe(); canary = probe.get("canary") or {}
-        if not (probe.get("started") and probe.get("bindings") == 6 and canary.get("enabled") and canary.get("activeTimers") == 0):
+        if not (probe.get("started") and probe.get("bindings") == 7 and canary.get("enabled") and canary.get("activeTimers") == 0):
             raise RuntimeError("candidate startup verification failed: " + json.dumps(probe, sort_keys=True))
         return {"preflight":before,"status":probe}
     except Exception as primary:
