@@ -68,6 +68,13 @@ return {
     equal(emitted[2].windowId, "two")
     equal(emitted[2].frame.x, 510)
     equal(emitted[2].frame.w, 500)
+
+    core:submit({ type = "ActualFocusChanged", id = "one" })
+    core:submit(ready("three"))
+    local state = core:state()
+    local columns = state.coordinators["space-1"].layouts.columns
+    equal(columns.activeStack, 1)
+    equal(columns.stacks[1].selectedId, "three")
   end,
 
   ["FOCUS-003 WIN-002 FOCUS-006: focus observation never admits or reorders and requested focus changes only selection"] = function()

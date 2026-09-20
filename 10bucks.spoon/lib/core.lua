@@ -146,7 +146,7 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
   -- Membership/lifecycle observations synchronize layout state with actual focus.
   -- A command has already reduced desired selection and must not be overwritten
   -- by the still-unchanged native focus before its focus effect executes.
-  if not isCommand then
+  if not isCommand and transaction.type ~= "WindowReady" then
     coordinator = synchronize(coordinator, manager, displayId, spaceId, dependencies)
   end
   return { manager = manager, coordinators = { [spaceId] = coordinator } }
