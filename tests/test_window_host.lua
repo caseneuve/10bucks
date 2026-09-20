@@ -19,10 +19,10 @@ return {
     local f, _, element = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
     host:subscribeExistingWindows(function(e) events[#events + 1] = e end)
     assert(f.membershipQueries == 1 and f.scans == 1 and events[1].metadata.origin == "bootstrap")
-    f.members = {}; f.appWatchers[1].callback(element, "AXWindowCreated"); assert(#events == 2 and f.ownerQueries == 1)
-    f.owners = { 99 }; f.appWatchers[1].callback(element, "AXWindowCreated"); assert(#events == 2)
-    f.owners = { 9, 10 }; f.appWatchers[1].callback(element, "AXWindowCreated"); assert(#events == 2)
-    f.owners = { 9 }; f.spaceType = "fullscreen"; f.appWatchers[1].callback(element, "AXWindowCreated"); assert(#events == 2)
+    f.members = {}; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2 and f.ownerQueries == 1)
+    f.owners = { 99 }; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2)
+    f.owners = { 9, 10 }; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2)
+    f.owners = { 9 }; f.spaceType = "fullscreen"; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2)
   end,
   ["nil/error app watcher and failed bootstrap defer only that app while peers still boot"] = function()
     local f, primary = fake()
@@ -81,7 +81,7 @@ return {
     assert(events[#events].kind == "destroyed"); host:probeReadiness(9, function(metadata) assert(metadata == nil) end)
     local lifecycleCount = #events
     f.lifecycle.callback(nil, 2, app); assert(#events == lifecycleCount, "launch lifecycle callback must not receive window data")
-    f.appWatchers[#f.appWatchers].callback(element, "AXWindowCreated"); assert(events[#events].kind == "ready")
+    f.appWatchers[#f.appWatchers].callback(f.window, "AXWindowCreated"); assert(events[#events].kind == "ready")
     local old = f.appWatchers[#f.appWatchers].callback
     f.lifecycle.callback(nil, 3, app); subscription.detach(); host:stop():stop(); assert(f.stops == 4)
     host:start(); old(element, "AXWindowCreated"); assert(events[#events].kind == "terminated")

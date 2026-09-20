@@ -64,7 +64,7 @@ return {
   end,
   ["composition created/destroyed and availability callbacks update replacement Core only"] = function()
     local f, element = fakeHs(); local ten = load(f); ten:start()
-    f.appWatcher.callback(element, "AXWindowCreated"); assert(ten.core:state().manager.windows[9])
+    f.appWatcher.callback(f.window, "AXWindowCreated"); assert(ten.core:state().manager.windows[9])
     f.windowWatcher.callback(nil, "AXWindowMiniaturized"); assert(ten.core:state().manager.windows[9] and f.frames == 1)
     f.actual = { x = 5, y = 0, w = 1, h = 1 }; f.windowWatcher.callback(nil, "AXWindowDeminiaturized"); assert(f.frames == 2)
     f.life.callback(nil, _G.hs.application.watcher.hidden, f.window:application()); assert(ten.core:state().manager.windows[9])
@@ -75,7 +75,7 @@ return {
   ["composition unknown focus never admits or scans and inactive creation defers"] = function()
     local f, element = fakeHs(); local ten = load(f); ten:start(); local scans = f.scans
     ten.windows:_window({ kind = "focus", id = 99 }, ten.windows.generation); assert(not ten.core:state().manager.windows[99] and f.scans == scans)
-    f.windowWatcher.callback(nil, "AXUIElementDestroyed"); f.owners = { "other" }; f.appWatcher.callback(element, "AXWindowCreated"); assert(not ten.core:state().manager.windows[9])
+    f.windowWatcher.callback(nil, "AXUIElementDestroyed"); f.owners = { "other" }; f.appWatcher.callback(f.window, "AXWindowCreated"); assert(not ten.core:state().manager.windows[9])
     ten:stop()
   end,
   ["composition rolls back bind and bootstrap failures exactly once then retries"] = function()

@@ -11,7 +11,11 @@ local function call(object, method, ...)
 end
 
 local function asWindow(element)
-  if not element or type(element.asHSWindow) ~= "function" then return nil end
+  if not element then return nil end
+  -- Verified on Hammerspoon 1.1.1 with Ghostty: application:newWatcher()
+  -- delivers hs.window userdata for AXWindowCreated/AXFocusedWindowChanged.
+  if type(element.id) == "function" and type(element.newWatcher) == "function" then return element end
+  if type(element.asHSWindow) ~= "function" then return nil end
   local ok, window = pcall(element.asHSWindow, element)
   return ok and window or nil
 end
