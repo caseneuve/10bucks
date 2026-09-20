@@ -127,6 +127,7 @@ return {
     local observed = {}
     local core = new(function(intents) observed[#observed + 1] = intents end)
     core:submit(ready("one")); core:submit(ready("two")); core:submit(ready("three"))
+    core:submit({ type = "ActualFocusChanged", id = "three" })
     core:submit({ type = "FocusNext" }); core:submit({ type = "FocusNext" })
     equal(core:state().coordinators["space-1"].layouts.stack.selectedId, "two")
     core:submit({ type = "MoveFocusedToOther" })

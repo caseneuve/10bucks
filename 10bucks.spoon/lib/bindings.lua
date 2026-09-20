@@ -3,6 +3,8 @@ local Bindings = {}
 
 local actions = {
   cycleLayout = "CycleLayout",
+  focusPreviousGroup = "FocusPreviousGroup",
+  focusNextGroup = "FocusNextGroup",
   focusPrevious = "FocusPrevious",
   focusNext = "FocusNext",
   reflow = "Reflow",

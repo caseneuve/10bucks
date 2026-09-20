@@ -6,6 +6,8 @@ return {
   builtInDisplayUUID = "REPLACE-WITH-VERIFIED-BUILT-IN-DISPLAY-UUID",
   hotkeys = {
     cycleLayout = { hyper, "space" },
+    focusPreviousGroup = { hyper, "h" },
+    focusNextGroup = { hyper, "l" },
     focusPrevious = { hyper, "k" },
     focusNext = { hyper, "j" },
     reflow = { hyper, "r" },

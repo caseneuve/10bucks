@@ -132,7 +132,12 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
     for key, value in pairs(transaction) do if key ~= "type" and key ~= "name" then event[key] = value end end
     coordinator = Coordinator.reduce(coordinator, event, newIds, context(manager, displayId, spaceId), dependencies)
   end
-  coordinator = synchronize(coordinator, manager, displayId, spaceId, dependencies)
+  -- Membership/lifecycle observations synchronize layout state with actual focus.
+  -- A command has already reduced desired selection and must not be overwritten
+  -- by the still-unchanged native focus before its focus effect executes.
+  if not isCommand then
+    coordinator = synchronize(coordinator, manager, displayId, spaceId, dependencies)
+  end
   return { manager = manager, coordinators = { [spaceId] = coordinator } }
 end
 
