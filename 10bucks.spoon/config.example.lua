@@ -11,6 +11,7 @@ return {
     focusPrevious = { hyper, "k" },
     focusNext = { hyper, "j" },
     moveFocusedToOtherGroup = { hyper, "o" },
+    swapGroups = { hyper, "g" },
     reflow = { hyper, "r" },
   },
 }

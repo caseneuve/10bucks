@@ -9,6 +9,7 @@ Config.defaults = {
     focusPrevious = { { "cmd", "alt", "ctrl", "shift" }, "k" },
     focusNext = { { "cmd", "alt", "ctrl", "shift" }, "j" },
     moveFocusedToOtherGroup = { { "cmd", "alt", "ctrl", "shift" }, "o" },
+    swapGroups = { { "cmd", "alt", "ctrl", "shift" }, "g" },
     reflow = { { "cmd", "alt", "ctrl", "shift" }, "r" },
   },
   canaryInstrumentation = false,

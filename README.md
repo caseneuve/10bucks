@@ -12,7 +12,7 @@ Canary A manages the confirmed original regular Space with the replacement direc
 
 - Direct application/UI-element AX lifecycle observation for the active original regular Space.
 - Stack navigation and zero-duration reflow effects.
-- Seven configurable Hyper bindings: `Space` (cycle stack/columns), `h/l` (previous/next column), `j/k` (next/previous window), `o` (move focused window to the other column), and `r` (reflow).
+- Eight configurable Hyper bindings: `Space` (cycle stack/columns), `h/l` (previous/next column), `j/k` (next/previous window), `o` (move focused window), `g` (swap columns), and `r` (reflow).
 - A required explicit built-in-display UUID preflight before startup.
 
 ## Explicitly absent
@@ -45,12 +45,13 @@ return {
     focusNext = { hyper, "j" },
     focusPrevious = { hyper, "k" },
     moveFocusedToOtherGroup = { hyper, "o" },
+    swapGroups = { hyper, "g" },
     reflow = { hyper, "r" },
   },
 }
 ```
 
-Set one of these seven named bindings to `false` to disable it. No other configuration keys or bindings are supported by Canary A.
+Set one of these eight named bindings to `false` to disable it. No other configuration keys or bindings are supported by Canary A.
 
 ## Rewrite contracts
 
