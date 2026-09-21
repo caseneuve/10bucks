@@ -99,7 +99,12 @@ function Tenbucks:_afterCoreEvent(event)
       local target = { windowId = event.id, spaceId = window.placementSpaceId }
       if not self.pendingGlobalFocus or self.pendingGlobalFocus.windowId == event.id then
         self.focusHistory:observe(target)
-        if self.pendingGlobalFocus and self.pendingGlobalFocus.windowId == event.id then self.pendingGlobalFocus = nil end
+        if self.pendingGlobalFocus and self.pendingGlobalFocus.windowId == event.id then
+          self.pendingGlobalFocus = nil
+          -- The global target is now confirmed; clear the target Core's local
+          -- pending gate so subsequent mouse and h/l observations apply.
+          self.core:confirmFocus(event.id)
+        end
       end
     end
   end

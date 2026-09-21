@@ -177,7 +177,12 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
   local commandChanged = false
   if isCommand then
     local beforeCommand = coordinator
-    if transaction.name == "FocusTarget" then
+    if transaction.name == "ConfirmFocus" then
+      local desired = manager.focus.desiredBySpace[spaceId]
+      if desired.pending and desired.targetId == transaction.windowId then
+        manager = setDesired(manager, spaceId, transaction.windowId, false, desired.sourceGroup)
+      end
+    elseif transaction.name == "FocusTarget" then
       local window = manager.windows[transaction.windowId]
       if window and window.placementSpaceId == spaceId and availability(manager)[transaction.windowId] then
         coordinator = Coordinator.reduce(coordinator,
@@ -283,6 +288,10 @@ function Core:submit(input)
   local ok, err = self.runtime:submit(translated)
   self.lastResult = ok and { accepted = true } or { accepted = false, reason = err }
   return ok, err
+end
+
+function Core:confirmFocus(windowId)
+  return self:submit({ type = "Command", name = "ConfirmFocus", windowId = windowId })
 end
 
 function Core:state() return self.runtime:state() end

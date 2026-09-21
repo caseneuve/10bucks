@@ -130,6 +130,7 @@ return {
     assert(ten.core == firstCore and ten.core:state().manager.focus.desiredBySpace.space.targetId == 9)
     ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
     assert(ten.pendingGlobalFocus == nil)
+    assert(not ten.core:state().manager.focus.desiredBySpace.space.pending)
     assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
     assert(otherFocuses == 1 and ten.pendingGlobalFocus.windowId == 10)
     ten:stop()
