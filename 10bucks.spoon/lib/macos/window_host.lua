@@ -35,7 +35,7 @@ end
 
 function Host.new(hs, context, instrumentation, handleRegistry)
   return setmetatable({ hs = hs, context = context, instrumentation = instrumentation, handleRegistry = handleRegistry,
-    generation = 0, started = false, owned = {}, appOwned = {}, handles = {}, frames = {} }, Host)
+    generation = 0, started = false, owned = {}, appOwned = {}, handles = {}, managedObservers = {}, frames = {} }, Host)
 end
 
 function Host:_record(kind)
@@ -69,7 +69,7 @@ end
 
 function Host:_forget(id)
   local record = self.handles[id]
-  self.handles[id], self.frames[id] = nil, nil
+  self.handles[id], self.frames[id], self.managedObservers[id] = nil, nil, nil
   if self.handleRegistry then self.handleRegistry:forget(id, record and record.handle) end
 end
 
@@ -142,6 +142,7 @@ end
 function Host:subscribeWindow(window, callback)
   self:_remember(window)
   local id, generation = call(window, "id"), self.generation
+  if id ~= nil then self.managedObservers[id] = true end
   -- Verified by read-only installed-runtime query: focused hs.window.newWatcher
   -- is a function, its AX element's newWatcher is nil, and application.newWatcher
   -- is a function. Installed hs.window.filter source also calls win:newWatcher.
@@ -211,6 +212,7 @@ function Host:subscribeApplications(callback)
       -- focused; use the same global actual-focus boundary as AX callbacks.
       self:observeFocus()
     elseif event == self.hs.application.watcher.terminated then
+      if self.presentationPid == pid then self:_observePresentation(nil, nil, nil) end
       for _, record in ipairs(self.appOwned[pid] or {}) do self:_detach(record) end
       self.appOwned[pid] = nil; self:_forgetPid(pid)
       if self.handleRegistry then self.handleRegistry:forgetPid(pid) end
@@ -267,9 +269,38 @@ end
 function Host:stop()
   if not self.started then return self end
   self.started = false; self.generation = self.generation + 1
+  if self.presentationSubscription then self.presentationSubscription.detach() end
   for _, record in ipairs(self.owned) do self:_detach(record) end
-  self.owned, self.appOwned, self.handles, self.frames, self.windowCallback = {}, {}, {}, {}, nil
+  self.owned, self.appOwned, self.handles, self.managedObservers, self.frames, self.windowCallback, self.presentationSubscription, self.presentationId, self.presentationPid = {}, {}, {}, {}, {}, nil, nil, nil, nil
   return self
+end
+
+function Host:_observePresentation(window, id, pid)
+  if self.presentationId == id then return end
+  if self.presentationSubscription then self.presentationSubscription.detach(); self.presentationSubscription = nil end
+  self.presentationId, self.presentationPid = id, pid
+  if id == nil then return end
+  -- A managed window has its full lifecycle title observer. A focused excluded
+  -- window gets one replaceable title-only observer; its existing handle cache
+  -- remains only for the independent targeted-readiness path, not as proof of
+  -- management.
+  if self.managedObservers[id] or type(window.newWatcher) ~= "function" then return end
+  local generation = self.generation
+  local ok, watcher = pcall(window.newWatcher, window, function(_, event)
+    if self.started and generation == self.generation and event == "AXTitleChanged" and self.windowCallback then
+      self.windowCallback({ kind = "titleChanged", id = id, title = call(window, "title") or "" })
+    end
+  end)
+  if not ok or not watcher then return end
+  local stopped = false
+  local function detach()
+    if stopped then return end
+    stopped = true
+    if watcher.stop then pcall(watcher.stop, watcher) end
+  end
+  ok = pcall(watcher.start, watcher, { "AXTitleChanged" })
+  if not ok then detach(); return end
+  self.presentationSubscription = { detach = detach }
 end
 
 -- POC-009 verified that unchanged native focus need not produce
@@ -277,13 +308,28 @@ end
 -- a scan or timer. An optional expected ID guards post-effect confirmation.
 function Host:observeFocus(expectedId)
   self:_record("targetedFocusQueries")
-  local focused = moduleCall(self.hs.window and self.hs.window.focusedWindow)
+  local reader = self.hs.window and self.hs.window.focusedWindow
+  if type(reader) ~= "function" then return false end
+  local ok, focused = pcall(reader)
+  if not ok or not self.windowCallback then return false end
+  if focused == nil then
+    if expectedId ~= nil then return false end
+    self:_observePresentation(nil, nil, nil)
+    self.windowCallback({ kind = "focus" }); return true
+  end
   local actualId = call(focused, "id")
-  if actualId == nil or (expectedId ~= nil and actualId ~= expectedId) or not self.windowCallback then return false end
-  self:_remember(focused)
+  -- A non-nil object without an ID is a failed/uncertain read, not successful
+  -- no-focus. Preserve presentation instead of clearing it.
+  if actualId == nil then return false end
+  -- An expected post-effect read only confirms its matching target; a
+  -- nonmatching result is not a no-focus observation.
+  if expectedId ~= nil and actualId ~= expectedId then return false end
   local app = call(focused, "application")
+  local pid = call(app, "pid")
+  self:_observePresentation(focused, actualId, pid)
+  self:_remember(focused)
   self.windowCallback({ kind = "focus", id = actualId, title = call(focused, "title"),
-    applicationName = call(app, "name") })
+    applicationName = call(app, "name"), applicationPid = pid, nativeFullscreen = call(focused, "isFullScreen") == true })
   return true
 end
 

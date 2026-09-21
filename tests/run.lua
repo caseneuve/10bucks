@@ -8,6 +8,7 @@ local tests = {
   require("tests.test_layout_coordinator"), require("tests.test_generated_sequences"), require("tests.test_core"),
   require("tests.test_focus_sequences"), require("tests.test_focus_history"), require("tests.test_handle_registry"),
   (require("tests.test_integration_canary_a")), (require("tests.test_composition")), (require("tests.test_fullscreen_focus")),
+  (require("tests.test_bar")),
 }
 local passed, failed = 0, 0
 for _, suite in ipairs(tests) do

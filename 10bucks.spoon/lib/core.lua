@@ -292,6 +292,13 @@ function Core:submit(input)
   return ok, err
 end
 
+function Core:setWorkArea(nextWorkArea)
+  if type(nextWorkArea) ~= "table" or type(nextWorkArea.x) ~= "number" or type(nextWorkArea.y) ~= "number"
+    or type(nextWorkArea.w) ~= "number" or type(nextWorkArea.h) ~= "number" then error("work area must be primitive geometry", 2) end
+  local current = self.workArea
+  if current.x == nextWorkArea.x and current.y == nextWorkArea.y and current.w == nextWorkArea.w and current.h == nextWorkArea.h then return end
+  self.workArea = copy(nextWorkArea)
+end
 function Core:state() return self.runtime:state() end
 function Core:version() return self.runtime:version() end
 

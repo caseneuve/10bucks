@@ -28,9 +28,12 @@ local function setup()
   app.allWindows = function() f.scans = f.scans + 1; return windows end
   app.newWatcher = function(_, callback) f.appWatcher = watcher(callback); return f.appWatcher end
   f.focused = windows[1]
-  local screen = { getUUID = function() return "built-in" end, frame = function() return { x = 0, y = 0, w = 100, h = 80 } end }
-  _G.hs = { processInfo = { processID = 99 }, screen = { allScreens = function() return { screen } end },
+  local screen = { getUUID = function() return "built-in" end, frame = function() return { x = 0, y = 0, w = 100, h = 80 } end, fullFrame = function() return { x = 0, y = 0, w = 100, h = 80 } end }
+  local function barTimer() return { stop = function() end } end
+  local function canvas() return { level = function(self) return self end, behavior = function(self) return self end, clickActivating = function(self) return self end, canvasMouseEvents = function(self) return self end, mouseCallback = function(self) return self end, frame = function(self) return self end, replaceElements = function(self) return self end, show = function(self) return self end, hide = function(self) return self end, delete = function() end } end
+  _G.hs = { processInfo = { processID = 99 }, screen = { allScreens = function() return { screen } end, watcher = { new = function(callback) return watcher(callback) end } },
     spaces = { activeSpaceOnScreen = function() return f.activeSpace end,
+      data_managedDisplaySpaces = function() return { { ["Display Identifier"] = "built-in", ["Current Space"] = { ManagedSpaceID = f.activeSpace }, Spaces = { { ManagedSpaceID = "regular", type = 0 }, { ManagedSpaceID = "full", type = 4 } } } } end,
       spaceType = function(id) return id == "full" and "fullscreen" or "user" end,
       windowsForSpace = function(space) local ids = {}; for id in ipairs(windows) do if owner(id) == space then ids[#ids + 1] = id end end; return ids end,
       windowSpaces = function(id) return { owner(id) } end,
@@ -43,6 +46,9 @@ local function setup()
     application = { runningApplications = function() return { app } end,
       watcher = { new = function(callback) f.life = watcher(callback); return f.life end,
         launched = 2, terminated = 3, hidden = 4, unhidden = 5, activated = 6 } },
+    canvas = { new = canvas }, mouse = { absolutePosition = function() return { x = 50, y = 50 } end }, host = { interfaceStyle = function() return nil end },
+    distributednotifications = { new = function() return { start = function() end, stop = function() end } end },
+    timer = { secondsSinceEpoch = function() return 1 end, doAfter = function() return barTimer() end, doEvery = function() return barTimer() end },
     hotkey = { bind = function() return { delete = function() end } end },
   }
   local ten = dofile("10bucks.spoon/init.lua"):configure({ builtInDisplayUUID = "built-in" }):start()

@@ -13,6 +13,10 @@ local Bindings = require("lib.bindings")
 local CanaryInstrumentation = require("lib.macos.canary_instrumentation")
 local FocusHistory = require("lib.focus_history")
 local HandleRegistry = require("lib.macos.handle_registry")
+local Coordinator = require("lib.layouts.coordinator")
+local Model = require("lib.model")
+local Bar = require("lib.bar")
+local NativeBar = require("lib.macos.bar")
 
 local Tenbucks = {}
 Tenbucks.__index = Tenbucks
@@ -21,7 +25,7 @@ Tenbucks.defaultHotkeys = Config.defaults.hotkeys
 
 function Tenbucks.new()
   return setmetatable({ hotkeyBindings = {}, getenv = os.getenv,
-    focusHistory = FocusHistory.new(), handleRegistry = HandleRegistry.new() }, Tenbucks):configure({})
+    focusHistory = FocusHistory.new(), actualPresentation = {}, handleRegistry = HandleRegistry.new() }, Tenbucks):configure({})
 end
 
 function Tenbucks:_record(kind)
@@ -32,6 +36,7 @@ function Tenbucks:canaryStatus()
   if not self.instrumentation then return nil end
   local result = self.instrumentation:status()
   result.started, result.suspended = self.started == true, self.suspended == true
+  result.activeTimers = self.bar and self.bar:timerCount() or 0
   result.memberCount, result.version = 0, self.core and self.core:version() or 0
   if self.core then
     local state = self.core:state()
@@ -61,6 +66,21 @@ end
 local function layoutDependencies()
   return { activeLayoutId = "stack", layoutIds = { "stack", "columns" }, registry = { stack = Stack, columns = Columns },
     layoutConfigs = { columns = { minRatio = .25, maxRatio = .75, defaultRatio = .5 } } }
+end
+
+function Tenbucks:_publishBar()
+  if not self.bar or not self.context then return end
+  local status, layout = { position = nil, count = 0 }, "stack"
+  if self.core and not self.suspended then
+    local state = self.core:state()
+    local coordinator = state.coordinators[self.core.spaceId]
+    local available = {}; for id, window in pairs(state.manager.windows) do available[id] = Model.isAvailable(window) end
+    status = Coordinator.status(coordinator, available, { displayId = self.core.displayId, spaceId = self.core.spaceId,
+      availableMembers = available }, layoutDependencies())
+    layout = coordinator.activeLayoutId
+  end
+  self.bar:present(Bar.format(Bar.view({ context = self.context, status = status, layout = layout,
+    actual = self.actualPresentation, timestamp = hs.timer.secondsSinceEpoch(), dark = self.darkAppearance })))
 end
 
 function Tenbucks:_stopHost()
@@ -119,6 +139,12 @@ function Tenbucks:_afterCoreEvent(event, eventCore)
 end
 
 function Tenbucks:_submitEvent(event, handle)
+  self.actualPresentation = Bar.reduceActual(self.actualPresentation, event)
+  if event.type == "ActualFocusChanged" and event.id == nil then
+    -- A successful native no-focus read clears the bar only; no Core reducer
+    -- accepts nil identity and no focus observation can admit a window.
+    self:_publishBar(); return true
+  end
   if event.type == "WindowReady" and event.metadata.spaceType == "fullscreen" then
     if event.decision.action ~= "manage" then return true end
     local owner, window = self:_coreForManagedWindow(event.id)
@@ -131,6 +157,7 @@ function Tenbucks:_submitEvent(event, handle)
       self.focusHistory:registerUnplaced(event)
       self.handleRegistry:remember(event.id, event.spaceId, handle, event.application.pid)
     end
+    self:_publishBar()
     return true
   end
   local eventCore = self.core
@@ -158,6 +185,7 @@ function Tenbucks:_submitEvent(event, handle)
     end
   end
   self:_afterCoreEvent(event, eventCore)
+  self:_publishBar()
   return true
 end
 
@@ -186,6 +214,8 @@ function Tenbucks:_submitCommand(command)
 end
 
 function Tenbucks:_startHost(context)
+  -- Context is committed before bootstrap can publish focus/read-model facts.
+  self.context = context
   local host, adapter
   local ok, err = pcall(function()
     host = Host.new(hs, context, self.instrumentation, self.handleRegistry):start()
@@ -222,6 +252,9 @@ function Tenbucks:_startHost(context)
                 or pending.spaceId ~= target.spaceId) then self.focusHistory:request(target) end
             end
           end
+          -- Publish committed feedback before a native effect can block the
+          -- main thread; execution never owns presentation state.
+          self:_publishBar()
           host:execute(adapter, intents)
         end
       end
@@ -237,7 +270,7 @@ function Tenbucks:_startHost(context)
     -- Bootstrap readiness may precede the only focus observation; sample the
     -- current global native focus once without requesting focus.
     host:observeFocus()
-    self.context, self.host, self.windows = context, host, adapter
+    self.host, self.windows = host, adapter
   end)
   if not ok then
     if adapter then adapter:stop() end
@@ -261,11 +294,18 @@ end
 -- returning Space reuses its existing order, selection, and layout state.
 function Tenbucks:_contextChanged(context)
   if not context.regularSpaceId then
-    self.suspended = true
+    self.context, self.suspended = context, true
+    self:_publishBar()
     self.host:observeFocus()
     return
   end
-  if self.context and context.regularSpaceId == self.context.regularSpaceId and not self.suspended then return end
+  if self.context and context.regularSpaceId == self.context.regularSpaceId and not self.suspended then
+    self.context = context
+    self.core:setWorkArea(context.workArea)
+    self.core:submit({ type = "Reflow" })
+    self:_publishBar()
+    return
+  end
   self:_stopHost()
   self.core = self.cores[context.regularSpaceId]
   if not self.core then
@@ -273,8 +313,11 @@ function Tenbucks:_contextChanged(context)
     self.cores[context.regularSpaceId] = self.core
   end
   self.suspended = false
+  -- A retained Core must receive geometry before bootstrap can derive frames.
+  self.core:setWorkArea(context.workArea)
   self:_startHost(context)
   self.core:submit({ type = "Reflow" })
+  self:_publishBar()
   local pending = self.focusHistory:pending()
   if pending and pending.spaceId == context.regularSpaceId and self:_targetIsManaged(pending) then
     self.core:submit({ type = "FocusTarget", windowId = pending.windowId })
@@ -288,7 +331,17 @@ function Tenbucks:start()
   if self.instrumentation then self.instrumentation:setActiveTimers(0) end
   local bindings, contextSubscription
   local ok, err = pcall(function()
+    local style = hs.host and hs.host.interfaceStyle and hs.host.interfaceStyle() or nil
+    self.darkAppearance = style == "Dark" -- appearance-change notification remains Hypothesis; no polling.
+    self.bar = NativeBar.new(hs, function(kind)
+      if kind == "appearance" then
+        local current = hs.host and hs.host.interfaceStyle and hs.host.interfaceStyle() or nil
+        self.darkAppearance = current == "Dark" -- Hypothesis pending manual theme-toggle evidence.
+      end
+      self:_publishBar()
+    end):start()
     self:_beginContext(Context.snapshot(hs, self.config.builtInDisplayUUID))
+    self:_publishBar()
     bindings = Bindings.bind(hs, function(command) return self:_submitCommand(command) end, self.config.hotkeys)
     contextSubscription = Context.watch(hs, self.config.builtInDisplayUUID, function(context)
       if self.started then self:_contextChanged(context) end
@@ -296,7 +349,8 @@ function Tenbucks:start()
   end)
   if not ok then
     if contextSubscription then contextSubscription.detach() end
-    Bindings.delete(bindings); self:_stopScope(); self.originContext = nil; self.instrumentation = nil; error(err, 0)
+    Bindings.delete(bindings); self:_stopScope(); if self.bar then self.bar:stop(); self.bar = nil end
+    self.originContext = nil; self.instrumentation = nil; error(err, 0)
   end
   self.contextSubscription, self.hotkeyBindings, self.started = contextSubscription, bindings, true
   return self
@@ -307,9 +361,11 @@ function Tenbucks:stop()
   if self.contextSubscription then self.contextSubscription.detach() end
   self.contextSubscription = nil
   self:_stopScope()
+  if self.bar then self.bar:stop(); self.bar = nil end
   self.originContext = nil
   self.canaryObservedVersion = nil
   self.focusHistory = FocusHistory.new()
+  self.actualPresentation = {}
   self.handleRegistry:clear()
   Bindings.delete(self.hotkeyBindings)
   self.hotkeyBindings = {}

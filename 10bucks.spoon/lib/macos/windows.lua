@@ -152,11 +152,13 @@ function Windows:_window(observation, generation)
   if not self:_active(generation) or type(observation) ~= "table" then return end
   if observation.kind == "ready" then return self:_ready(observation, generation) end
   if observation.kind == "focus" then
-    if not validId(observation.id) then return end
+    if observation.id ~= nil and not validId(observation.id) then return end
     self:_emit({ type = "ActualFocusChanged", id = observation.id,
       title = type(observation.title) == "string" and observation.title or nil,
-      applicationName = type(observation.applicationName) == "string" and observation.applicationName or nil })
-    self:_probe(observation.id, generation)
+      applicationName = type(observation.applicationName) == "string" and observation.applicationName or nil,
+      applicationPid = observation.applicationPid,
+      nativeFullscreen = observation.nativeFullscreen == true })
+    if observation.id ~= nil then self:_probe(observation.id, generation) end
     return
   end
   if observation.kind == "destroyed" and validId(observation.id) then

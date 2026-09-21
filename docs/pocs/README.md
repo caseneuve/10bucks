@@ -77,9 +77,9 @@ This status does not claim that broad POC-001 criteria passed. In particular, re
 
 ## POC-003 — Overlay bar and native handoff
 
-**Status: deferred.** Run immediately before the bar rewrite if the existing overlay evidence does not answer the exact adapter question.
+**Status: narrow hover/return and Mission Control observation passed; fullscreen transition flash unresolved.** [`003-overlay-bar-handoff.md`](003-overlay-bar-handoff.md) records the approved 90-second probe, human visual feedback, aggregate trace, and verified cleanup. It supports overlay plus temporary hidden-only pointer tracking, not complete bar acceptance.
 
-**Decision needed:** the smallest reliable overlay canvas configuration and pointer handoff behavior on regular versus native-fullscreen/tiled Spaces.
+**Decision needed:** eliminate the observed fullscreen transition flash and verify the remaining exact adapter questions; do not repeat the passed handoff ceremonially or broaden into unrelated platform certification.
 
 **Minimum scope:** pixels at the selected level, regular-Space/Mission Control behavior, fullscreen hiding, pointer handoff, and confirmation that event-driven rendering needs no permanent refresh timer.
 

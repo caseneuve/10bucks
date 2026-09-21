@@ -15,6 +15,66 @@ local function fake()
   return f, app, element
 end
 return {
+  ["BAR-004 FOCUS-003: focused unmanaged title observation never admits and is released on focus clear"] = function()
+    local f = fake(); local title = "Popup"; local unmanagedWatcher
+    local unmanaged = { id = function() return 10 end, title = function() return title end,
+      application = function() return f.window:application() end, isFullScreen = function() return false end,
+      newWatcher = function(_, callback) unmanagedWatcher = { callback = callback, start = function() end,
+        stop = function(self) self.stopped = true end }; return unmanagedWatcher end }
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = "regular" }):start(); local events, terminated = {}, nil
+    host.windowCallback = function(event) events[#events + 1] = event end
+    host:subscribeApplications(function(event) terminated = event end)
+    f.focusedWindow = unmanaged; assert(host:observeFocus())
+    assert(#events == 1 and events[1].id == 10)
+    title = "Renamed"; unmanagedWatcher.callback(nil, "AXTitleChanged")
+    assert(events[#events].kind == "titleChanged" and events[#events].title == "Renamed")
+    local secondWatcher; local second = { id = function() return 11 end, title = function() return "Other popup" end,
+      application = function() return f.window:application() end, isFullScreen = function() return false end,
+      newWatcher = function(_, callback) secondWatcher = { callback = callback, start = function() end, stop = function(self) self.stopped = true end }; return secondWatcher end }
+    f.focusedWindow = second; assert(host:observeFocus() and unmanagedWatcher.stopped)
+    f.focusedWindow = unmanaged; assert(host:observeFocus() and secondWatcher.stopped)
+    title = "Back again"; unmanagedWatcher.callback(nil, "AXTitleChanged")
+    assert(events[#events].kind == "titleChanged" and events[#events].title == "Back again")
+    f.lifecycle.callback(nil, 3, f.window:application())
+    assert(terminated.kind == "terminated" and unmanagedWatcher.stopped)
+    f.focusedWindow = nil; assert(host:observeFocus())
+    assert(events[#events].kind == "focus" and events[#events].id == nil)
+    host:stop()
+  end,
+  ["BAR-004: failed optional unmanaged title observer preserves actual focus"] = function()
+    local f = fake(); local transient = { id = function() return 10 end, title = function() return "Popup" end,
+      application = function() return f.window:application() end, isFullScreen = function() return false end,
+      newWatcher = function() error("unsupported transient watcher") end }
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = "regular" }):start(); local events = {}
+    host.windowCallback = function(event) events[#events + 1] = event end
+    f.focusedWindow = transient
+    assert(host:observeFocus() and #events == 1 and events[1].id == 10 and events[1].title == "Popup")
+    host:stop()
+  end,
+  ["BAR-004: nil and start-failed optional title observers preserve actual focus"] = function()
+    for _, shape in ipairs({ "nil", "start" }) do
+      local f = fake(); local stopped = false
+      local transient = { id = function() return 10 end, title = function() return "Popup" end,
+        application = function() return f.window:application() end, isFullScreen = function() return false end,
+        newWatcher = function()
+          if shape == "nil" then return nil end
+          return { start = function() error("start failed") end, stop = function() stopped = true end }
+        end }
+      local host = Host.new(f.hs, { displayId = "d", regularSpaceId = "regular" }):start(); local events = {}
+      host.windowCallback = function(event) events[#events + 1] = event end; f.focusedWindow = transient
+      assert(host:observeFocus() and #events == 1 and events[1].id == 10)
+      if shape == "start" then assert(stopped) end
+      host:stop()
+    end
+  end,
+  ["BAR-004: nonnil focused object without an ID does not clear actual presentation"] = function()
+    local f = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = "regular" }):start(); local events = {}
+    host.windowCallback = function(event) events[#events + 1] = event end
+    f.focusedWindow = { id = function() return nil end }
+    assert(not host:observeFocus() and #events == 0)
+    f.focusedWindow = nil; assert(host:observeFocus() and #events == 1 and events[1].id == nil)
+    host:stop()
+  end,
   ["DISC-002 FS-005: focused native fullscreen readiness has actual ownership and no regular placement"] = function()
     local f = fake(); f.spaceType, f.fullscreen, f.focusedWindow = "fullscreen", true, f.window
     local host = Host.new(f.hs, { displayId = "d", regularSpaceId = "regular" }):start()
@@ -136,7 +196,7 @@ return {
     assert(f.scans == scansBeforeLaunch + 1, "launch must perform exactly one app-local readiness scan")
     f.appWatchers[#f.appWatchers].callback(f.window, "AXWindowCreated"); assert(events[#events].kind == "ready")
     local old = f.appWatchers[#f.appWatchers].callback
-    f.lifecycle.callback(nil, 3, app); subscription.detach(); host:stop():stop(); assert(f.stops == 4)
+    f.lifecycle.callback(nil, 3, app); subscription.detach(); host:stop():stop(); assert(f.stops == 5)
     host:start(); old(element, "AXWindowCreated"); assert(events[#events].kind == "terminated")
   end,
 }

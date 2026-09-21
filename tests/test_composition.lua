@@ -11,7 +11,21 @@ local function fakeHs(options)
     f.contextWatcher = watcher
     return watcher
   end
-  local screen = { getUUID = function() return "built-in" end, frame = function() return { x = 0, y = 0, w = 100, h = 80 } end }
+  local function screenWatcher(callback)
+    local watcher = { callback = callback, start = function() end, stop = function() end }
+    f.screenWatcher = watcher
+    return watcher
+  end
+  local function timer() return { stop = function(self) self.stopped = true end } end
+  local function canvas()
+    local object = { level = function(self) return self end, behavior = function(self) return self end, clickActivating = function(self) return self end,
+      canvasMouseEvents = function(self) return self end, mouseCallback = function(self, callback) self.callback = callback; return self end,
+      frame = function(self, value) self.currentFrame = value; return self end, replaceElements = function(self, value) self.elements = value; return self end,
+      show = function(self) self.shown = true; return self end, hide = function(self) self.shown = false; return self end, delete = function(self) self.deleted = true end }
+    f.canvas = object; return object
+  end
+  local screen = { getUUID = function() return "built-in" end, frame = function() return f.geometry or { x = 0, y = 0, w = 100, h = 80 } end,
+    fullFrame = function() return f.geometry or { x = 0, y = 0, w = 100, h = 80 } end }
   -- Evidence-derived boundary: AX conversion provides metadata/asHSWindow only;
   -- the per-window watcher is constructed by hs.window:newWatcher(handler).
   local element = { asHSWindow = function() return f.window end,
@@ -23,16 +37,22 @@ local function fakeHs(options)
     role = function() return "AXWindow" end, subrole = function() return "AXStandardWindow" end,
     isFullScreen = function() return f.fullscreen end, newWatcher = function(_, cb) f.windowWatcher = watcher(cb, "window"); return f.windowWatcher end, frame = function() return f.actual end,
     setFrame = function(_, frame, duration) assert(duration == 0); f.frames = f.frames + 1; f.actual = frame end,
-    focus = function() f.focuses = f.focuses + 1 end }
+    focus = function() f.focuses = f.focuses + 1; f.presentationAtFocus = f.canvas and f.canvas.elements and f.canvas.elements[4].text end }
   local bindCount = 0
   _G.hs = { processInfo = { processID = 1 }, screen = { allScreens = function() return { screen } end },
     spaces = { activeSpaceOnScreen = function() return f.activeSpace or "space" end, spaceType = function() return "user" end,
+      data_managedDisplaySpaces = function() local active = f.activeSpace or "space"; return { { ["Display Identifier"] = "built-in", ["Current Space"] = { ManagedSpaceID = active }, Spaces = { { ManagedSpaceID = "space", type = 0 }, { ManagedSpaceID = "next-space", type = 0 } } } } end,
       windowsForSpace = function() return f.members end, windowSpaces = function() return f.owners end,
       watcher = { new = contextWatcher } },
     axuielement = { windowElement = function(x) assert(x == f.window); return element end },
     application = { runningApplications = function() return { app } end, watcher = { new = function(cb) f.life = watcher(cb, "life"); return f.life end, terminated = 3, hidden = 4, unhidden = 5, launched = 2 } },
     window = { focusedWindow = function() f.focusedWindowQueries = f.focusedWindowQueries + 1; if f.focusedWindowError then error("focused-window read failed") end; return f.focusedWindow end },
+    canvas = { new = canvas }, mouse = { absolutePosition = function() return { x = 50, y = 50 } end },
+    timer = { secondsSinceEpoch = function() return 1 end, doAfter = function(_, _) return timer() end, doEvery = function(_, _) return timer() end },
+    host = { interfaceStyle = function() return f.interfaceStyle end },
+    distributednotifications = { new = function(callback) f.appearance = { callback = callback, start = function() end, stop = function() f.appearanceStopped = true end }; return f.appearance end },
     hotkey = { bind = function(_, _, cb) bindCount = bindCount + 1; if options.failBind == bindCount then error("bind failed") end; local h = { delete = function(self) if not self.deleted then self.deleted = true; f.deleted = f.deleted + 1 end end }; f.bindings[#f.bindings + 1] = { callback = cb, handle = h }; return h end }, }
+  _G.hs.screen.watcher = { new = screenWatcher }
   return f, element
 end
 
@@ -124,6 +144,33 @@ return {
     assert(f.focusedWindowQueries == queries + 1 and f.focuses == focuses)
     ten:stop()
   end,
+  ["BAR-006 STATE-002: committed command feedback publishes before native focus execution"] = function()
+    local f = fakeHs(); local ten = load(f); ten:start(); ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+    local observed
+    local handle = { id = function() return 10 end, title = function() return "B" end, application = function() return { name = function() return "B" end } end,
+      focus = function() observed = f.canvas.elements[4].text end, frame = function() return { x = 0, y = 32, w = 100, h = 48 } end, setFrame = function() end }
+    ten.handleRegistry:remember(10, "space", handle, 10)
+    ten.core:submit({ type = "WindowReady", id = 10, title = "B", displayId = "built-in", spaceId = "space", application = { pid = 10, name = "B" } })
+    assert(observed and observed:find("(2/2)", 1, true))
+    ten:stop()
+  end,
+  ["BAR-003 BAR-004 FOCUS-001: composition publishes global actual presentation without admitting an excluded focus"] = function()
+    local f = fakeHs(); local ten = load(f); ten:start()
+    assert(f.canvas.elements[4].text:find("No focused window", 1, true))
+    ten:_submitEvent({ type = "ActualFocusChanged", id = 99, title = "Popup", applicationName = "Popup App" })
+    assert(not ten.core:state().manager.windows[99] and f.canvas.elements[4].text:find("Popup", 1, true))
+    ten:_submitEvent({ type = "WindowTitleChanged", id = 99, title = "Renamed popup" })
+    assert(f.canvas.elements[4].text:find("Renamed popup", 1, true))
+    ten:_submitEvent({ type = "ActualFocusChanged" })
+    assert(f.canvas.elements[4].text:find("No focused window", 1, true))
+    ten.core:submit({ type = "FocusNext" })
+    assert(f.canvas.elements[4].text:find("(1/1)", 1, true))
+    f.activeSpace, f.members, f.owners = "next-space", {}, { "next-space" }; f.contextWatcher.callback()
+    assert(f.canvas.elements[4].text:find("1 [2]", 1, true))
+    f.interfaceStyle = "Dark"; f.appearance.callback()
+    assert(f.canvas.elements[1].fillColor.red == .08)
+    ten:stop()
+  end,
   ["composition created/destroyed and availability callbacks update replacement Core only"] = function()
     local f, element = fakeHs(); local ten = load(f); ten:start()
     f.appWatcher.callback(f.window, "AXWindowCreated"); assert(ten.core:state().manager.windows[9])
@@ -153,7 +200,7 @@ return {
     local ten = loadConfiguredFile(f, { builtInDisplayUUID = "built-in", canaryInstrumentation = true })
     local status = ten:canaryStatus()
     assert(ten.config.canaryInstrumentation == true)
-    assert(status.enabled and status.started and not status.suspended and status.memberCount == 1 and status.activeTimers == 0)
+    assert(status.enabled and status.started and not status.suspended and status.memberCount == 1 and status.activeTimers == 1)
     ten:stop(); assert(ten:canaryStatus().started == false)
   end,
   ["Canary A instrumentation exposes only aggregate runtime status"] = function()
@@ -161,7 +208,7 @@ return {
     ten:configure({ builtInDisplayUUID = "built-in", canaryInstrumentation = true })
     ten:start()
     local status = ten:canaryStatus()
-    assert(status.enabled and status.started and not status.suspended and status.memberCount == 1 and status.activeTimers == 0)
+    assert(status.enabled and status.started and not status.suspended and status.memberCount == 1 and status.activeTimers == 1)
     assert(status.counts["event.WindowReady"] == 1 and status.counts.reducerCommitVersions == 1)
     ten:stop(); assert(ten:canaryStatus().started == false)
   end,
@@ -317,6 +364,20 @@ return {
     local accepted, reason = ten:_submitCommand({ type = "FocusManagedPrevious" })
     assert(not accepted and reason == "no-previous-managed-window" and f.scans == scans)
     assert(#ten.focusHistory:snapshot() == 1)
+    ten:stop()
+  end,
+  ["BAR-006 ENV-004: retained Space bootstrap uses changed work area on its first frame"] = function()
+    local f = fakeHs(); local ten = load(f); ten:start()
+    f.activeSpace, f.members, f.owners = "next-space", {}, { "next-space" }; f.contextWatcher.callback()
+    f.geometry = { x = 10, y = 0, w = 200, h = 100 }; f.actual = { x = 0, y = 0, w = 1, h = 1 }
+    local writes, setFrame = {}, f.window.setFrame
+    f.window.setFrame = function(window, frame, duration)
+      writes[#writes + 1] = frame
+      setFrame(window, frame, duration)
+    end
+    f.activeSpace, f.members, f.owners = "space", { 9 }, { "space" }; f.contextWatcher.callback()
+    assert(#writes == 1, "bootstrap must not write stale geometry then correct it")
+    assert(writes[1].x == 10 and writes[1].w == 200 and writes[1].y == 32 and writes[1].h == 68)
     ten:stop()
   end,
   ["regular Spaces retain independent Core state across A-to-B-to-A activation"] = function()
