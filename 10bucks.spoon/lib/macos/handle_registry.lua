@@ -7,9 +7,25 @@ function Registry.new()
   return setmetatable({ entries = {} }, Registry)
 end
 
+-- Only a confirmed ownership observation may assign a descriptor Space.
 function Registry:remember(windowId, spaceId, handle, pid)
   if windowId == nil or spaceId == nil or handle == nil then return end
   self.entries[windowId] = { windowId = windowId, spaceId = spaceId, handle = handle, pid = pid }
+end
+
+-- A focus callback can precede the Space watcher. It refreshes a known native
+-- handle without guessing that the receiving host owns the descriptor's Space.
+function Registry:refresh(windowId, handle, pid)
+  local entry = self.entries[windowId]
+  if entry and handle ~= nil then
+    entry.handle, entry.pid = handle, pid
+  end
+end
+
+function Registry:target(windowId)
+  local entry = self.entries[windowId]
+  if not entry then return nil end
+  return { windowId = entry.windowId, spaceId = entry.spaceId }
 end
 
 function Registry:forget(windowId, handle)

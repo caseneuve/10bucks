@@ -78,12 +78,15 @@ function Host:_forgetPid(pid)
   end
 end
 
-function Host:_remember(window)
+function Host:_remember(window, confirmedSpace)
   local id, app = call(window, "id"), call(window, "application")
   local pid = call(app, "pid")
   if id ~= nil and pid ~= nil then
     self.handles[id] = { handle = window, pid = pid }
-    if self.handleRegistry then self.handleRegistry:remember(id, self.context.regularSpaceId, window, pid) end
+    if self.handleRegistry then
+      if confirmedSpace then self.handleRegistry:remember(id, self.context.regularSpaceId, window, pid)
+      else self.handleRegistry:refresh(id, window, pid) end
+    end
   end
 end
 
@@ -120,7 +123,7 @@ function Host:_ready(window, origin, callback, membershipSet)
   if id == nil or (membershipSet and not membershipSet[id]) or (not membershipSet and not self:_regularOwner(id)) then return end
   local metadata = self:_metadata(window, origin)
   if metadata then
-    self:_remember(window)
+    self:_remember(window, true)
     callback({ kind = "ready", metadata = metadata, handle = window })
   end
 end

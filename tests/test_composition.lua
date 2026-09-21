@@ -103,37 +103,105 @@ return {
     assert(status.counts["event.WindowReady"] == 1 and status.counts.reducerCommitVersions == 1)
     ten:stop(); assert(ten:canaryStatus().started == false)
   end,
-  ["FOCUS-005 global previous crosses retained Spaces, waits for confirmation, toggles, and ignores stale/unmanaged focus"] = function()
-    local f = fakeHs(); local ten = load(f); ten:start()
-    ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
-    local firstCore = ten.core
+  ["FOCUS-001 FOCUS-005 FOCUS-006 CMD-005 COL-007: global previous confirmation routes by retained Core for every callback/activation order"] = function()
+    local function crossSpaceSetup()
+      local f = fakeHs(); local ten = load(f); ten:start()
+      ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+      local firstCore = ten.core
+      f.activeSpace, f.members, f.owners = "next-space", {}, { "next-space" }
+      f.contextWatcher.callback()
+      ten.core:submit({ type = "WindowReady", id = 10, title = "Other", displayId = "built-in", spaceId = "next-space", application = { pid = 10, name = "Other" } })
+      local otherFocuses = 0
+      local otherHandle = { focus = function() otherFocuses = otherFocuses + 1 end,
+        frame = function() return { x = 0, y = 0, w = 100, h = 80 } end, setFrame = function() end }
+      ten.handleRegistry:remember(10, "next-space", otherHandle, 10)
+      ten:_submitEvent({ type = "ActualFocusChanged", id = 10 })
+      assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
+      local targetDesired = firstCore:state().manager.focus.desiredBySpace.space
+      assert(targetDesired.pending and targetDesired.targetId == 9) -- committed before the native cross-Space effect
+      ten:_submitEvent({ type = "ActualFocusChanged", id = 99 }) -- unmanaged focus preserves the managed anchor
+      ten:_submitEvent({ type = "ActualFocusChanged", id = 10 }) -- stale managed callback cannot replace the request
+      targetDesired = firstCore:state().manager.focus.desiredBySpace.space
+      assert(ten.pendingGlobalFocus.windowId == 9 and targetDesired.pending and targetDesired.targetId == 9)
+      return f, ten, firstCore, function() return otherFocuses end
+    end
 
-    f.activeSpace, f.members, f.owners = "next-space", {}, { "next-space" }
-    f.contextWatcher.callback()
-    ten.core:submit({ type = "WindowReady", id = 10, title = "Other", displayId = "built-in", spaceId = "next-space", application = { pid = 10, name = "Other" } })
-    local otherFocuses, otherHandle = 0
-    otherHandle = { focus = function() otherFocuses = otherFocuses + 1 end,
-      frame = function() return { x = 0, y = 0, w = 100, h = 80 } end,
-      setFrame = function() end }
-    ten.handleRegistry:remember(10, "next-space", otherHandle, 10)
-    ten:_submitEvent({ type = "ActualFocusChanged", id = 10 })
-    ten:_submitEvent({ type = "ActualFocusChanged", id = 99 }) -- unmanaged popup does not alter managed anchor
-
-    local beforeCrossFocus = f.focuses
-    assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
-    assert(f.focuses == beforeCrossFocus + 1 and ten.pendingGlobalFocus.windowId == 9)
-    ten:_submitEvent({ type = "ActualFocusChanged", id = 10 }) -- stale callback cannot alter target/history
-    assert(ten.pendingGlobalFocus.windowId == 9)
-
-    f.activeSpace, f.members, f.owners = "space", { 9 }, { "space" }
-    f.contextWatcher.callback()
-    assert(ten.core == firstCore and ten.core:state().manager.focus.desiredBySpace.space.targetId == 9)
-    ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
-    assert(ten.pendingGlobalFocus == nil)
-    assert(not ten.core:state().manager.focus.desiredBySpace.space.pending)
-    assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
-    assert(otherFocuses == 1 and ten.pendingGlobalFocus.windowId == 10)
-    ten:stop()
+    local cases = {
+      {
+        name = "managed focus callback before Space activation",
+        run = function()
+          local f, ten, firstCore, otherFocuses = crossSpaceSetup()
+          -- The old host receives the target focus while its context still says
+          -- next-space. Its descriptor must retain the confirmed source Space.
+          f.owners = { "space" }
+          f.appWatcher.callback(f.window, "AXFocusedWindowChanged")
+          assert(ten.handleRegistry:resolve({ windowId = 9, spaceId = "space" }) == f.window)
+          assert(ten.pendingGlobalFocus == nil)
+          assert(not firstCore:state().manager.focus.desiredBySpace.space.pending)
+          f.activeSpace, f.members = "space", { 9 }
+          f.contextWatcher.callback()
+          assert(ten.core == firstCore and not ten.core:state().manager.focus.desiredBySpace.space.pending)
+          assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
+          assert(otherFocuses() == 1 and ten.pendingGlobalFocus.windowId == 10)
+          ten:stop()
+        end,
+      },
+      {
+        name = "Space activation before managed focus callback",
+        run = function()
+          local f, ten, firstCore, otherFocuses = crossSpaceSetup()
+          f.activeSpace, f.members, f.owners = "space", { 9 }, { "space" }
+          f.contextWatcher.callback()
+          assert(ten.core == firstCore and ten.core:state().manager.focus.desiredBySpace.space.pending)
+          f.appWatcher.callback(f.window, "AXFocusedWindowChanged")
+          assert(ten.pendingGlobalFocus == nil)
+          assert(not ten.core:state().manager.focus.desiredBySpace.space.pending)
+          assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
+          assert(otherFocuses() == 1 and ten.pendingGlobalFocus.windowId == 10)
+          ten:stop()
+        end,
+      },
+      {
+        name = "same-Space A to B to previous A confirmation to previous B",
+        run = function()
+          local f = fakeHs(); local ten = load(f); ten:start()
+          ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+          ten.core:submit({ type = "WindowReady", id = 10, title = "B", displayId = "built-in", spaceId = "space", application = { pid = 10, name = "B" } })
+          ten.handleRegistry:remember(10, "space", { focus = function() end,
+            frame = function() return { x = 0, y = 0, w = 100, h = 80 } end, setFrame = function() end }, 10)
+          ten:_submitEvent({ type = "ActualFocusChanged", id = 10 })
+          assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
+          assert(ten.core:state().manager.focus.desiredBySpace.space.targetId == 9)
+          ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+          assert(ten.pendingGlobalFocus == nil and not ten.core:state().manager.focus.desiredBySpace.space.pending)
+          assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
+          assert(ten.core:state().manager.focus.desiredBySpace.space.targetId == 10)
+          ten:stop()
+        end,
+      },
+      {
+        name = "mouse focus after previous confirmation enables first directional command",
+        run = function()
+          local f = fakeHs(); local ten = load(f); ten:start()
+          ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+          ten.core:submit({ type = "WindowReady", id = 10, title = "B", displayId = "built-in", spaceId = "space", application = { pid = 10, name = "B" } })
+          ten.handleRegistry:remember(10, "space", { focus = function() end,
+            frame = function() return { x = 0, y = 0, w = 100, h = 80 } end, setFrame = function() end }, 10)
+          ten:_submitEvent({ type = "ActualFocusChanged", id = 10 })
+          ten.core:submit({ type = "CycleLayout" })
+          assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
+          ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+          ten:_submitEvent({ type = "ActualFocusChanged", id = 10 }) -- mouse/native focus
+          assert(not ten.core:state().manager.focus.desiredBySpace.space.pending)
+          assert(ten.core:state().coordinators.space.layouts.columns.activeStack == 2)
+          ten.core:submit({ type = "FocusLeftGroup" })
+          local desired = ten.core:state().manager.focus.desiredBySpace.space
+          assert(desired.pending and desired.targetId == 9)
+          ten:stop()
+        end,
+      },
+    }
+    for _, case in ipairs(cases) do case.run() end
   end,
   ["FOCUS-005 destroyed global previous target is skipped without native focus or scan"] = function()
     local f = fakeHs(); local ten = load(f); ten:start()

@@ -64,6 +64,9 @@ local function layoutDependencies()
 end
 
 function Tenbucks:_stopHost()
+  -- A retained Core may still receive an ordering-lagged observation. Its
+  -- reducer remains available, but its stopped host must not execute effects.
+  if self.core then self.core.observer = function() end end
   if self.windows then self.windows:stop() end
   if self.host then self.host:stop() end
   self.host, self.windows = nil, nil
@@ -85,7 +88,16 @@ function Tenbucks:_targetIsManaged(target)
   return window ~= nil and window.placementSpaceId == target.spaceId and self.handleRegistry:resolve(target) ~= nil
 end
 
-function Tenbucks:_afterCoreEvent(event)
+-- A managed focus callback can arrive before the host's Space watcher. Route
+-- it by retained membership rather than the host that happened to receive it.
+function Tenbucks:_coreForManagedWindow(windowId)
+  local target = self.handleRegistry:target(windowId)
+  local core = target and self.cores and self.cores[target.spaceId]
+  local window = core and core:state().manager.windows[windowId]
+  if window then return core, window end
+end
+
+function Tenbucks:_afterCoreEvent(event, eventCore)
   if event.type == "WindowDestroyed" then
     self.focusHistory:remove(event.id)
     if self.pendingGlobalFocus and self.pendingGlobalFocus.windowId == event.id then self.pendingGlobalFocus = nil end
@@ -94,16 +106,13 @@ function Tenbucks:_afterCoreEvent(event)
     for _, target in ipairs(history) do if not self:_targetIsManaged(target) then self.focusHistory:remove(target.windowId) end end
     if self.pendingGlobalFocus and not self:_targetIsManaged(self.pendingGlobalFocus) then self.pendingGlobalFocus = nil end
   elseif event.type == "ActualFocusChanged" then
-    local window = self.core:state().manager.windows[event.id]
+    local window = eventCore:state().manager.windows[event.id]
     if window then
       local target = { windowId = event.id, spaceId = window.placementSpaceId }
       if not self.pendingGlobalFocus or self.pendingGlobalFocus.windowId == event.id then
         self.focusHistory:observe(target)
         if self.pendingGlobalFocus and self.pendingGlobalFocus.windowId == event.id then
           self.pendingGlobalFocus = nil
-          -- The global target is now confirmed; clear the target Core's local
-          -- pending gate so subsequent mouse and h/l observations apply.
-          self.core:confirmFocus(event.id)
         end
       end
     end
@@ -111,9 +120,14 @@ function Tenbucks:_afterCoreEvent(event)
 end
 
 function Tenbucks:_submitEvent(event)
-  local accepted, failure = self.core:submit(event)
+  local eventCore = self.core
+  if event.type == "ActualFocusChanged" then
+    local pending = self.pendingGlobalFocus
+    eventCore = (pending and self.cores[pending.spaceId]) or self:_coreForManagedWindow(event.id) or eventCore
+  end
+  local accepted, failure = eventCore:submit(event)
   if not accepted then error(failure, 0) end
-  self:_afterCoreEvent(event)
+  self:_afterCoreEvent(event, eventCore)
   return accepted
 end
 
@@ -125,8 +139,11 @@ function Tenbucks:_focusManagedPrevious()
   if target.spaceId == self.context.regularSpaceId then
     return self.core:submit({ type = "FocusTarget", windowId = target.windowId })
   end
+  local targetCore = self.cores[target.spaceId]
   local handle = self.handleRegistry:resolve(target)
-  if not handle then self.pendingGlobalFocus = nil; return false, "previous-managed-window-unavailable" end
+  if not targetCore or not handle then self.pendingGlobalFocus = nil; return false, "previous-managed-window-unavailable" end
+  local accepted, failure = targetCore:submit({ type = "FocusTarget", windowId = target.windowId })
+  if not accepted then self.pendingGlobalFocus = nil; return false, failure end
   self:_record("focusRequests")
   handle:focus() -- Hammerspoon hs.window:focus() performs the native Space transition.
   return true
