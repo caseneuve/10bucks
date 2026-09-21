@@ -183,6 +183,16 @@ function Host:subscribeApplications(callback)
           end
         end
       end
+    elseif event == self.hs.application.watcher.activated then
+      -- Mouse activation can occur without the application's AX focused-window
+      -- callback reaching us. One app-local read immediately normalizes actual
+      -- focus so the first h/l/' command acts from native reality.
+      local window = call(app, "focusedWindow")
+      if window and self.windowCallback then
+        self:_remember(window)
+        self.windowCallback({ kind = "focus", id = call(window, "id"),
+          title = call(window, "title"), applicationName = call(app, "name") })
+      end
     elseif event == self.hs.application.watcher.terminated then
       for _, record in ipairs(self.appOwned[pid] or {}) do self:_detach(record) end
       self.appOwned[pid] = nil; self:_forgetPid(pid); callback({ kind = "terminated", pid = pid })
