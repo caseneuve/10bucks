@@ -198,7 +198,7 @@ return {
         ten:_submitEvent({ type = "ActualFocusChanged", id = 99 }) -- unmanaged focus preserves the managed anchor
         ten:_submitEvent({ type = "ActualFocusChanged", id = 10 }) -- stale managed callback cannot replace the request
         targetDesired = firstCore:state().manager.focus.desiredBySpace.space
-        assert(ten.focusHistory:pending().target.windowId == 9 and targetDesired.pending and targetDesired.targetId == 9)
+        assert(ten.focusHistory:pending().windowId == 9 and targetDesired.pending and targetDesired.targetId == 9)
       end
       return f, ten, firstCore, function() return otherFocuses end, otherHandle, columnHandle
     end
@@ -243,7 +243,7 @@ return {
           assert(ten.core == firstCore and not ten.core:state().manager.focus.desiredBySpace.space.pending)
           local queries = f.focusedWindowQueries
           assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
-          assert(otherFocuses() == 1 and f.focusedWindowQueries == queries + 1 and ten.focusHistory:pending().target.windowId == 10)
+          assert(otherFocuses() == 1 and f.focusedWindowQueries == queries + 1 and ten.focusHistory:pending().windowId == 10)
           ten:stop()
         end,
       },
@@ -259,7 +259,7 @@ return {
           assert(ten.focusHistory:pending() == nil)
           assert(not ten.core:state().manager.focus.desiredBySpace.space.pending)
           assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
-          assert(otherFocuses() == 1 and ten.focusHistory:pending().target.windowId == 10)
+          assert(otherFocuses() == 1 and ten.focusHistory:pending().windowId == 10)
           ten:stop()
         end,
       },

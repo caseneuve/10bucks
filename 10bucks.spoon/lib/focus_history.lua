@@ -53,33 +53,28 @@ local function removeEntry(entries, windowId)
 end
 
 local function emptyState()
-  return { entries = {}, unplaced = {}, pending = nil, generation = 0 }
+  return { entries = {}, unplaced = {}, pending = nil }
 end
 
 local function validState(state)
-  if not plain(state) or type(state) ~= "table" or type(state.entries) ~= "table"
-    or type(state.unplaced) ~= "table" or type(state.generation) ~= "number"
-    or state.generation < 0 or state.generation % 1 ~= 0 then
+  if not plain(state) or type(state) ~= "table" or type(state.entries) ~= "table" or type(state.unplaced) ~= "table" then
     return false, "focus state is malformed"
   end
   local seen = {}
-  for index, entry in ipairs(state.entries) do
-    if index < 1 or not validId(entry.windowId) or not validId(entry.spaceId) or seen[entry.windowId] then
+  for _, entry in ipairs(state.entries) do
+    if not validId(entry.windowId) or not validId(entry.spaceId) or seen[entry.windowId] then
       return false, "focus history entries are malformed"
     end
     seen[entry.windowId] = true
   end
   for windowId, record in pairs(state.unplaced) do
     if not validId(windowId) or type(record) ~= "table" or type(record.target) ~= "table"
-      or record.target.windowId ~= windowId or not validId(record.target.spaceId)
-      or not validId(record.pid) or type(record.metadata) ~= "table" or type(record.decision) ~= "table"
-      or record.decision.action ~= "manage" then
+      or record.target.windowId ~= windowId or not validId(record.target.spaceId) or not validId(record.pid) then
       return false, "unplaced fullscreen state is malformed"
     end
   end
-  if state.pending ~= nil and (type(state.pending) ~= "table" or type(state.pending.target) ~= "table"
-    or not validId(state.pending.target.windowId) or not validId(state.pending.target.spaceId)
-    or type(state.pending.generation) ~= "number" or state.pending.generation ~= state.generation) then
+  if state.pending ~= nil and (type(state.pending) ~= "table" or not validId(state.pending.windowId)
+    or not validId(state.pending.spaceId)) then
     return false, "pending global focus is malformed"
   end
   return true
@@ -101,13 +96,7 @@ local function registerRecord(event)
     or not validId(metadata.application.pid) then
     error("unplaced fullscreen registration requires confirmed fullscreen metadata", 3)
   end
-  local descriptor = target({ windowId = event.id, spaceId = event.spaceId })
-  return descriptor, {
-    target = descriptor,
-    pid = metadata.application.pid,
-    metadata = copy(metadata),
-    decision = copy(event.decision),
-  }
+  return target({ windowId = event.id, spaceId = event.spaceId }), metadata.application.pid
 end
 
 -- Pure reducer. Callers receive a new plain state; no query mutates it.
@@ -117,25 +106,22 @@ function FocusHistory.reduce(state, event)
     error("focus history event must be plain normalized data", 2)
   end
 
-  if event.type == "Clear" then return emptyState() end
-
   if event.type == "Observe" then
     local observed = target(event.target)
-    if state.pending and not sameTarget(state.pending.target, observed) then return state end
+    if state.pending and not sameTarget(state.pending, observed) then return state end
     local newest = state.entries[#state.entries]
     if not state.pending and newest and sameTarget(newest, observed) then return state end
     local nextState = copy(state)
     removeEntry(nextState.entries, observed.windowId)
     nextState.entries[#nextState.entries + 1] = observed
-    if nextState.pending then nextState.pending = nil end
+    nextState.pending = nil
     return nextState
   end
 
   if event.type == "Request" then
     local requested = target(event.target)
     local nextState = copy(state)
-    nextState.generation = nextState.generation + 1
-    nextState.pending = { target = requested, generation = nextState.generation }
+    nextState.pending = requested
     return nextState
   end
 
@@ -147,25 +133,23 @@ function FocusHistory.reduce(state, event)
   end
 
   if event.type == "RegisterUnplaced" then
-    local descriptor, record = registerRecord(event.ready)
+    local descriptor, pid = registerRecord(event.ready)
     local existing = state.unplaced[descriptor.windowId]
     if not existing then
       local nextState = copy(state)
-      nextState.unplaced[descriptor.windowId] = record
+      nextState.unplaced[descriptor.windowId] = { target = descriptor, pid = pid }
       return nextState
     end
     -- A later targeted probe can confirm a new native fullscreen owner for the
-    -- same pre-existing window. Preserve its one-time admission decision and
-    -- metadata, but rebind every focus descriptor in place without an MRU move.
+    -- same pre-existing window. Rebind focus descriptors in place without an
+    -- MRU move or a new admission decision.
     if sameTarget(existing.target, descriptor) then return state end
     local nextState = copy(state)
     nextState.unplaced[descriptor.windowId].target = descriptor
     for _, entry in ipairs(nextState.entries) do
       if entry.windowId == descriptor.windowId then entry.spaceId = descriptor.spaceId end
     end
-    if nextState.pending and nextState.pending.target.windowId == descriptor.windowId then
-      nextState.pending.target = descriptor
-    end
+    if nextState.pending and nextState.pending.windowId == descriptor.windowId then nextState.pending = descriptor end
     return nextState
   end
 
@@ -177,9 +161,7 @@ function FocusHistory.reduce(state, event)
     for _, entry in ipairs(nextState.entries) do
       if entry.windowId == promoted.windowId then entry.spaceId = promoted.spaceId end
     end
-    if nextState.pending and nextState.pending.target.windowId == promoted.windowId then
-      nextState.pending.target = promoted
-    end
+    if nextState.pending and nextState.pending.windowId == promoted.windowId then nextState.pending = promoted end
     return nextState
   end
 
@@ -188,7 +170,7 @@ function FocusHistory.reduce(state, event)
     local nextState = copy(state)
     removeEntry(nextState.entries, event.windowId)
     nextState.unplaced[event.windowId] = nil
-    if nextState.pending and nextState.pending.target.windowId == event.windowId then nextState.pending = nil end
+    if nextState.pending and nextState.pending.windowId == event.windowId then nextState.pending = nil end
     return nextState
   end
 
@@ -203,7 +185,7 @@ function FocusHistory.reduce(state, event)
     for _, windowId in ipairs(ids) do
       removeEntry(nextState.entries, windowId)
       nextState.unplaced[windowId] = nil
-      if nextState.pending and nextState.pending.target.windowId == windowId then nextState.pending = nil end
+      if nextState.pending and nextState.pending.windowId == windowId then nextState.pending = nil end
     end
     return nextState
   end
@@ -234,7 +216,6 @@ end
 
 function FocusHistory:_submit(event)
   self.committed = FocusHistory.reduce(self.committed, event)
-  return self.committed
 end
 
 function FocusHistory:observe(observed)
@@ -242,48 +223,42 @@ function FocusHistory:observe(observed)
 end
 
 function FocusHistory:remove(windowId)
-  local before = self.committed
   self:_submit({ type = "Remove", windowId = windowId })
-  return before ~= self.committed
 end
 
 function FocusHistory:removeApplication(pid)
-  local before = self.committed
   self:_submit({ type = "RemoveApplication", pid = pid })
-  return before ~= self.committed
 end
 
 function FocusHistory:registerUnplaced(ready)
-  local before = self.committed
   self:_submit({ type = "RegisterUnplaced", ready = ready })
-  return before ~= self.committed
 end
 
 function FocusHistory:unplacedTarget(windowId)
   local record = self.committed.unplaced[windowId]
   if not record then return nil end
-  return {
-    target = target(record.target),
-    pid = record.pid,
-    metadata = copy(record.metadata),
-    decision = copy(record.decision),
-  }
+  return { target = target(record.target), pid = record.pid }
+end
+
+function FocusHistory:unplacedTargets()
+  local targets = {}
+  for _, record in pairs(self.committed.unplaced) do
+    targets[#targets + 1] = { target = target(record.target), pid = record.pid }
+  end
+  return targets
 end
 
 function FocusHistory:promote(promoted)
-  local before = self.committed
   self:_submit({ type = "Promote", target = target(promoted) })
-  return before ~= self.committed
 end
 
 -- Commit a new global request before its native focus effect is issued.
 function FocusHistory:request(requested)
   self:_submit({ type = "Request", target = target(requested) })
-  return self:pending()
 end
 
 function FocusHistory:pending()
-  return self.committed.pending and copy(self.committed.pending) or nil
+  return self.committed.pending and target(self.committed.pending) or nil
 end
 
 function FocusHistory:cancel()
@@ -306,14 +281,6 @@ end
 
 function FocusHistory:snapshot()
   return copy(self.committed.entries)
-end
-
-function FocusHistory:state()
-  return copy(self.committed)
-end
-
-function FocusHistory:clear()
-  self:_submit({ type = "Clear" })
 end
 
 return FocusHistory

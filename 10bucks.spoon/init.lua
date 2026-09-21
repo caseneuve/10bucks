@@ -108,7 +108,7 @@ function Tenbucks:_afterCoreEvent(event, eventCore)
     local history = self.focusHistory:snapshot()
     for _, target in ipairs(history) do if not self:_targetIsManaged(target) then self.focusHistory:remove(target.windowId) end end
     local pending = self.focusHistory:pending()
-    if pending and not self:_targetIsManaged(pending.target) then self.focusHistory:cancel() end
+    if pending and not self:_targetIsManaged(pending) then self.focusHistory:cancel() end
   elseif event.type == "ActualFocusChanged" then
     local window = eventCore and eventCore:state().manager.windows[event.id]
     local unplaced = self.focusHistory:unplacedTarget(event.id)
@@ -136,7 +136,7 @@ function Tenbucks:_submitEvent(event, handle)
   local eventCore = self.core
   if event.type == "ActualFocusChanged" then
     local pending = self.focusHistory:pending()
-    eventCore = (pending and self.cores[pending.target.spaceId]) or self:_coreForManagedWindow(event.id) or eventCore
+    eventCore = (pending and self.cores[pending.spaceId]) or self:_coreForManagedWindow(event.id) or eventCore
   elseif event.id then
     eventCore = self:_coreForManagedWindow(event.id) or eventCore
   end
@@ -197,8 +197,7 @@ function Tenbucks:_startHost(context)
       managedDecision = function(id)
         local _, window = self:_coreForManagedWindow(id)
         if window then return { action = window.ruleAction } end
-        local unplaced = self.focusHistory:unplacedTarget(id)
-        return unplaced and unplaced.decision
+        if self.focusHistory:unplacedTarget(id) then return { action = "manage" } end
       end,
       record = function(kind) self:_record(kind) end,
       recordEvent = function(eventType) if self.instrumentation then self.instrumentation:recordEvent(eventType) end end,
@@ -219,8 +218,8 @@ function Tenbucks:_startHost(context)
             if intent.kind == "focus" then
               local target = { windowId = intent.windowId, spaceId = intent.spaceId }
               local pending = self.focusHistory:pending()
-              if self:_targetIsManaged(target) and (not pending or pending.target.windowId ~= target.windowId
-                or pending.target.spaceId ~= target.spaceId) then self.focusHistory:request(target) end
+              if self:_targetIsManaged(target) and (not pending or pending.windowId ~= target.windowId
+                or pending.spaceId ~= target.spaceId) then self.focusHistory:request(target) end
             end
           end
           host:execute(adapter, intents)
@@ -228,7 +227,7 @@ function Tenbucks:_startHost(context)
       end
     end
     adapter:start() -- bootstrap/re-synchronize only this confirmed original Space.
-    for _, record in pairs(self.focusHistory:state().unplaced) do
+    for _, record in ipairs(self.focusHistory:unplacedTargets()) do
       local handle = self.handleRegistry:resolve(record.target)
       if handle then
         local attached = pcall(adapter.retainManaged, adapter, record.target.windowId, handle, record.pid)
@@ -277,8 +276,8 @@ function Tenbucks:_contextChanged(context)
   self:_startHost(context)
   self.core:submit({ type = "Reflow" })
   local pending = self.focusHistory:pending()
-  if pending and pending.target.spaceId == context.regularSpaceId and self:_targetIsManaged(pending.target) then
-    self.core:submit({ type = "FocusTarget", windowId = pending.target.windowId })
+  if pending and pending.spaceId == context.regularSpaceId and self:_targetIsManaged(pending) then
+    self.core:submit({ type = "FocusTarget", windowId = pending.windowId })
   end
 end
 

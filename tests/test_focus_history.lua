@@ -34,58 +34,39 @@ return {
     local history = FocusHistory.new()
     history:observe({ windowId = "A", spaceId = "one" })
     history:observe({ windowId = "B", spaceId = "two" })
-    assert(history:registerUnplaced(fullscreenReady("F", 44)))
+    history:registerUnplaced(fullscreenReady("F", 44))
     assert(ids(history) == "A,B", "readiness must not fabricate focus history")
 
     local recorded = assert(history:unplacedTarget("F"))
-    assert(recorded.target.windowId == "F" and recorded.target.spaceId == "fullscreen-space")
-    assert(recorded.pid == 44 and recorded.metadata.nativeFullscreen and recorded.decision.action == "manage")
-    local duplicate = fullscreenReady("F", 99)
-    duplicate.decision.reason = "later-decision"
-    assert(not history:registerUnplaced(duplicate), "duplicate readiness must preserve the original decision")
-    assert(history:unplacedTarget("F").pid == 44 and history:unplacedTarget("F").decision.reason == nil)
-    recorded.metadata.nativeFullscreen = false
-    assert(history:unplacedTarget("F").metadata.nativeFullscreen, "returned records must be defensive copies")
+    assert(recorded.target.windowId == "F" and recorded.target.spaceId == "fullscreen-space" and recorded.pid == 44)
+    history:registerUnplaced(fullscreenReady("F", 44))
+    assert(history:unplacedTarget("F").pid == 44, "duplicate readiness retains the original managed lifetime")
+    recorded.target.spaceId = "corrupt"
+    assert(history:unplacedTarget("F").target.spaceId == "fullscreen-space", "returned targets must be defensive copies")
 
-    history:observe(recorded.target)
+    local fullscreenTarget = history:unplacedTarget("F").target
+    history:observe(fullscreenTarget)
     assert(ids(history) == "A,B,F")
-    history:request(recorded.target)
-    local rebound = fullscreenReady("F", 99, "fullscreen-space-2")
-    rebound.decision.reason = "new-owner-must-not-reclassify"
-    assert(history:registerUnplaced(rebound), "a new confirmed fullscreen owner must rebind in place")
+    history:request(fullscreenTarget)
+    history:registerUnplaced(fullscreenReady("F", 44, "fullscreen-space-2"))
     local reboundRecord = assert(history:unplacedTarget("F"))
-    assert(reboundRecord.target.spaceId == "fullscreen-space-2")
-    assert(reboundRecord.pid == 44 and reboundRecord.metadata.spaceId == "fullscreen-space"
-      and reboundRecord.decision.reason == nil, "duplicate readiness retains original metadata/decision")
+    assert(reboundRecord.target.spaceId == "fullscreen-space-2" and reboundRecord.pid == 44)
     assert(history:snapshot()[3].spaceId == "fullscreen-space-2")
-    assert(history:pending().target.spaceId == "fullscreen-space-2")
+    assert(history:pending().spaceId == "fullscreen-space-2")
     history:cancel()
 
     local first = assert(history:previous(function() return true end))
     assert(first.windowId == "B")
-    local pending = history:request(first)
-    assert(pending.target.windowId == "B" and history:pending().target.windowId == "B")
-    local generation = history:pending().generation
+    history:request(first)
+    assert(history:pending().windowId == "B")
     local rapid = assert(history:previous(function() return true end))
     assert(rapid.windowId == "B", "unconfirmed previous resolves from unchanged actual history")
     history:request(rapid)
-    assert(history:pending().target.windowId == "B" and history:pending().generation == generation + 1)
+    assert(history:pending().windowId == "B")
 
     history:observe({ windowId = "B", spaceId = "two" })
     assert(history:pending() == nil and ids(history) == "A,F,B")
     assert(history:previous(function() return true end).windowId == "F")
-  end,
-
-  ["STATE-001 STATE-003: pure focus reducer commits defensive plain state"] = function()
-    local history = FocusHistory.new()
-    history:observe({ windowId = "A", spaceId = "one" })
-    local before = history:state()
-    assert(FocusHistory.reduce(before, { type = "Observe", target = { windowId = "A", spaceId = "one" } }) == before,
-      "duplicate newest observation is a reducer no-op")
-    local reduced = FocusHistory.reduce(before, { type = "Request", target = { windowId = "A", spaceId = "one" } })
-    assert(before.pending == nil and reduced.pending.target.windowId == "A")
-    reduced.pending.target.spaceId = "corrupt"
-    assert(history:state().pending == nil and before.pending == nil)
   end,
 
   ["FOCUS-005: nonmatching known actual focus preserves a pending global request and its MRU"] = function()
@@ -95,32 +76,29 @@ return {
     history:request({ windowId = "A", spaceId = "one" })
     history:observe({ windowId = "B", spaceId = "two" })
     assert(ids(history) == "A,B")
-    assert(history:pending().target.windowId == "A")
+    assert(history:pending().windowId == "A")
     history:cancel()
     assert(history:pending() == nil)
   end,
 
-  ["FS-004 FS-005 LIFE-003: promotion rebinds an unplaced target in place without MRU insertion or rule replacement"] = function()
+  ["FS-004 FS-005 LIFE-003: promotion rebinds an unplaced target in place without MRU insertion"] = function()
     local history = FocusHistory.new()
     history:observe({ windowId = "A", spaceId = "one" })
-    assert(history:registerUnplaced(fullscreenReady("F", 44)))
+    history:registerUnplaced(fullscreenReady("F", 44))
     history:observe({ windowId = "F", spaceId = "fullscreen-space" })
     history:observe({ windowId = "A", spaceId = "one" })
     assert(ids(history) == "F,A")
 
-    assert(history:promote({ windowId = "F", spaceId = "regular-destination" }))
+    history:promote({ windowId = "F", spaceId = "regular-destination" })
     assert(history:unplacedTarget("F") == nil)
-    local state = history:state()
-    assert(state.entries[1].windowId == "F" and state.entries[1].spaceId == "regular-destination")
+    assert(history:snapshot()[1].windowId == "F" and history:snapshot()[1].spaceId == "regular-destination")
     assert(ids(history) == "F,A", "promotion must not reorder MRU")
-    state.entries[1].spaceId = "corrupt"
-    assert(history:snapshot()[1].spaceId == "regular-destination")
   end,
 
   ["WIN-005 FOCUS-005: authoritative removal prunes history and unplaced ownership without resolver-driven registry deletion"] = function()
     local history = FocusHistory.new()
     history:observe({ windowId = "A", spaceId = "one" })
-    assert(history:registerUnplaced(fullscreenReady("F", 44)))
+    history:registerUnplaced(fullscreenReady("F", 44))
     history:observe({ windowId = "F", spaceId = "fullscreen-space" })
     local target = history:previous(function(candidate) return candidate.windowId ~= "F" end)
     assert(target == nil and history:unplacedTarget("F") ~= nil)

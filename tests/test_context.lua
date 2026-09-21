@@ -7,7 +7,6 @@ return {
     assert(context.workArea.x == 0 and context.workArea.y == 0 and context.workArea.w == 1 and context.workArea.h == 1)
     hs.spaces.spaceType = function() return "fullscreen" end
     local fullscreen = Context.snapshot(hs, "built-in")
-    assert(fullscreen.spaceType == "fullscreen" and fullscreen.activeSpaceId == "space")
     assert(fullscreen.regularSpaceId == nil and fullscreen.displayId == "built-in")
     hs.spaces.spaceType = function() return "unknown" end
     assert(not pcall(Context.snapshot, hs, "built-in"))

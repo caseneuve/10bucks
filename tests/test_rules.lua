@@ -131,23 +131,13 @@ return {
     equal(targeted.metadata.origin, "targetedReadiness")
   end,
 
-  ["LIFE-003 RULE-002 FOCUS-003: prior managed decisions survive independent exit readiness but never focus admission"] = function()
-    local prior = { action = "manage", retained = { source = "first-ready" } }
+  ["LIFE-003 RULE-002 FOCUS-003: prior manage action survives independent exit readiness but never focus admission"] = function()
     local changed = metadata({
       origin = "targetedReadiness", movable = false, resizable = false,
       spaceType = "user", nativeFullscreen = false,
     })
     equal(assert(Rules.ready(changed)).decision.action, "exclude")
-    local retained = assert(Rules.ready(changed, prior))
-    equal(retained.decision.action, "manage")
-    assert(retained.decision ~= prior and retained.decision.retained ~= prior.retained)
-    prior.retained.source = "corrupt"
-    equal(retained.decision.retained.source, "first-ready")
-
-    local invalid = Rules.ready(metadata(), { action = "exclude" })
-    assert(invalid == nil)
-    invalid = Rules.ready(metadata(), { action = "manage", callback = function() end })
-    assert(invalid == nil)
+    equal(assert(Rules.ready(changed, { action = "manage" })).decision.action, "manage")
 
     local focus = assert(Rules.ready(metadata({ origin = "focus" }), { action = "manage" }))
     equal(focus.decision.action, "defer")

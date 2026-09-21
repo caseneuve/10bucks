@@ -19,8 +19,8 @@ function Context.snapshot(hs, builtInDisplayUUID)
   assert(type(workArea.x) == "number" and type(workArea.y) == "number"
       and type(workArea.w) == "number" and type(workArea.h) == "number",
     "10bucks built-in display frame must provide numeric x/y/w/h")
-  return { displayId = builtInDisplayUUID, activeSpaceId = space, spaceType = spaceType,
-    regularSpaceId = spaceType == "user" and space or nil, workArea = workArea, screen = selected }
+  return { displayId = builtInDisplayUUID, regularSpaceId = spaceType == "user" and space or nil,
+    workArea = workArea, screen = selected }
 end
 
 -- The Space watcher owns only confirmed context changes. It deliberately does

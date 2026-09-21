@@ -71,7 +71,7 @@ return {
     local core = ten.core
     assert(#ten.focusHistory:snapshot() == 2 and core:state().manager.windows[1] == nil)
     f.onFocus = function(id)
-      assert(ten.focusHistory:pending().target.windowId == id)
+      assert(ten.focusHistory:pending().windowId == id)
       if id == 2 then assert(core:state().manager.focus.desiredBySpace.regular.pending) end
     end
     f:previous(); assert(f.focuses[#f.focuses] == 1 and not ten.focusHistory:pending())
@@ -88,7 +88,7 @@ return {
   ["FOCUS-005 FOCUS-006: unconfirmed fullscreen previous repeats its target, not an older history entry"] = function()
     local f, ten = setup(); f:activateRegular(); f.delayFocus = true
     f:previous(); f:previous()
-    assert(f.focuses[1] == 1 and f.focuses[2] == 1 and ten.focusHistory:pending().target.windowId == 1)
+    assert(f.focuses[1] == 1 and f.focuses[2] == 1 and ten.focusHistory:pending().windowId == 1)
     assert(ten.focusHistory:snapshot()[2].windowId == 2)
     f.focused, f.activeSpace = f.windows[1], "full"
     f.appWatcher.callback(f.windows[1], "AXFocusedWindowChanged")
@@ -97,7 +97,7 @@ return {
   end,
   ["FOCUS-006: a newer local focus request supersedes pending global fullscreen focus"] = function()
     local f, ten = setup(); f:activateRegular(); f.delayFocus = true
-    f:previous(); assert(ten.focusHistory:pending().target.windowId == 1)
+    f:previous(); assert(ten.focusHistory:pending().windowId == 1)
     assert(ten:_submitCommand({ type = "FocusNext" })) -- already-actual regular target confirms immediately
     assert(not ten.focusHistory:pending(), "older global request must not outlive a newer confirmed local request")
     assert(not ten.core:state().manager.focus.desiredBySpace.regular.pending)
@@ -119,13 +119,15 @@ return {
     assert(f.frames[1] and not ten.focusHistory:pending())
     ten:stop()
   end,
-  ["FS-004 WIN-005: missed exit reconciles at observer reattachment; destruction removes unplaced state"] = function()
+  ["FS-004 DISC-002: ordinary regular bootstrap admits a previously unplaced fullscreen window"] = function()
     local f, ten = setup()
-    f.fullscreen = false -- no callback: exit happened while no regular host existed
+    f.fullscreen = false -- regular bootstrap, not observer reattachment, observes the exit
     f:activateRegular()
     assert(not ten.focusHistory:unplacedTarget(1) and ten.core:state().manager.windows[1])
     ten:stop()
-    f, ten = setup(); f:activateRegular()
+  end,
+  ["WIN-005 FOCUS-005: destruction removes unplaced ownership and history"] = function()
+    local f, ten = setup(); f:activateRegular()
     f.watchers[1].callback(nil, "AXUIElementDestroyed")
     assert(not ten.focusHistory:unplacedTarget(1) and not ten.handleRegistry:target(1))
     assert(#ten.focusHistory:snapshot() == 1 and not ten:_submitCommand({ type = "FocusManagedPrevious" }))

@@ -31,23 +31,12 @@ local function copyApplication(application)
   return { pid = application.pid, bundleID = application.bundleID, name = application.name }
 end
 
-local function copyPlain(value, seen)
-  if type(value) ~= "table" then return value end
-  seen = seen or {}
-  if seen[value] then error("normalized rule data must not contain cycles", 3) end
-  local result = {}
-  seen[value] = result
-  for key, item in pairs(value) do result[copyPlain(key, seen)] = copyPlain(item, seen) end
-  seen[value] = nil
-  return result
-end
-
 local function managedDecision(value)
-  if value == nil then return nil end
-  if not plain(value) or type(value) ~= "table" or value.action ~= "manage" then
-    return nil, "prior managed decision must be plain manage data"
+  if value == nil then return false end
+  if type(value) ~= "table" or value.action ~= "manage" then
+    return nil, "prior managed decision must be manage"
   end
-  return copyPlain(value)
+  return true
 end
 
 local function decision(metadata)
@@ -113,7 +102,7 @@ function Rules.ready(input, priorManagedDecision)
   -- A committed manage decision is stable across independent lifecycle
   -- readiness (for example, native-fullscreen exit). Focus remains only an
   -- observation boundary and can never turn the prior decision into admission.
-  local result = prior and metadata.origin ~= "focus" and prior or decision(metadata)
+  local result = prior and metadata.origin ~= "focus" and { action = "manage" } or decision(metadata)
   return {
     type = "WindowReady", id = metadata.id, application = metadata.application, title = metadata.title,
     displayId = metadata.displayId, spaceId = metadata.spaceId, metadata = metadata, decision = result,
