@@ -194,9 +194,11 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
   local available = availability(manager)
   local target = transaction.name == "FocusTarget" and transaction.windowId or selectedId(coordinator, available)
   local admitted = #newIds > #oldIds
+  local bootstrapAdmission = admitted and transaction.type == "WindowReady"
+    and transaction.metadata and transaction.metadata.origin == "bootstrap"
   local directional = transaction.name == "FocusLeftGroup" or transaction.name == "FocusRightGroup"
   local commandFocus = isCommand and focusCommands[transaction.name] and (not directional or commandChanged)
-  if target and (admitted or removedSelected or commandFocus) then
+  if target and ((admitted and not bootstrapAdmission) or removedSelected or commandFocus) then
     manager = setDesired(manager, spaceId, target, true, selectedGroup(coordinator))
   elseif isCommand and (transaction.name == "CycleLayout" or transaction.name == "ActivateLayout") and target then
     manager = setDesired(manager, spaceId, target, false, selectedGroup(coordinator))
@@ -257,7 +259,10 @@ function Core.new(options)
         local oldGroup = previous and selectedGroup(previous.coordinators[core.spaceId])
         commandFocus = oldGroup ~= selectedGroup(coordinator)
       end
-      local requestsFocus = input.type == "WindowReady" or input.type == "WindowDestroyed"
+      local newlyAdmitted = input.type == "WindowReady" and previous.manager.windows[input.id] == nil
+        and committed.manager.windows[input.id] ~= nil
+      local admissionFocus = newlyAdmitted and not (input.metadata and input.metadata.origin == "bootstrap")
+      local requestsFocus = admissionFocus or input.type == "WindowDestroyed"
         or input.type == "ApplicationTerminated" or input.type == "WindowMinimized"
         or input.type == "WindowEnteredNativeFullscreen" or commandFocus
       if requestsFocus and desired.pending and desired.targetId and available[desired.targetId] then

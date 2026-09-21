@@ -57,8 +57,9 @@ end
 return {
   ["composition bootstrap and reflow deduplicate actual frames then correct drift"] = function()
     local f = fakeHs(); local ten = load(f); ten:start()
-    assert(ten.core:state().manager.windows[9] and f.frames == 1)
-    ten.core:submit({ type = "Reflow" }); assert(f.frames == 1)
+    assert(ten.core:state().manager.windows[9] and f.frames == 1 and f.focuses == 0,
+      "cold bootstrap must tile without stealing native focus")
+    ten.core:submit({ type = "Reflow" }); assert(f.frames == 1 and f.focuses == 0)
     f.actual = { x = 7, y = 0, w = 100, h = 80 }; ten.core:submit({ type = "Reflow" }); assert(f.frames == 2)
     ten:stop()
   end,

@@ -19,6 +19,18 @@ local function ready(id, pid)
     application = { pid = pid or 1, name = "Example", bundleID = "example.app" } }
 end
 
+local function bootstrapReady(id, pid)
+  local event = ready(id, pid)
+  event.metadata = {
+    id = event.id, application = event.application, title = event.title,
+    displayId = event.displayId, spaceId = event.spaceId, origin = "bootstrap", createdAfterStart = false,
+    role = "AXWindow", subrole = "AXStandardWindow", modal = false,
+    movable = true, resizable = true, selfProcess = false,
+  }
+  event.decision = { action = "manage" }
+  return event
+end
+
 local function new(observer, model)
   return Core.new({
     displayId = "built-in", regularSpaceId = "space-1", workArea = { x = 10, y = 20, w = 1000, h = 600 },
@@ -53,6 +65,28 @@ return {
     equal(emitted[1].displayId, "built-in")
     equal(emitted[1].spaceId, "space-1")
     equal(emitted[1].frame.w, 1000)
+  end,
+
+  ["DISC-001 COL-009 FOCUS-006: bootstrap and duplicate readiness never steal focus"] = function()
+    local observed = {}
+    local core = new(function(intents) observed[#observed + 1] = intents end)
+    core:submit(bootstrapReady("one")); core:submit(bootstrapReady("two"))
+    local state = core:state()
+    assert(state.manager.windows.one and state.manager.windows.two)
+    assert(not state.manager.focus.desiredBySpace["space-1"].pending)
+    for _, index in ipairs({ 1, 2 }) do
+      for _, intent in ipairs(observed[index]) do assert(intent.kind ~= "focus") end
+    end
+
+    core:submit(ready("three"))
+    local focusCount = 0
+    for _, intent in ipairs(observed[#observed]) do if intent.kind == "focus" then focusCount = focusCount + 1 end end
+    equal(focusCount, 1)
+    core:submit(ready("three"))
+    focusCount = 0
+    for _, intent in ipairs(observed[#observed]) do if intent.kind == "focus" then focusCount = focusCount + 1 end end
+    equal(focusCount, 0)
+    assert(core:state().manager.focus.desiredBySpace["space-1"].pending)
   end,
 
   ["WIN-003 COL-002 PERF-003: second admission derives only final columns frames without a wrong-column frame"] = function()

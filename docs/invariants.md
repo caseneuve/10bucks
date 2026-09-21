@@ -68,7 +68,7 @@ Focus, z-order, Space activation, snapshots, reflow, title changes, and availabi
 
 ### WIN-003 — Admission order
 
-A newly admitted window appends according to the active layout's admission policy and receives managed selection/focus intent. Only explicit structural commands may otherwise change layout order/grouping.
+A newly created or post-start discovered window appends according to the active layout's admission policy and receives managed selection/focus intent. Cold-bootstrap discovery appends without requesting focus merely because it was discovered; actual managed focus determines bootstrap selection as specified by COL-009. Only explicit structural commands may otherwise change layout order/grouping.
 
 ### WIN-004 — Temporary unavailability
 
