@@ -196,12 +196,12 @@ return {
     }))
   end,
 
-  ["COL-005 FOCUS-004: removing a selected middle member preserves order and selects its stable predecessor"] = function()
+  ["COL-005 FOCUS-004: removing a selected middle member preserves order and selects the last source survivor"] = function()
     local state = Columns.initialState({ "one", "two", "three", "four" }, context())
     state = Columns.reduce(state, { type = "ManagedFocusObserved", memberId = "two" }, context())
     state = Columns.reduce(state, { type = "Remove", memberId = "two" }, context())
     assert(deepEqual(state.stacks[1].members, { "one", "three" }))
-    equal(state.stacks[1].selectedId, "one")
+    equal(state.stacks[1].selectedId, "three")
     equal(state.activeStack, 1)
     assertValid(state, { "one", "three", "four" })
   end,

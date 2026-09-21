@@ -5,7 +5,7 @@ local Columns = { id = "columns" }
 function Columns.supports(eventType)
   return eventType == "Admit" or eventType == "Remove" or eventType == "ManagedFocusObserved"
     or eventType == "FocusNext" or eventType == "FocusPrevious" or eventType == "FocusNextGroup"
-    or eventType == "FocusPreviousGroup" or eventType == "MoveFocusedToOther" or eventType == "SwapGroups"
+    or eventType == "FocusPreviousGroup" or eventType == "RecoverSource" or eventType == "MoveFocusedToOther" or eventType == "SwapGroups"
     or eventType == "ResizeRatio" or eventType == "ResizeRatioDelta" or eventType == "ResetRatio" or eventType == "Synchronize"
 end
 
@@ -299,13 +299,23 @@ function Columns.reduce(state, event, context)
         end
       end
     else
-      if stack.selectedId == event.memberId then
-        local predecessor = removedIndex == 1 and #stack.members or removedIndex - 1
-        stack.selectedId = stack.members[predecessor]
-      end
+      if stack.selectedId == event.memberId then stack.selectedId = stack.members[#stack.members] end
       if event.recoverSource == true then active = stackIndex end
     end
     return copyState(state, stacks, active)
+  end
+
+  if event.type == "RecoverSource" then
+    local source = event.sourceGroup
+    if type(source) ~= "number" or source < 1 or source > #state.stacks then return state end
+    local stack, target = state.stacks[source]
+    for index = #stack.members, 1, -1 do
+      if isAvailable(context.availableMembers, stack.members[index]) then target = stack.members[index]; break end
+    end
+    if not target then return state end
+    local stacks = copyStacks(state.stacks)
+    stacks[source].selectedId = target
+    return copyState(state, stacks, source)
   end
 
   if event.type == "ManagedFocusObserved" then

@@ -41,6 +41,8 @@ return {
     equal(state.spaces["space-1"].id, "space-1")
     equal(state.spaces["space-1"].displayId, "built-in")
     equal(#state.spaces["space-1"].memberIds, 0)
+    equal(state.focus.desiredBySpace["space-1"].pending, false)
+    equal(state.focus.desiredBySpace["space-1"].generation, 0)
     assertValid(state)
   end,
 
@@ -149,6 +151,8 @@ return {
       function(s) s.windows["window-1"].lifecycle.minimized = "false" end,
       function(s) s.windows["window-1"].adapterHandle = function() end end,
       function(s) setmetatable(s.windows["window-1"], {}) end,
+      function(s) s.focus.desiredBySpace["space-1"] = { targetId = "missing", pending = true, generation = 1 } end,
+      function(s) s.focus.desiredBySpace["space-1"].generation = -1 end,
     }
     for _, corrupt in ipairs(cases) do
       local copy = deepCopy(state)

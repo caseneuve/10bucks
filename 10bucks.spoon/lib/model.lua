@@ -119,7 +119,7 @@ function Model.validate(state)
   end
 
   if type(state.focus.actualWindow) ~= "table" or type(state.focus.managedHistory) ~= "table"
-    or arrayLength(state.focus.managedHistory) == nil then
+    or arrayLength(state.focus.managedHistory) == nil or type(state.focus.desiredBySpace) ~= "table" then
     return fail("focus state is malformed")
   end
   if state.focus.actualWindow.id ~= nil and not validId(state.focus.actualWindow.id) then
@@ -131,6 +131,25 @@ function Model.validate(state)
       return fail("managed focus history is malformed")
     end
     history[windowId] = true
+  end
+  for spaceId, desired in pairs(state.focus.desiredBySpace) do
+    if not state.spaces[spaceId] or type(desired) ~= "table" or type(desired.pending) ~= "boolean"
+      or type(desired.generation) ~= "number" or desired.generation < 0 or desired.generation % 1 ~= 0
+      or (desired.targetId ~= nil and (not state.windows[desired.targetId]
+        or state.windows[desired.targetId].placementSpaceId ~= spaceId))
+      or (desired.sourceGroup ~= nil and (type(desired.sourceGroup) ~= "number"
+        or desired.sourceGroup < 1 or desired.sourceGroup % 1 ~= 0)) then
+      return fail("desired focus state is malformed")
+    end
+    if desired.pending and desired.targetId == nil then return fail("pending desired focus requires a target") end
+    for key in pairs(desired) do
+      if key ~= "targetId" and key ~= "pending" and key ~= "generation" and key ~= "sourceGroup" then
+        return fail("desired focus state is malformed")
+      end
+    end
+  end
+  for spaceId in pairs(state.spaces) do
+    if state.focus.desiredBySpace[spaceId] == nil then return fail("desired focus state is missing for a Space") end
   end
   return true
 end
@@ -159,7 +178,9 @@ function Model.new(identity)
         activeRegularSpaceId = identity.activeRegularSpaceId,
       },
     },
-    focus = { actualWindow = {}, managedHistory = {} },
+    focus = { actualWindow = {}, managedHistory = {}, desiredBySpace = {
+      [identity.activeRegularSpaceId] = { pending = false, generation = 0 },
+    } },
   }
   requireValid(state)
   return state
@@ -184,6 +205,13 @@ local function removeWindow(state, windowId)
   state.windows[windowId] = nil
   removeFromArray(state.focus.managedHistory, windowId)
   if state.focus.actualWindow.id == windowId then state.focus.actualWindow = {} end
+  for _, desired in pairs(state.focus.desiredBySpace) do
+    if desired.targetId == windowId then
+      desired.targetId = nil
+      desired.pending = false
+      desired.sourceGroup = nil
+    end
+  end
   return true
 end
 

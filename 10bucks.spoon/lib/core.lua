@@ -36,7 +36,10 @@ end
 local function context(manager, displayId, spaceId)
   local actual = manager.focus.actualWindow.id
   local available = availability(manager)
-  local focused = manager.windows[actual] and available[actual] and actual or nil
+  local desired = manager.focus.desiredBySpace[spaceId]
+  local focused = desired and desired.pending and desired.targetId
+    and available[desired.targetId] and desired.targetId or nil
+  if not focused then focused = manager.windows[actual] and available[actual] and actual or nil end
   if not focused then
     for index = #manager.focus.managedHistory, 1, -1 do
       local candidate = manager.focus.managedHistory[index]
@@ -62,23 +65,51 @@ local function contains(ids, id)
   return false
 end
 
-local function selectedId(coordinator, dependencies)
-  local layout = dependencies.registry[coordinator.activeLayoutId]
+local function selectedId(coordinator)
   local state = coordinator.layouts[coordinator.activeLayoutId]
   if state.selectedId ~= nil then return state.selectedId end
   if state.activeStack then return state.stacks[state.activeStack].selectedId end
   return nil
 end
 
-local function historyRecovery(manager, spaceId)
-  local available = availability(manager)
-  -- Current-Space history is the only history this narrow core considers.
-  for index = #manager.focus.managedHistory, 1, -1 do
-    local id = manager.focus.managedHistory[index]
-    local window = manager.windows[id]
-    if window and window.placementSpaceId == spaceId and available[id] then return id end
+local function selectedGroup(coordinator)
+  local state = coordinator.layouts[coordinator.activeLayoutId]
+  return state.activeStack
+end
+
+local function groupForMember(coordinator, memberId)
+  local state = coordinator.layouts[coordinator.activeLayoutId]
+  if state.stacks then
+    for index, stack in ipairs(state.stacks) do
+      for _, id in ipairs(stack.members) do if id == memberId then return index end end
+    end
+  elseif state.selectedId == memberId then
+    return 1
   end
 end
+
+local function isGroupSelection(coordinator, memberId, group)
+  local state = coordinator.layouts[coordinator.activeLayoutId]
+  if state.stacks then return group and state.stacks[group].selectedId == memberId end
+  return state.selectedId == memberId
+end
+
+local function setDesired(manager, spaceId, targetId, pending, sourceGroup)
+  local nextManager = copy(manager)
+  local previous = nextManager.focus.desiredBySpace[spaceId]
+  nextManager.focus.desiredBySpace[spaceId] = {
+    targetId = targetId,
+    pending = pending == true,
+    generation = previous.generation + (pending and 1 or 0),
+    sourceGroup = sourceGroup,
+  }
+  return nextManager
+end
+
+local focusCommands = {
+  FocusNext = true, FocusPrevious = true, FocusNextGroup = true, FocusPreviousGroup = true,
+  MoveFocusedToOther = true, SwapGroups = true,
+}
 
 local function validateComposite(state, displayId, spaceId, dependencies)
   if type(state) ~= "table" or type(state.manager) ~= "table" or type(state.coordinators) ~= "table" then
@@ -102,11 +133,15 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
   local coordinator = current.coordinators[spaceId]
   local oldIds, newIds = members(before, spaceId), members(manager, spaceId)
 
+  local removedSelected, recoveryGroup = false, nil
   for _, id in ipairs(oldIds) do
     if not contains(newIds, id) then
+      local sourceGroup = groupForMember(coordinator, id)
+      local wasSelected = isGroupSelection(coordinator, id, sourceGroup)
       coordinator = Coordinator.reduce(coordinator,
-        { type = "Remove", memberId = id, recoverSource = transaction.type == "WindowDestroyed" and id == before.focus.actualWindow.id }, newIds,
+        { type = "Remove", memberId = id, recoverSource = wasSelected }, newIds,
         context(manager, displayId, spaceId), dependencies)
+      if wasSelected then removedSelected, recoveryGroup = true, sourceGroup end
     end
   end
   for _, id in ipairs(newIds) do
@@ -116,28 +151,34 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
     end
   end
   if transaction.type == "ActualFocusChanged" and manager.windows[transaction.id] then
-    coordinator = Coordinator.reduce(coordinator, { type = "ManagedFocusObserved", memberId = transaction.id }, newIds,
-      context(manager, displayId, spaceId), dependencies)
-  end
-  -- An unavailable actual managed target recovers selection entirely through
-  -- the layout capability interface: current-Space history first, then the
-  -- layout's own previous-member/group semantics. No layout identity branch.
-  if (transaction.type == "WindowMinimized" or transaction.type == "WindowEnteredNativeFullscreen")
-    and before.focus.actualWindow.id == transaction.id and not availability(manager)[transaction.id] then
-    local target = historyRecovery(manager, spaceId)
-    if target == transaction.id then target = nil end
-    if target then
-      coordinator = Coordinator.reduce(coordinator, { type = "ManagedFocusObserved", memberId = target }, newIds,
+    local priorDesired = before.focus.desiredBySpace[spaceId]
+    if not priorDesired.pending or priorDesired.targetId == transaction.id then
+      coordinator = Coordinator.reduce(coordinator, { type = "ManagedFocusObserved", memberId = transaction.id }, newIds,
         context(manager, displayId, spaceId), dependencies)
-    else
-      coordinator = Coordinator.reduce(coordinator, { type = "FocusPrevious" }, newIds,
-        context(manager, displayId, spaceId), dependencies)
+      manager = setDesired(manager, spaceId, transaction.id, false, selectedGroup(coordinator))
     end
+  end
+  if (transaction.type == "WindowMinimized" or transaction.type == "WindowEnteredNativeFullscreen")
+    and selectedId(coordinator) == transaction.id and not availability(manager)[transaction.id] then
+    recoveryGroup = selectedGroup(coordinator)
+    coordinator = Coordinator.reduce(coordinator, { type = "RecoverSource", sourceGroup = recoveryGroup }, newIds,
+      context(manager, displayId, spaceId), dependencies)
+    removedSelected = true
+  elseif removedSelected then
+    coordinator = Coordinator.reduce(coordinator, { type = "RecoverSource", sourceGroup = recoveryGroup }, newIds,
+      context(manager, displayId, spaceId), dependencies)
   end
   if isCommand then
     local event = { type = transaction.name }
     for key, value in pairs(transaction) do if key ~= "type" and key ~= "name" then event[key] = value end end
     coordinator = Coordinator.reduce(coordinator, event, newIds, context(manager, displayId, spaceId), dependencies)
+  end
+  local target = selectedId(coordinator)
+  local admitted = #newIds > #oldIds
+  if target and (admitted or removedSelected or (isCommand and focusCommands[transaction.name])) then
+    manager = setDesired(manager, spaceId, target, true, selectedGroup(coordinator))
+  elseif isCommand and (transaction.name == "CycleLayout" or transaction.name == "ActivateLayout") and target then
+    manager = setDesired(manager, spaceId, target, false, selectedGroup(coordinator))
   end
   -- Admission/removal are propagated explicitly above, focus observations use
   -- ManagedFocusObserved, and layout activation synchronizes internally. Do not
@@ -181,13 +222,15 @@ function Core.new(options)
           context(committed.manager, core.displayId, core.spaceId), core.dependencies)
         if not capability.handled then intents[#intents + 1] = { kind = "result", accepted = false, reason = capability.reason } end
       end
-      local target = selectedId(coordinator, core.dependencies)
+      local desired = committed.manager.focus.desiredBySpace[core.spaceId]
       local available = availability(committed.manager)
-      if target and available[target] and (input.type == "Command" or input.type == "WindowReady") then
-        intents[#intents + 1] = { kind = "focus", windowId = target, displayId = core.displayId, spaceId = core.spaceId }
-      elseif input.type == "WindowMinimized" or input.type == "WindowDestroyed" or input.type == "WindowEnteredNativeFullscreen" then
-        target = selectedId(coordinator, core.dependencies)
-        if target and available[target] then intents[#intents + 1] = { kind = "focus", windowId = target, displayId = core.displayId, spaceId = core.spaceId } end
+      local requestsFocus = input.type == "WindowReady" or input.type == "WindowDestroyed"
+        or input.type == "ApplicationTerminated" or input.type == "WindowMinimized"
+        or input.type == "WindowEnteredNativeFullscreen"
+        or (input.type == "Command" and focusCommands[input.name])
+      if requestsFocus and desired.pending and desired.targetId and available[desired.targetId] then
+        intents[#intents + 1] = { kind = "focus", windowId = desired.targetId, displayId = core.displayId,
+          spaceId = core.spaceId, generation = desired.generation }
       end
       return intents
     end,

@@ -204,6 +204,12 @@ local function assertOracle(state, oracle, seed, step, action)
   local valid, err = validateComposite(state)
   assertThat(valid, seed, step, action, "validator failed: " .. tostring(err))
 
+  local desired = state.manager.focus.desiredBySpace[SPACE]
+  assertThat(type(desired) == "table" and type(desired.pending) == "boolean"
+    and type(desired.generation) == "number", seed, step, action, "FOCUS-006 desired state malformed")
+  if desired.pending then
+    assertThat(state.manager.windows[desired.targetId] ~= nil, seed, step, action, "FOCUS-006 pending target is not managed")
+  end
   local coordinator = state.coordinators[SPACE]
   local activeMembers = dependencies().registry[coordinator.activeLayoutId].memberIds(coordinator.layouts[coordinator.activeLayoutId])
   assertThat(sameSet(activeMembers, actual), seed, step, action, "active layout membership drift manager=" .. table.concat(actual, ",") .. " layout=" .. table.concat(activeMembers, ","))
@@ -289,15 +295,15 @@ local function generated(seed)
 end
 
 return {
-  ["FOCUS-004 STACK-002: selected-member removal chooses stable predecessor with wrapping"] = function()
+  ["FOCUS-004 STACK-002: selected-member removal chooses the last source survivor"] = function()
     local state = Stack.initialState({ "one", "two", "three" })
     state = Stack.reduce(state, { type = "ManagedFocusObserved", memberId = "two" }, {})
     state = Stack.reduce(state, { type = "Remove", memberId = "two" }, {})
-    assert(state.selectedId == "one", "FOCUS-004 expected predecessor one after removing selected two")
+    assert(state.selectedId == "three", "FOCUS-004 expected last source survivor three")
     state = Stack.initialState({ "one", "two" })
     state = Stack.reduce(state, { type = "ManagedFocusObserved", memberId = "one" }, {})
     state = Stack.reduce(state, { type = "Remove", memberId = "one" }, {})
-    assert(state.selectedId == "two", "FOCUS-004 expected predecessor wrapping to two")
+    assert(state.selectedId == "two", "FOCUS-004 expected sole source survivor two")
   end,
 
   ["STATE-001 STATE-002 STATE-003 STATE-004 STATE-005 STATE-006 STATE-008 WIN-002 WIN-003 WIN-004 WIN-005 FOCUS-003 LAY-003 LAY-004 STACK-001 COL-004: deterministic generated pure transactions"] = function()

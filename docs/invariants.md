@@ -100,9 +100,9 @@ Every regular Space owns its active layout and layout-owned state independently.
 
 `cycleLayout` MUST find the current layout in the configured unique ordered list, select the next entry, and wrap. It MUST NOT select the current/first layout as a naive first step.
 
-### LAY-003 — Inactive layout retention
+### LAY-003 — Inactive layout retention and focus continuity
 
-Switching away from a layout MUST retain its state. Switching back restores surviving assignments/order. Windows admitted while it was inactive are synchronized deterministically on activation.
+Switching away from a layout MUST retain its state. Switching back restores surviving assignments/order. Windows admitted while it was inactive are synchronized deterministically on activation. A layout switch MUST NOT change actual managed focus: the destination layout activates the group containing the currently focused managed window and selects that same window. If actual focus is unmanaged, it uses the last managed focus for that Space. Other groups retain their own selections unchanged.
 
 ### LAY-004 — Extensible layout boundary
 
@@ -134,7 +134,7 @@ If one column has no currently available members only because its durable member
 
 ### COL-005 — Permanent empty column
 
-Destroying or cross-Space-moving the last durable member removes that column. If at least two durable windows survive in the other column, columns immediately normalizes them back to two non-empty physical columns by retaining their order, keeping all but the newest on the left, and moving the newest to the right. With only one survivor, one column remains and the next admission follows COL-002.
+Destroying or cross-Space-moving the last durable member removes that column. If at least two durable windows survive in the other column, columns immediately normalizes them back to two non-empty physical columns by retaining their order, keeping all but the newest on the left, and moving the newest to the right. With only one survivor, one column remains and the next admission follows COL-002. If the destroyed window had managed focus, recovery remains on its physical source column when that column has or receives a replacement; it selects the last surviving member of that column. It MUST NOT jump to the other column merely because macOS reported a transient fallback focus first.
 
 ### COL-006 — Move between columns
 
@@ -142,7 +142,7 @@ Moving a focused window to the other column appends it to the destination and fo
 
 ### COL-007 — Swap columns
 
-Swapping columns atomically swaps whole ordered stacks and their selections. The focused/active stack follows its content to the other physical side.
+Swapping columns atomically swaps whole ordered stacks and their selections. The focused/active stack follows its content to the other physical side. Focusing or travelling to another column MUST use that column's retained selected (top) member and MUST NOT change any column's retained selection as a side effect.
 
 ### COL-008 — Divider
 
@@ -170,20 +170,19 @@ An actual focus callback MUST NOT admit an unknown window. It MAY trigger one ta
 
 After the focused managed member becomes unavailable, recovery preference is:
 
-1. most recently focused available managed window in the current regular Space;
-2. stable predecessor in the source stack, wrapping;
-3. first available member in the other column;
-4. no focus request.
+1. last surviving available member in the source stack/column;
+2. the retained selected available member in the other column;
+3. no focus request.
 
-Recovery MUST NOT cross Spaces and MUST NOT steal focus if another valid managed focus is already established.
+Recovery MUST NOT cross Spaces. A transient native fallback focus observed between close/minimize and the authoritative removal/unavailability event MUST NOT redirect recovery to another column. A background close/minimize MUST preserve the current managed focus and every column's retained selection.
 
 ### FOCUS-005 — Global previous window
 
 The previous-window command uses managed global focus history only. It may cross Spaces, unminimize a window, unhide its application, or enter its native fullscreen Space. Repeated invocation toggles according to actual managed focus observations. Dead entries are skipped/removed.
 
-### FOCUS-006 — Effect ordering
+### FOCUS-006 — Effect ordering and mouse focus
 
-A requested focus MUST NOT revise membership/order. Async focus completion is accepted only as actual focus observation; stale callbacks cannot complete an earlier placement decision.
+A requested focus MUST NOT revise membership/order. Desired managed focus and actual macOS focus are distinct. While a managed focus request is pending, stale actual-focus callbacks MUST NOT overwrite its desired selection. A matching actual-focus observation confirms the request. When no managed focus request is pending, a mouse/native actual-focus observation of a managed window MUST immediately update that Space's active group and that group's selected/top member; the next `h`/`l`/`j`/`k` command MUST act from that observation on its first invocation.
 
 ## Availability and native lifecycle
 

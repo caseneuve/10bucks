@@ -5,7 +5,8 @@ local Stack = { id = "stack" }
 
 function Stack.supports(eventType)
   return eventType == "Admit" or eventType == "Remove" or eventType == "ManagedFocusObserved"
-    or eventType == "FocusNext" or eventType == "FocusPrevious" or eventType == "Synchronize"
+    or eventType == "FocusNext" or eventType == "FocusPrevious" or eventType == "RecoverSource"
+    or eventType == "Synchronize"
 end
 
 local function validId(value)
@@ -175,11 +176,7 @@ function Stack.reduce(state, event, context)
     local members = copyMembers(state.members)
     table.remove(members, removedIndex)
     local selectedId = state.selectedId
-    if selectedId == event.memberId then
-      -- FOCUS-004: recover to the stable predecessor, wrapping after the
-      -- first slot, rather than selecting the successor at the removed index.
-      selectedId = members[removedIndex == 1 and #members or removedIndex - 1]
-    end
+    if selectedId == event.memberId then selectedId = members[#members] end
     return copyStateWith(state, members, selectedId)
   end
 
@@ -192,6 +189,13 @@ function Stack.reduce(state, event, context)
       end
     end
     return state
+  end
+
+  if event.type == "RecoverSource" then
+    local available = availableMembers(state, context and context.availableMembers)
+    local target = available[#available]
+    if not target or target == state.selectedId then return state end
+    return copyStateWith(state, nil, target)
   end
 
   if event.type == "FocusNext" or event.type == "FocusPrevious" then

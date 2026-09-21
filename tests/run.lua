@@ -6,6 +6,7 @@ local tests = {
   require("tests.test_model"), require("tests.test_runtime"), require("tests.test_rules"), require("tests.test_macos_windows"), require("tests.test_window_host"), require("tests.test_context"), require("tests.test_config_replacement"), require("tests.test_canary_instrumentation"),
   require("tests.test_geometry"), require("tests.test_stack"), require("tests.test_columns"),
   require("tests.test_layout_coordinator"), require("tests.test_generated_sequences"), require("tests.test_core"),
+  require("tests.test_focus_sequences"),
   (require("tests.test_integration_canary_a")), (require("tests.test_composition")),
 }
 local passed, failed = 0, 0

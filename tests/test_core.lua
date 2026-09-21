@@ -61,7 +61,8 @@ return {
     core:submit({ type = "CycleLayout" })
     core:submit(ready("one"))
     core:submit(ready("two"))
-    local emitted = frames(observed[#observed])
+    core:submit({ type = "ActualFocusChanged", id = "two" })
+    local emitted = frames(observed[#observed - 1])
     equal(#emitted, 2)
     equal(emitted[1].windowId, "one")
     equal(emitted[1].frame.w, 500)
@@ -137,7 +138,7 @@ return {
     local intents = observed[#observed]
     local focus
     for _, intent in ipairs(intents) do if intent.kind == "focus" then focus = intent end end
-    equal(focus.windowId, "one") -- current-Space managed history precedes stable predecessor
+    equal(focus.windowId, "three") -- FOCUS-004: last available survivor in the source stack
     core:submit({ type = "WindowDestroyed", id = "three" })
     state = core:state()
     equal(#state.manager.spaces["space-1"].memberIds, 2)
