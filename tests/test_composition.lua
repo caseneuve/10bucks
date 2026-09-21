@@ -229,7 +229,7 @@ return {
     f.contextWatcher.callback()
     local secondCore, scansAfterNewSpace = ten.core, f.scans
     assert(secondCore ~= firstCore and ten.context.regularSpaceId == "next-space")
-    assert(scansAfterNewSpace == scans + 1, "a newly adopted Space bootstraps exactly once")
+    assert(scansAfterNewSpace == scans, "a newly adopted Space must use the cold handle cache")
     assert(#secondCore:state().manager.spaces["next-space"].memberIds == 0)
     oldWindowWatcher(nil, "AXWindowMiniaturized")
     assert(firstCore:state().manager.windows[9] and not firstCore:state().manager.windows[9].lifecycle.minimized)

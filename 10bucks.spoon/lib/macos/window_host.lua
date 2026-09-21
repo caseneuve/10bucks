@@ -120,7 +120,12 @@ end
 
 function Host:_ready(window, origin, callback, membershipSet)
   local id = call(window, "id")
-  if id == nil or (membershipSet and not membershipSet[id]) or (not membershipSet and not self:_regularOwner(id)) then return end
+  if id == nil then return end
+  -- Cache the delivered handle even when its current Space is not this host's
+  -- scope. A later first activation can join one Space-membership snapshot to
+  -- this cache without rescanning every application's AX windows.
+  self:_remember(window)
+  if (membershipSet and not membershipSet[id]) or (not membershipSet and not self:_regularOwner(id)) then return end
   local metadata = self:_metadata(window, origin)
   if metadata then
     self:_remember(window, true)
@@ -215,6 +220,7 @@ end
 function Host:subscribeExistingWindows(callback, options)
   self.windowCallback = callback
   local bootstrap = options == nil or options.bootstrap ~= false
+  local enumerateWindows = options == nil or options.enumerateWindows ~= false
   local members = {}
   if bootstrap then
     self:_record("bootstrapSpaceQueries")
@@ -224,14 +230,20 @@ function Host:subscribeExistingWindows(callback, options)
   self:_record("runningApplicationQueries")
   for _, app in ipairs(self.hs.application.runningApplications()) do
     self:_attachApp(app, callback)
-    if bootstrap then
-      -- Enumeration is bootstrap-only. Failure for one app is non-destructive
-      -- and must not prevent subscriptions/bootstrap for its peers.
+    if bootstrap and enumerateWindows then
+      -- Global application-window enumeration is cold-start-only. Failure for
+      -- one app is non-destructive and must not prevent its peers.
       self:_record("bootstrapApplicationQueries")
       local ok, windows = pcall(app.allWindows, app)
       if ok and type(windows) == "table" then
         for _, window in ipairs(windows) do self:_ready(window, "bootstrap", callback, members) end
       end
+    end
+  end
+  if bootstrap and not enumerateWindows and self.handleRegistry then
+    for id in pairs(members) do
+      local record = self.handleRegistry:cached(id)
+      if record then self:_ready(record.handle, "bootstrap", callback, members) end
     end
   end
   return { detach = function() end }

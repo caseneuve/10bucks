@@ -52,14 +52,14 @@ return {
     equal(f.events[1].type, "WindowReady")
     assert(f.events[1].handle == nil)
     assert(instance:handleForId("window-1") == handle)
-    assert(f.existingOptions.bootstrap == true)
+    assert(f.existingOptions.bootstrap == true and f.existingOptions.enumerateWindows == true)
     assert(f.globalQueries == 0 and f.timers == 0)
   end,
 
   ["PERF-001 PERF-002: retained-Space start suppresses native bootstrap enumeration"] = function()
     local f = fake()
-    local instance = adapter(f):start({ bootstrap = false })
-    assert(f.existingOptions.bootstrap == false)
+    local instance = adapter(f):start({ bootstrap = false, enumerateWindows = false })
+    assert(f.existingOptions.bootstrap == false and f.existingOptions.enumerateWindows == false)
     local handle = { retained = true }
     assert(instance:resume("window-1", 41, handle))
     assert(instance:handleForId("window-1") == handle and f.windowSubscriptions == 1)

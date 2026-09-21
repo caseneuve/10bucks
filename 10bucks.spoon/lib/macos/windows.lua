@@ -179,7 +179,7 @@ function Windows:start(options)
   local ok, err = pcall(function()
     attached[#attached + 1] = self.native.subscribeApplications(function(event) self:_application(event, generation) end)
     attached[#attached + 1] = self.native.subscribeExistingWindows(function(event) self:_window(event, generation) end,
-      { bootstrap = options.bootstrap ~= false })
+      { bootstrap = options.bootstrap ~= false, enumerateWindows = options.enumerateWindows ~= false })
   end)
   if not ok then
     for _, subscription in ipairs(attached) do detach(subscription) end

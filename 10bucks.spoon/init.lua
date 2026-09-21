@@ -154,7 +154,7 @@ function Tenbucks:_submitCommand(command)
   return self.core:submit(command)
 end
 
-function Tenbucks:_startHost(context, bootstrap)
+function Tenbucks:_startHost(context, bootstrap, enumerateWindows)
   local host, adapter
   local ok, err = pcall(function()
     host = Host.new(hs, context, self.instrumentation, self.handleRegistry):start()
@@ -174,7 +174,7 @@ function Tenbucks:_startHost(context, bootstrap)
       end
       host:execute(adapter, intents)
     end
-    adapter:start({ bootstrap = bootstrap ~= false })
+    adapter:start({ bootstrap = bootstrap ~= false, enumerateWindows = enumerateWindows ~= false })
     if bootstrap == false then
       local state = self.core:state()
       for _, windowId in ipairs(state.manager.spaces[context.regularSpaceId].memberIds) do
@@ -196,7 +196,7 @@ function Tenbucks:_beginContext(context)
   self.core = newCore(context)
   self.cores[context.regularSpaceId] = self.core
   self.originContext, self.suspended = context, false
-  self:_startHost(context, true)
+  self:_startHost(context, true, true)
 end
 
 -- A confirmed regular-Space activation switches the single native host to that
@@ -212,7 +212,7 @@ function Tenbucks:_contextChanged(context)
     self.cores[context.regularSpaceId] = self.core
   end
   self.suspended = false
-  self:_startHost(context, bootstrap)
+  self:_startHost(context, bootstrap, false)
   self.core:submit({ type = "Reflow" })
   local pending = self.pendingGlobalFocus
   if pending and pending.spaceId == context.regularSpaceId and self:_targetIsManaged(pending) then

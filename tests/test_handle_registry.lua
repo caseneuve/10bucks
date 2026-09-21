@@ -3,6 +3,8 @@ local Registry = require("lib.macos.handle_registry")
 return {
   ["STATE-003 PERF-002: ephemeral global handles resolve directly by managed ID and confirmed Space"] = function()
     local registry, first, second = Registry.new(), {}, {}
+    registry:refresh("cold", first, 7)
+    assert(registry:target("cold") == nil and registry:cached("cold").handle == first)
     registry:remember("window", "one", first, 7)
     assert(registry:resolve({ windowId = "window", spaceId = "one" }) == first)
     assert(registry:resolve({ windowId = "window", spaceId = "two" }) == nil)
