@@ -65,10 +65,16 @@ local function contains(ids, id)
   return false
 end
 
-local function selectedId(coordinator)
+local function selectedId(coordinator, available)
   local state = coordinator.layouts[coordinator.activeLayoutId]
   if state.selectedId ~= nil then return state.selectedId end
-  if state.activeStack then return state.stacks[state.activeStack].selectedId end
+  if state.activeStack then
+    local stack = state.stacks[state.activeStack]
+    if not available or available[stack.selectedId] then return stack.selectedId end
+    for index = #stack.members, 1, -1 do
+      if available[stack.members[index]] then return stack.members[index] end
+    end
+  end
   return nil
 end
 
@@ -107,8 +113,8 @@ local function setDesired(manager, spaceId, targetId, pending, sourceGroup)
 end
 
 local focusCommands = {
-  FocusNext = true, FocusPrevious = true, FocusNextGroup = true, FocusPreviousGroup = true,
-  FocusManagedPrevious = true, MoveFocusedToOther = true, SwapGroups = true,
+  FocusNext = true, FocusPrevious = true, FocusLeftGroup = true, FocusRightGroup = true,
+  FocusTarget = true, MoveFocusedToOther = true, SwapGroups = true,
 }
 
 local function validateComposite(state, displayId, spaceId, dependencies)
@@ -168,23 +174,14 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
     coordinator = Coordinator.reduce(coordinator, { type = "RecoverSource", sourceGroup = recoveryGroup }, newIds,
       context(manager, displayId, spaceId), dependencies)
   end
+  local commandChanged = false
   if isCommand then
-    if transaction.name == "FocusManagedPrevious" then
-      local history = manager.focus.managedHistory
-      local actual = manager.focus.actualWindow.id
-      local target
-      for index = #history, 1, -1 do
-        local candidate = history[index]
-        local window = manager.windows[candidate]
-        if candidate ~= actual and window and window.placementSpaceId == spaceId
-          and availability(manager)[candidate] then
-          target = candidate
-          break
-        end
-      end
-      if target then
+    local beforeCommand = coordinator
+    if transaction.name == "FocusTarget" then
+      local window = manager.windows[transaction.windowId]
+      if window and window.placementSpaceId == spaceId and availability(manager)[transaction.windowId] then
         coordinator = Coordinator.reduce(coordinator,
-          { type = "ManagedFocusObserved", memberId = target }, newIds,
+          { type = "ManagedFocusObserved", memberId = transaction.windowId }, newIds,
           context(manager, displayId, spaceId), dependencies)
       end
     else
@@ -192,10 +189,14 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
       for key, value in pairs(transaction) do if key ~= "type" and key ~= "name" then event[key] = value end end
       coordinator = Coordinator.reduce(coordinator, event, newIds, context(manager, displayId, spaceId), dependencies)
     end
+    commandChanged = coordinator ~= beforeCommand
   end
-  local target = selectedId(coordinator)
+  local available = availability(manager)
+  local target = transaction.name == "FocusTarget" and transaction.windowId or selectedId(coordinator, available)
   local admitted = #newIds > #oldIds
-  if target and (admitted or removedSelected or (isCommand and focusCommands[transaction.name])) then
+  local directional = transaction.name == "FocusLeftGroup" or transaction.name == "FocusRightGroup"
+  local commandFocus = isCommand and focusCommands[transaction.name] and (not directional or commandChanged)
+  if target and (admitted or removedSelected or commandFocus) then
     manager = setDesired(manager, spaceId, target, true, selectedGroup(coordinator))
   elseif isCommand and (transaction.name == "CycleLayout" or transaction.name == "ActivateLayout") and target then
     manager = setDesired(manager, spaceId, target, false, selectedGroup(coordinator))
@@ -225,10 +226,11 @@ function Core.new(options)
     initialState = initial,
     reduce = function(state, input) return reduceComposite(state, input, core.displayId, core.spaceId, core.dependencies) end,
     validate = function(state) return validateComposite(state, core.displayId, core.spaceId, core.dependencies) end,
-    deriveIntents = function(committed, input)
+    deriveIntents = function(committed, input, _, previous)
       local coordinator = committed.coordinators[core.spaceId]
       local intents = {}
-      local projected = Coordinator.project(coordinator, availability(committed.manager), core.workArea,
+      local available = availability(committed.manager)
+      local projected = Coordinator.project(coordinator, available, core.workArea,
         context(committed.manager, core.displayId, core.spaceId), core.dependencies)
       local emitted = {}
       for _, frame in ipairs(projected) do
@@ -238,16 +240,26 @@ function Core.new(options)
       if input.type == "Command" then
         local event = { type = input.name }
         for key, value in pairs(input) do if key ~= "type" and key ~= "name" then event[key] = value end end
-        local _, capability = Coordinator.reduce(coordinator, event, members(committed.manager, core.spaceId),
-          context(committed.manager, core.displayId, core.spaceId), core.dependencies)
+        local capability
+        if input.name == "FocusTarget" then
+          local window = committed.manager.windows[input.windowId]
+          capability = { handled = window ~= nil and window.placementSpaceId == core.spaceId and available[input.windowId] == true,
+            reason = "unknown-or-unavailable-target" }
+        else
+          _, capability = Coordinator.reduce(coordinator, event, members(committed.manager, core.spaceId),
+            context(committed.manager, core.displayId, core.spaceId), core.dependencies)
+        end
         if not capability.handled then intents[#intents + 1] = { kind = "result", accepted = false, reason = capability.reason } end
       end
       local desired = committed.manager.focus.desiredBySpace[core.spaceId]
-      local available = availability(committed.manager)
+      local commandFocus = input.type == "Command" and focusCommands[input.name]
+      if commandFocus and (input.name == "FocusLeftGroup" or input.name == "FocusRightGroup") then
+        local oldGroup = previous and selectedGroup(previous.coordinators[core.spaceId])
+        commandFocus = oldGroup ~= selectedGroup(coordinator)
+      end
       local requestsFocus = input.type == "WindowReady" or input.type == "WindowDestroyed"
         or input.type == "ApplicationTerminated" or input.type == "WindowMinimized"
-        or input.type == "WindowEnteredNativeFullscreen"
-        or (input.type == "Command" and focusCommands[input.name])
+        or input.type == "WindowEnteredNativeFullscreen" or commandFocus
       if requestsFocus and desired.pending and desired.targetId and available[desired.targetId] then
         intents[#intents + 1] = { kind = "focus", windowId = desired.targetId, displayId = core.displayId,
           spaceId = core.spaceId, generation = desired.generation }
@@ -262,7 +274,7 @@ end
 function Core:submit(input)
   local translated = input
   if input.type ~= "Command" and ({ CycleLayout = true, ActivateLayout = true, FocusNext = true, FocusPrevious = true,
-      FocusNextGroup = true, FocusPreviousGroup = true, FocusManagedPrevious = true, MoveFocusedToOther = true, SwapGroups = true,
+      FocusLeftGroup = true, FocusRightGroup = true, FocusTarget = true, MoveFocusedToOther = true, SwapGroups = true,
       ResizeRatio = true, ResizeRatioDelta = true, ResetRatio = true, Synchronize = true, Reflow = true })[input.type] then
     translated = copy(input)
     translated.name = translated.type == "Reflow" and "Synchronize" or translated.type

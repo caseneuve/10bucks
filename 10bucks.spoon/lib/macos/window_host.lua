@@ -32,9 +32,9 @@ local function booleanOrNil(value)
   return nil
 end
 
-function Host.new(hs, context, instrumentation)
-  return setmetatable({ hs = hs, context = context, instrumentation = instrumentation, generation = 0, started = false,
-    owned = {}, appOwned = {}, handles = {}, frames = {} }, Host)
+function Host.new(hs, context, instrumentation, handleRegistry)
+  return setmetatable({ hs = hs, context = context, instrumentation = instrumentation, handleRegistry = handleRegistry,
+    generation = 0, started = false, owned = {}, appOwned = {}, handles = {}, frames = {} }, Host)
 end
 
 function Host:_record(kind)
@@ -67,7 +67,9 @@ function Host:_startOwned(watcher, pid, events)
 end
 
 function Host:_forget(id)
+  local record = self.handles[id]
   self.handles[id], self.frames[id] = nil, nil
+  if self.handleRegistry then self.handleRegistry:forget(id, record and record.handle) end
 end
 
 function Host:_forgetPid(pid)
@@ -79,7 +81,10 @@ end
 function Host:_remember(window)
   local id, app = call(window, "id"), call(window, "application")
   local pid = call(app, "pid")
-  if id ~= nil and pid ~= nil then self.handles[id] = { handle = window, pid = pid } end
+  if id ~= nil and pid ~= nil then
+    self.handles[id] = { handle = window, pid = pid }
+    if self.handleRegistry then self.handleRegistry:remember(id, self.context.regularSpaceId, window, pid) end
+  end
 end
 
 function Host:_regularOwner(id)
@@ -195,7 +200,9 @@ function Host:subscribeApplications(callback)
       end
     elseif event == self.hs.application.watcher.terminated then
       for _, record in ipairs(self.appOwned[pid] or {}) do self:_detach(record) end
-      self.appOwned[pid] = nil; self:_forgetPid(pid); callback({ kind = "terminated", pid = pid })
+      self.appOwned[pid] = nil; self:_forgetPid(pid)
+      if self.handleRegistry then self.handleRegistry:forgetPid(pid) end
+      callback({ kind = "terminated", pid = pid })
     elseif event == self.hs.application.watcher.hidden then callback({ kind = "hidden", pid = pid })
     elseif event == self.hs.application.watcher.unhidden then callback({ kind = "unhidden", pid = pid }) end
   end)
@@ -242,6 +249,9 @@ end
 function Host:execute(adapter, intents)
   for _, intent in ipairs(intents) do
     local window = adapter:handleForId(intent.windowId)
+    if not window and self.handleRegistry then
+      window = self.handleRegistry:resolve({ windowId = intent.windowId, spaceId = intent.spaceId })
+    end
     if window then self:_remember(window) end
     if window and intent.kind == "frame" then
       local actual = call(window, "frame")

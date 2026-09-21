@@ -11,13 +11,18 @@ local Host = require("lib.macos.window_host")
 local Windows = require("lib.macos.windows")
 local Bindings = require("lib.bindings")
 local CanaryInstrumentation = require("lib.macos.canary_instrumentation")
+local FocusHistory = require("lib.focus_history")
+local HandleRegistry = require("lib.macos.handle_registry")
 
 local Tenbucks = {}
 Tenbucks.__index = Tenbucks
 Tenbucks.name, Tenbucks.version = "10bucks", "Canary A"
 Tenbucks.defaultHotkeys = Config.defaults.hotkeys
 
-function Tenbucks.new() return setmetatable({ hotkeyBindings = {}, getenv = os.getenv }, Tenbucks):configure({}) end
+function Tenbucks.new()
+  return setmetatable({ hotkeyBindings = {}, getenv = os.getenv,
+    focusHistory = FocusHistory.new(), handleRegistry = HandleRegistry.new(), focusGeneration = 0 }, Tenbucks):configure({})
+end
 
 function Tenbucks:_record(kind)
   if self.instrumentation then self.instrumentation:record(kind) end
@@ -74,10 +79,63 @@ local function newCore(context)
     workArea = context.workArea, layoutDependencies = layoutDependencies() })
 end
 
+function Tenbucks:_targetIsManaged(target)
+  local core = target and self.cores and self.cores[target.spaceId]
+  local window = core and core:state().manager.windows[target.windowId]
+  return window ~= nil and window.placementSpaceId == target.spaceId and self.handleRegistry:resolve(target) ~= nil
+end
+
+function Tenbucks:_afterCoreEvent(event)
+  if event.type == "WindowDestroyed" then
+    self.focusHistory:remove(event.id)
+    if self.pendingGlobalFocus and self.pendingGlobalFocus.windowId == event.id then self.pendingGlobalFocus = nil end
+  elseif event.type == "ApplicationTerminated" then
+    local history = self.focusHistory:snapshot()
+    for _, target in ipairs(history) do if not self:_targetIsManaged(target) then self.focusHistory:remove(target.windowId) end end
+    if self.pendingGlobalFocus and not self:_targetIsManaged(self.pendingGlobalFocus) then self.pendingGlobalFocus = nil end
+  elseif event.type == "ActualFocusChanged" then
+    local window = self.core:state().manager.windows[event.id]
+    if window then
+      local target = { windowId = event.id, spaceId = window.placementSpaceId }
+      if not self.pendingGlobalFocus or self.pendingGlobalFocus.windowId == event.id then
+        self.focusHistory:observe(target)
+        if self.pendingGlobalFocus and self.pendingGlobalFocus.windowId == event.id then self.pendingGlobalFocus = nil end
+      end
+    end
+  end
+end
+
+function Tenbucks:_submitEvent(event)
+  local accepted, failure = self.core:submit(event)
+  if not accepted then error(failure, 0) end
+  self:_afterCoreEvent(event)
+  return accepted
+end
+
+function Tenbucks:_focusManagedPrevious()
+  local target = self.focusHistory:previous(function(candidate) return self:_targetIsManaged(candidate) end)
+  if not target then return false, "no-previous-managed-window" end
+  self.focusGeneration = self.focusGeneration + 1
+  self.pendingGlobalFocus = { windowId = target.windowId, spaceId = target.spaceId, generation = self.focusGeneration }
+  if target.spaceId == self.context.regularSpaceId then
+    return self.core:submit({ type = "FocusTarget", windowId = target.windowId })
+  end
+  local handle = self.handleRegistry:resolve(target)
+  if not handle then self.pendingGlobalFocus = nil; return false, "previous-managed-window-unavailable" end
+  self:_record("focusRequests")
+  handle:focus() -- Hammerspoon hs.window:focus() performs the native Space transition.
+  return true
+end
+
+function Tenbucks:_submitCommand(command)
+  if command.type == "FocusManagedPrevious" then return self:_focusManagedPrevious() end
+  return self.core:submit(command)
+end
+
 function Tenbucks:_startHost(context)
   local host, adapter
   local ok, err = pcall(function()
-    host = Host.new(hs, context, self.instrumentation):start()
+    host = Host.new(hs, context, self.instrumentation, self.handleRegistry):start()
     local native = {
       subscribeApplications = function(callback) return host:subscribeApplications(callback) end,
       subscribeExistingWindows = function(callback) return host:subscribeExistingWindows(callback) end,
@@ -86,9 +144,7 @@ function Tenbucks:_startHost(context)
       record = function(kind) self:_record(kind) end,
       recordEvent = function(eventType) if self.instrumentation then self.instrumentation:recordEvent(eventType) end end,
     }
-    adapter = Windows.new({ native = native, sink = function(event)
-      local accepted, failure = self.core:submit(event); if not accepted then error(failure, 0) end
-    end })
+    adapter = Windows.new({ native = native, sink = function(event) self:_submitEvent(event) end })
     self.core.observer = function(intents, version)
       if version > (self.canaryObservedVersion or 0) then
         self.canaryObservedVersion = version
@@ -128,6 +184,10 @@ function Tenbucks:_contextChanged(context)
   self.suspended = false
   self:_startHost(context)
   self.core:submit({ type = "Reflow" })
+  local pending = self.pendingGlobalFocus
+  if pending and pending.spaceId == context.regularSpaceId and self:_targetIsManaged(pending) then
+    self.core:submit({ type = "FocusTarget", windowId = pending.windowId })
+  end
 end
 
 function Tenbucks:start()
@@ -138,9 +198,7 @@ function Tenbucks:start()
   local bindings, contextSubscription
   local ok, err = pcall(function()
     self:_beginContext(Context.snapshot(hs, self.config.builtInDisplayUUID))
-    bindings = Bindings.bind(hs, function(command)
-      return self.core:submit(command)
-    end, self.config.hotkeys)
+    bindings = Bindings.bind(hs, function(command) return self:_submitCommand(command) end, self.config.hotkeys)
     contextSubscription = Context.watch(hs, self.config.builtInDisplayUUID, function(context)
       if self.started then self:_contextChanged(context) end
     end)
@@ -160,6 +218,9 @@ function Tenbucks:stop()
   self:_stopScope()
   self.originContext = nil
   self.canaryObservedVersion = nil
+  self.pendingGlobalFocus = nil
+  self.focusHistory = FocusHistory.new()
+  self.handleRegistry:clear()
   Bindings.delete(self.hotkeyBindings)
   self.hotkeyBindings = {}
   return self

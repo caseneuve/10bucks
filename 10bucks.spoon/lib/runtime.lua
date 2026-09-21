@@ -95,6 +95,7 @@ function Runtime:_process(event)
 
   -- A reducer cannot corrupt the committed state while it is constructing a
   -- candidate. Equivalent output is a no-op and retains the committed pointer.
+  local previousState = copy(self.committedState)
   local candidate = self.reduce(copy(self.committedState), event)
   validate(self, candidate)
 
@@ -105,7 +106,7 @@ function Runtime:_process(event)
 
   -- No-op events intentionally still derive intents. They can request a
   -- post-commit synchronization from the current, unchanged committed state.
-  local intents = self.deriveIntents(copy(self.committedState), event, self.committedVersion)
+  local intents = self.deriveIntents(copy(self.committedState), event, self.committedVersion, previousState)
   if intents == nil then intents = {} end
   if type(intents) ~= "table" or not plain(intents) then
     error("intents must contain plain, acyclic Lua data", 2)

@@ -388,7 +388,7 @@ Keep `hs.chooser` UI behavior. Replace the backend with a cached managed-window 
 - Existing `Cmd+1…9` visible-row behavior is preserved by integration POC.
 - Opening performs no AX enumeration.
 
-Managed focus history is independent of layout order. Unmanaged actual focus updates the bar title but not managed selection/history. The previous-window command can cross Spaces and restore minimized/hidden managed windows.
+Managed focus history is independent of layout order and owned once at the composition level across all retained per-Space Cores. It stores unique primitive `{windowId, spaceId}` descriptors only after confirmed managed actual-focus observations; unmanaged focus and focus requests do not update it. A composition-owned ephemeral handle registry retains native handles across active-host replacement, resolves descriptors directly without a scan, and is not durable state. The previous-window command is intercepted above Core, can cross Spaces, and updates/toggles only when the requested target is later confirmed as actual managed focus.
 
 ## 12. Commands and bindings
 
@@ -398,7 +398,7 @@ MVP commands include:
 
 - cycle layout
 - focus previous/next in stack
-- focus previous/next layout group
+- focus physical left/right layout group
 - move member between groups; swap groups
 - resize/reset divider
 - focus global previous managed window

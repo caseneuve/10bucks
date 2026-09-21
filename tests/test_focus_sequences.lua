@@ -39,16 +39,29 @@ end
 
 local cases = {
   {
-    name = "COL-007 FOCUS-006 CMD-005: group travel targets retained tops and every rapid h/l counts",
+    name = "COL-007 FOCUS-006: h/l are physical, retain both tops, and never toggle or cycle",
     run = function(h)
       h:send(ready("A")):send(ready("B")):send(ready("C")):send({ type = "CycleLayout" })
        :send({ type = "ActualFocusChanged", id = "B" }):send({ type = "ActualFocusChanged", id = "C" })
-      h:send({ type = "FocusPreviousGroup" })
+      h:send({ type = "FocusLeftGroup" })
       equal(h:focusIntent().windowId, "B")
       equal(h:columns().stacks[1].selectedId, "B"); equal(h:columns().stacks[2].selectedId, "C")
-      h:send({ type = "FocusNextGroup" }):send({ type = "FocusPreviousGroup" }):send({ type = "FocusNextGroup" })
-      equal(h:desired().targetId, "C"); equal(h:columns().activeStack, 2)
+      h:send({ type = "FocusLeftGroup" }); assert(h:focusIntent() == nil); equal(h:columns().activeStack, 1)
+      h:send({ type = "FocusRightGroup" }); equal(h:focusIntent().windowId, "C")
+      h:send({ type = "FocusRightGroup" }); assert(h:focusIntent() == nil); equal(h:columns().activeStack, 2)
       equal(h:columns().stacks[1].selectedId, "B"); equal(h:columns().stacks[2].selectedId, "C")
+    end,
+  },
+  {
+    name = "COL-007 WIN-004: directional travel uses top available fallback without mutating retained selection",
+    run = function(h)
+      h:send(ready("A")):send(ready("B")):send(ready("C")):send({ type = "CycleLayout" })
+       :send({ type = "ActualFocusChanged", id = "B" }):send({ type = "ActualFocusChanged", id = "C" })
+       :send({ type = "WindowMinimized", id = "B" }):send({ type = "FocusLeftGroup" })
+      equal(h:focusIntent().windowId, "A")
+      equal(h:columns().activeStack, 1)
+      equal(h:columns().stacks[1].selectedId, "B")
+      equal(h:columns().stacks[2].selectedId, "C")
     end,
   },
   {
@@ -57,9 +70,9 @@ local cases = {
       h:send(ready("A")):send(ready("B")):send({ type = "CycleLayout" })
        :send({ type = "ActualFocusChanged", id = "A" }):send({ type = "ActualFocusChanged", id = "B" })
       equal(h:columns().activeStack, 2)
-      h:send({ type = "FocusPreviousGroup" }); equal(h:focusIntent().windowId, "A")
+      h:send({ type = "FocusLeftGroup" }); equal(h:focusIntent().windowId, "A")
       h:send({ type = "ActualFocusChanged", id = "A" })
-      h:send({ type = "FocusNextGroup" }); equal(h:focusIntent().windowId, "B")
+      h:send({ type = "FocusRightGroup" }); equal(h:focusIntent().windowId, "B")
     end,
   },
   {
@@ -69,7 +82,7 @@ local cases = {
        :send({ type = "ActualFocusChanged", id = "B" }):send({ type = "ActualFocusChanged", id = "C" })
        :send({ type = "CycleLayout" }):send({ type = "CycleLayout" })
       equal(h:columns().activeStack, 2); equal(h:columns().stacks[1].selectedId, "B")
-      h:send({ type = "FocusPreviousGroup" }); equal(h:focusIntent().windowId, "B")
+      h:send({ type = "FocusLeftGroup" }); equal(h:focusIntent().windowId, "B")
       h:send({ type = "ActualFocusChanged", id = "C" }):send({ type = "ActualFocusChanged", id = "popup" })
        :send({ type = "CycleLayout" }):send({ type = "CycleLayout" })
       equal(h:columns().activeStack, 2); equal(h:columns().stacks[1].selectedId, "B")
@@ -123,18 +136,16 @@ local cases = {
     end,
   },
   {
-    name = "FOCUS-005: same-Space previous managed window uses actual managed history",
+    name = "FOCUS-005: explicit same-Space global target focuses without consulting per-Core history",
     run = function(h)
       h:send(ready("A")):send({ type = "ActualFocusChanged", id = "A" })
        :send(ready("B")):send({ type = "ActualFocusChanged", id = "B" })
-       :send(ready("C")):send({ type = "ActualFocusChanged", id = "C" })
-      h:send({ type = "FocusManagedPrevious" })
-      equal(h:focusIntent().windowId, "B")
-      equal(h:desired().targetId, "B"); assert(h:desired().pending)
-      h:send({ type = "ActualFocusChanged", id = "A" })
-      equal(h:desired().targetId, "B"); assert(h:desired().pending)
-      h:send({ type = "ActualFocusChanged", id = "B" }); assert(not h:desired().pending)
-      h:send({ type = "FocusManagedPrevious" }); equal(h:focusIntent().windowId, "C")
+       :send({ type = "FocusTarget", windowId = "A" })
+      equal(h:focusIntent().windowId, "A")
+      equal(h:desired().targetId, "A"); assert(h:desired().pending)
+      h:send({ type = "ActualFocusChanged", id = "B" })
+      equal(h:desired().targetId, "A"); assert(h:desired().pending)
+      h:send({ type = "ActualFocusChanged", id = "A" }); assert(not h:desired().pending)
     end,
   },
   {

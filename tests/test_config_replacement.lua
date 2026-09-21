@@ -36,10 +36,23 @@ return {
     assert(not pcall(Bindings.bind, hs, function() end, config.hotkeys))
     assert(created == 2 and deleted == 1)
   end,
+  ["COL-007 CMD-001: h/l bindings dispatch physical left/right column commands"] = function()
+    local callbacks = {}
+    local hs = { hotkey = { bind = function(_, key, callback)
+      callbacks[key] = callback
+      return { delete = function() end }
+    end } }
+    local commands = {}
+    Bindings.bind(hs, function(command) commands[#commands + 1] = command.type end, {
+      focusLeftGroup = { { "cmd" }, "h" }, focusRightGroup = { { "cmd" }, "l" },
+    })
+    callbacks.h(); callbacks.l()
+    assert(commands[1] == "FocusLeftGroup" and commands[2] == "FocusRightGroup")
+  end,
   ["Canary A bindings dispatch only validated commands and delete every binding"] = function()
     local calls, deleted, command = {}, 0, nil
     local hs = { hotkey = { bind = function(_, _, callback) calls[#calls + 1] = callback; return { delete = function() deleted = deleted + 1 end } end } }
-    local config = Config.build({ hotkeys = { cycleLayout = false, focusPreviousGroup = false, focusNextGroup = false, focusPrevious = false, focusNext = { { "cmd" }, "j" }, focusManagedPrevious = false, moveFocusedToOtherGroup = false, swapGroups = false, resizeLeft = false, resizeRight = false, resetRatio = false, reflow = false } })
+    local config = Config.build({ hotkeys = { cycleLayout = false, focusLeftGroup = false, focusRightGroup = false, focusPrevious = false, focusNext = { { "cmd" }, "j" }, focusManagedPrevious = false, moveFocusedToOtherGroup = false, swapGroups = false, resizeLeft = false, resizeRight = false, resetRatio = false, reflow = false } })
     local bound = Bindings.bind(hs, function(value) command = value end, config.hotkeys)
     assert(#bound == 1); calls[1](); assert(command.type == "FocusNext"); Bindings.delete(bound); assert(deleted == 1)
   end,

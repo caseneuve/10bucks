@@ -40,8 +40,8 @@ return {
   builtInDisplayUUID = "UUID-FROM-APPROVED-PREFLIGHT",
   hotkeys = {
     cycleLayout = { hyper, "space" },
-    focusPreviousGroup = { hyper, "h" },
-    focusNextGroup = { hyper, "l" },
+    focusLeftGroup = { hyper, "h" },
+    focusRightGroup = { hyper, "l" },
     focusNext = { hyper, "j" },
     focusPrevious = { hyper, "k" },
     focusManagedPrevious = { hyper, "'" },

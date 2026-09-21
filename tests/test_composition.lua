@@ -103,6 +103,49 @@ return {
     assert(status.counts["event.WindowReady"] == 1 and status.counts.reducerCommitVersions == 1)
     ten:stop(); assert(ten:canaryStatus().started == false)
   end,
+  ["FOCUS-005 global previous crosses retained Spaces, waits for confirmation, toggles, and ignores stale/unmanaged focus"] = function()
+    local f = fakeHs(); local ten = load(f); ten:start()
+    ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+    local firstCore = ten.core
+
+    f.activeSpace, f.members, f.owners = "next-space", {}, { "next-space" }
+    f.contextWatcher.callback()
+    ten.core:submit({ type = "WindowReady", id = 10, title = "Other", displayId = "built-in", spaceId = "next-space", application = { pid = 10, name = "Other" } })
+    local otherFocuses, otherHandle = 0
+    otherHandle = { focus = function() otherFocuses = otherFocuses + 1 end,
+      frame = function() return { x = 0, y = 0, w = 100, h = 80 } end,
+      setFrame = function() end }
+    ten.handleRegistry:remember(10, "next-space", otherHandle, 10)
+    ten:_submitEvent({ type = "ActualFocusChanged", id = 10 })
+    ten:_submitEvent({ type = "ActualFocusChanged", id = 99 }) -- unmanaged popup does not alter managed anchor
+
+    local beforeCrossFocus = f.focuses
+    assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
+    assert(f.focuses == beforeCrossFocus + 1 and ten.pendingGlobalFocus.windowId == 9)
+    ten:_submitEvent({ type = "ActualFocusChanged", id = 10 }) -- stale callback cannot alter target/history
+    assert(ten.pendingGlobalFocus.windowId == 9)
+
+    f.activeSpace, f.members, f.owners = "space", { 9 }, { "space" }
+    f.contextWatcher.callback()
+    assert(ten.core == firstCore and ten.core:state().manager.focus.desiredBySpace.space.targetId == 9)
+    ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+    assert(ten.pendingGlobalFocus == nil)
+    assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
+    assert(otherFocuses == 1 and ten.pendingGlobalFocus.windowId == 10)
+    ten:stop()
+  end,
+  ["FOCUS-005 destroyed global previous target is skipped without native focus or scan"] = function()
+    local f = fakeHs(); local ten = load(f); ten:start()
+    ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+    local stale = { focus = function() error("destroyed handle focused") end }
+    ten.focusHistory:observe({ windowId = 10, spaceId = "other" })
+    ten.handleRegistry:remember(10, "other", stale, 10)
+    local scans = f.scans
+    local accepted, reason = ten:_submitCommand({ type = "FocusManagedPrevious" })
+    assert(not accepted and reason == "no-previous-managed-window" and f.scans == scans)
+    assert(#ten.focusHistory:snapshot() == 1)
+    ten:stop()
+  end,
   ["regular Spaces retain independent Core state across A-to-B-to-A activation"] = function()
     local f = fakeHs(); local ten = load(f); ten:start()
     local firstCore, oldWindowWatcher, oldSpaceWatcher = ten.core, f.windowWatcher.callback, f.contextWatcher.callback

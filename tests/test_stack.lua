@@ -138,6 +138,13 @@ return {
     assertValid(state, { "one", "three", "four" })
   end,
 
+  ["COL-007 LAY-004: physical left/right group focus is unsupported and does not mutate stack"] = function()
+    local state = Stack.initialState({ "one", "two" })
+    assert(not Stack.supports("FocusLeftGroup") and not Stack.supports("FocusRightGroup"))
+    assert(not pcall(Stack.reduce, state, { type = "FocusLeftGroup" }, context({ availableMembers = available("one", "two") })))
+    assert(deepEqual(state, { members = { "one", "two" }, selectedId = "two" }))
+  end,
+
   ["STATE-003: validation rejects malformed plain data, duplicate/unknown members, invalid selection, and member-set disagreement"] = function()
     local validState = Stack.initialState({ "one", "two" })
     local cases = {

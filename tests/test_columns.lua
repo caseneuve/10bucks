@@ -159,10 +159,15 @@ return {
     assert(Columns.reduce(state, { type = "ManagedFocusObserved", memberId = "unknown" }, context()) == state)
     state = Columns.reduce(state, { type = "FocusNext" }, context({ availableMembers = available("one", "three") }))
     equal(state.stacks[1].selectedId, "one")
-    assert(Columns.reduce(state, { type = "FocusNextGroup" }, context({ availableMembers = available("one") })) == state)
-    state = Columns.reduce(state, { type = "FocusNextGroup" }, context({ availableMembers = available("one", "three") }))
+    assert(Columns.reduce(state, { type = "FocusRightGroup" }, context({ availableMembers = available("one") })) == state)
+    state = Columns.reduce(state, { type = "FocusRightGroup" }, context({ availableMembers = available("one", "three") }))
     equal(state.activeStack, 2)
     equal(state.stacks[2].selectedId, "three")
+    assert(Columns.reduce(state, { type = "FocusRightGroup" }, context({ availableMembers = available("one", "three") })) == state)
+    state = Columns.reduce(state, { type = "FocusLeftGroup" }, context({ availableMembers = available("one", "three") }))
+    equal(state.activeStack, 1)
+    equal(state.stacks[1].selectedId, "one")
+    state = Columns.reduce(state, { type = "FocusRightGroup" }, context({ availableMembers = available("one", "three") }))
 
     state = Columns.reduce(state, { type = "Admit", memberId = "four" }, context())
     state = Columns.reduce(state, { type = "ManagedFocusObserved", memberId = "three" }, context())
@@ -183,8 +188,8 @@ return {
     for _, event in ipairs({
       { type = "FocusNext" },
       { type = "FocusPrevious" },
-      { type = "FocusNextGroup" },
-      { type = "FocusPreviousGroup" },
+      { type = "FocusRightGroup" },
+      { type = "FocusLeftGroup" },
       { type = "MoveFocusedToOther" },
       { type = "SwapGroups" },
     }) do

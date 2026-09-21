@@ -181,8 +181,8 @@ local function transactionFor(action, random, state)
   elseif action == "cycle-layout" then command = { type = "CycleLayout" }
   elseif action == "focus-next" then command = { type = "FocusNext" }
   elseif action == "focus-previous" then command = { type = "FocusPrevious" }
-  elseif action == "group-next" then command = { type = "FocusNextGroup" }
-  elseif action == "group-previous" then command = { type = "FocusPreviousGroup" }
+  elseif action == "group-next" then command = { type = "FocusRightGroup" }
+  elseif action == "group-previous" then command = { type = "FocusLeftGroup" }
   elseif action == "move" then command = { type = "MoveFocusedToOther" }
   elseif action == "swap" then command = { type = "SwapGroups" }
   elseif action == "resize" then command = { type = "ResizeRatio", ratio = random(3) == 1 and 0.3 or 0.7 }

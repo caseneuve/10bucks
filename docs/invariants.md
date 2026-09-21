@@ -142,7 +142,7 @@ Moving a focused window to the other column appends it to the destination and fo
 
 ### COL-007 — Swap columns
 
-Swapping columns atomically swaps whole ordered stacks and their selections. The focused/active stack follows its content to the other physical side. Focusing or travelling to another column MUST use that column's retained selected (top) member and MUST NOT change any column's retained selection as a side effect.
+Swapping columns atomically swaps whole ordered stacks and their selections. The focused/active stack follows its content to the other physical side. `h`/`FocusLeftGroup` targets the physical left column and `l`/`FocusRightGroup` targets the physical right column; neither toggles or cycles. A command for the already-active side is a no-op. Directional focus uses that column's retained selected/top available member and MUST NOT change any column's retained selection as a side effect.
 
 ### COL-008 — Divider
 

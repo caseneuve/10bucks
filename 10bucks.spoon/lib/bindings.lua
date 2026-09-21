@@ -3,8 +3,8 @@ local Bindings = {}
 
 local actions = {
   cycleLayout = "CycleLayout",
-  focusPreviousGroup = "FocusPreviousGroup",
-  focusNextGroup = "FocusNextGroup",
+  focusLeftGroup = "FocusLeftGroup",
+  focusRightGroup = "FocusRightGroup",
   focusPrevious = "FocusPrevious",
   focusNext = "FocusNext",
   focusManagedPrevious = "FocusManagedPrevious",

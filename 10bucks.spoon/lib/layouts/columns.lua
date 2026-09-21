@@ -4,8 +4,8 @@ local Columns = { id = "columns" }
 
 function Columns.supports(eventType)
   return eventType == "Admit" or eventType == "Remove" or eventType == "ManagedFocusObserved"
-    or eventType == "FocusNext" or eventType == "FocusPrevious" or eventType == "FocusNextGroup"
-    or eventType == "FocusPreviousGroup" or eventType == "RecoverSource" or eventType == "MoveFocusedToOther" or eventType == "SwapGroups"
+    or eventType == "FocusNext" or eventType == "FocusPrevious" or eventType == "FocusLeftGroup"
+    or eventType == "FocusRightGroup" or eventType == "RecoverSource" or eventType == "MoveFocusedToOther" or eventType == "SwapGroups"
     or eventType == "ResizeRatio" or eventType == "ResizeRatioDelta" or eventType == "ResetRatio" or eventType == "Synchronize"
 end
 
@@ -346,19 +346,15 @@ function Columns.reduce(state, event, context)
     return copyState(state, stacks, state.activeStack)
   end
 
-  if event.type == "FocusNextGroup" or event.type == "FocusPreviousGroup" then
-    if #state.stacks < 2 then return state end
-    local destination = state.activeStack == 1 and 2 or 1
+  if event.type == "FocusLeftGroup" or event.type == "FocusRightGroup" then
+    local destination = event.type == "FocusLeftGroup" and 1 or 2
+    if #state.stacks < destination then return state end
     local stack = state.stacks[destination]
+    -- Direction is physical and idempotent. Group travel never rewrites either
+    -- retained top; Core resolves the selected/top available destination member.
     if not stackHasAvailable(stack, context.availableMembers) then return state end
-    local selection = stack.selectedId
-    if not isAvailable(context.availableMembers, selection) then
-      for _, memberId in ipairs(stack.members) do if isAvailable(context.availableMembers, memberId) then selection = memberId; break end end
-    end
-    if selection == stack.selectedId then return copyState(state, nil, destination) end
-    local stacks = copyStacks(state.stacks)
-    stacks[destination].selectedId = selection
-    return copyState(state, stacks, destination)
+    if state.activeStack == destination then return state end
+    return copyState(state, nil, destination)
   end
 
   if event.type == "MoveFocusedToOther" then
