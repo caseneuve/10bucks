@@ -295,15 +295,17 @@ Current actions:
 
 A future explicit floating mode can add `float` without changing lifecycle or chooser semantics, but MVP must not implement it.
 
-Hard safety eligibility is generic: valid foreign application window, standard role/subrole, movable/resizable capability, non-modal/transient. User rules may narrow normal eligibility; production code contains no app-specific exceptions. Predicates receive normalized metadata, not `hs.window` objects.
+Hard safety eligibility is generic: valid foreign application window, standard role/subrole, movable/resizable capability, non-modal/transient. Confirmed native fullscreen may lock AX position: an otherwise eligible resizable window with both fullscreen ownership and a true native-fullscreen property is tracked without a regular slot (POC-010). This does not relax eligibility for ordinary immovable windows. User rules may narrow normal eligibility; production code contains no app-specific exceptions. Predicates receive normalized metadata, not `hs.window` objects.
 
 Rules are evaluated once when creation metadata is ready. Title changes update bar/chooser metadata but never reorder or reclassify an admitted window. Spawn-fullscreen is attempted at most once and only for a genuine post-start creation event, never for a pre-existing bootstrap window.
 
 ### Cold-start discovery
 
-MVP bootstraps windows on the currently active regular Space. Pre-existing windows on inactive Spaces become managed when that Space first activates unless a POC proves earlier authoritative discovery is cheap. Pre-existing minimized/hidden windows are adopted only when their actual regular Space can be confirmed; otherwise admission waits for restore/unhide or a focus-triggered targeted ownership/readiness probe to emit an independent admission event. A pre-existing native-fullscreen window may be adopted when observed and receives normal admission when it exits, but is never forced through a fullscreen-on-create rule.
+MVP bootstraps windows on the currently active regular Space. Pre-existing windows on inactive Spaces become managed when that Space first activates unless a POC proves earlier authoritative discovery is cheap. Pre-existing minimized/hidden windows are adopted only when their actual regular Space can be confirmed; otherwise admission waits for restore/unhide or a focus-triggered targeted ownership/readiness probe to emit an independent admission event. A pre-existing native-fullscreen window is tracked after independent ownership/readiness confirmation and receives normal admission on confirmed regular exit, but is never forced through a fullscreen-on-create rule. Focus observation remains separate from that admission.
 
 Consequently, “global managed chooser” means every window 10bucks has discovered and admitted, not an impossible promise to list windows macOS/Hammerspoon has never exposed.
+
+The incremental runtime's existing global focus reducer owns history, pending global focus, and primitive unplaced fullscreen records. Regular Cores retain placed windows and their saved slots; an unplaced target never receives a fabricated regular Core. Confirmed regular readiness transfers the target to its destination Core and rebinds its history descriptor without reordering history or reevaluating rules. Native handles stay in the existing ephemeral registry. Active-host replacement reattaches discovered unplaced observers and reconciles a missed exit from the initial native property; uncertainty never becomes deletion. No global scan or permanent timer is added.
 
 ## 8. Window observation and effects port
 
@@ -429,7 +431,7 @@ lib/macos/windows.lua    Hammerspoon window observation/effects
 lib/macos/spaces.lua     native Space topology/operations
 lib/bar.lua              bar view model/formatter/renderer boundary
 lib/window_chooser.lua   cached hs.chooser adapter
-lib/focus_history.lua    managed-only history
+lib/focus_history.lua    managed-only global focus reducer and unplaced targets
 lib/bindings.lua         declarative hs.hotkey adapter
 lib/config.lua           defaults and semantic validation
 ```

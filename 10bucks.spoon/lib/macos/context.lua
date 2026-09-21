@@ -8,10 +8,9 @@ function Context.snapshot(hs, builtInDisplayUUID)
     if screen:getUUID() == builtInDisplayUUID then selected = screen; break end
   end
   assert(selected, "10bucks built-in display UUID is not connected; verify config.builtInDisplayUUID before switching runtime")
-  local space = assert(hs.spaces.activeSpaceOnScreen(selected), "10bucks requires an active regular Space")
-  if type(hs.spaces.spaceType) == "function" then
-    assert(hs.spaces.spaceType(space) == "user", "10bucks Canary A requires an active regular user Space")
-  end
+  local space = assert(hs.spaces.activeSpaceOnScreen(selected), "10bucks requires an active Space")
+  local spaceType = hs.spaces.spaceType(space)
+  assert(spaceType == "user" or spaceType == "fullscreen", "10bucks requires a regular or native fullscreen Space")
   -- hs.geometry exposes x/y/w/h through its metatable while pairs() exposes
   -- private _x/_y/_w/_h storage. Keep only primitive geometry across the
   -- adapter boundary so downstream defensive copies preserve the work area.
@@ -20,7 +19,8 @@ function Context.snapshot(hs, builtInDisplayUUID)
   assert(type(workArea.x) == "number" and type(workArea.y) == "number"
       and type(workArea.w) == "number" and type(workArea.h) == "number",
     "10bucks built-in display frame must provide numeric x/y/w/h")
-  return { displayId = builtInDisplayUUID, regularSpaceId = space, workArea = workArea, screen = selected }
+  return { displayId = builtInDisplayUUID, activeSpaceId = space, spaceType = spaceType,
+    regularSpaceId = spaceType == "user" and space or nil, workArea = workArea, screen = selected }
 end
 
 -- The Space watcher owns only confirmed context changes. It deliberately does

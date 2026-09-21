@@ -15,6 +15,34 @@ local function fake()
   return f, app, element
 end
 return {
+  ["DISC-002 FS-005: focused native fullscreen readiness has actual ownership and no regular placement"] = function()
+    local f = fake(); f.spaceType, f.fullscreen, f.focusedWindow = "fullscreen", true, f.window
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = "regular" }):start()
+    local events = {}; host.windowCallback = function(e) events[#events + 1] = e end
+    host:observeFocus()
+    local metadata
+    host:probeReadiness(9, function(m, handle) metadata = m; assert(handle == f.window); return true end)
+    assert(metadata and metadata.spaceId == 9 and metadata.spaceType == "fullscreen" and metadata.nativeFullscreen)
+    assert(events[#events].kind == "focus" and #events == 2)
+    assert(f.scans == 0 and f.membershipQueries == 0 and f.ownerQueries == 1)
+    host:stop()
+  end,
+  ["FS-005 PERF-002: startup on fullscreen observes apps but never bootstraps a regular layout"] = function()
+    local f = fake()
+    local host = Host.new(f.hs, { displayId = "d", activeSpaceId = 9, spaceType = "fullscreen" }):start()
+    host:subscribeExistingWindows(function() error("no regular bootstrap expected") end)
+    assert(f.scans == 0 and f.membershipQueries == 0)
+    host:stop()
+  end,
+  ["FS-002: fullscreen exit preserves the false native result and emits one exit observation"] = function()
+    local f = fake(); f.fullscreen = true
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+    local events = {}; host:subscribeWindow(f.window, function(e) events[#events + 1] = e end)
+    f.fullscreen = false; f.windowWatcher.callback(nil, "AXWindowResized")
+    f.windowWatcher.callback(nil, "AXWindowResized")
+    assert(#events == 1 and events[1].kind == "exitedNativeFullscreen")
+    host:stop()
+  end,
   ["host bootstrap uses one active-Space snapshot and one app scan, deferring absent handles"] = function()
     local f, _, element = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
     host:subscribeExistingWindows(function(e) events[#events + 1] = e end)
@@ -98,7 +126,7 @@ return {
     f.windowWatcher.callback(nil, "AXWindowMiniaturized"); f.fullscreen = true; f.windowWatcher.callback(nil, "AXWindowResized"); f.windowWatcher.callback(nil, "AXUIElementDestroyed")
     assert(events[#events].kind == "destroyed"); host:probeReadiness(9, function(metadata) assert(metadata == nil) end)
     local lifecycleCount, scansBeforeLaunch = #events, f.scans
-    f.focusedWindow = f.window
+    f.focusedWindow, f.fullscreen = f.window, false
     f.lifecycle.callback(nil, 5, app)
     assert(events[#events].kind == "focus" and events[#events].id == 9)
     lifecycleCount = #events

@@ -198,7 +198,7 @@ return {
         ten:_submitEvent({ type = "ActualFocusChanged", id = 99 }) -- unmanaged focus preserves the managed anchor
         ten:_submitEvent({ type = "ActualFocusChanged", id = 10 }) -- stale managed callback cannot replace the request
         targetDesired = firstCore:state().manager.focus.desiredBySpace.space
-        assert(ten.pendingGlobalFocus.windowId == 9 and targetDesired.pending and targetDesired.targetId == 9)
+        assert(ten.focusHistory:pending().target.windowId == 9 and targetDesired.pending and targetDesired.targetId == 9)
       end
       return f, ten, firstCore, function() return otherFocuses end, otherHandle, columnHandle
     end
@@ -208,12 +208,12 @@ return {
         name = "POC-009 matching cross-Space read confirms pending, later callback is harmless, and mouse h/l works",
         run = function()
           local f, ten, firstCore, otherFocuses, otherHandle, columnHandle = crossSpaceSetup(true, true)
-          assert(ten.pendingGlobalFocus == nil and not firstCore:state().manager.focus.desiredBySpace.space.pending)
+          assert(ten.focusHistory:pending() == nil and not firstCore:state().manager.focus.desiredBySpace.space.pending)
           f.appWatcher.callback(f.window, "AXFocusedWindowChanged") -- later real callback
-          assert(ten.pendingGlobalFocus == nil and not firstCore:state().manager.focus.desiredBySpace.space.pending)
+          assert(ten.focusHistory:pending() == nil and not firstCore:state().manager.focus.desiredBySpace.space.pending)
           f.focusedWindow = otherHandle
           assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
-          assert(otherFocuses() == 1 and ten.pendingGlobalFocus == nil)
+          assert(otherFocuses() == 1 and ten.focusHistory:pending() == nil)
           f.activeSpace, f.members, f.owners = "space", { 9 }, { "space" }
           f.contextWatcher.callback()
           ten:_submitEvent({ type = "ActualFocusChanged", id = 11 }) -- native mouse focus
@@ -236,14 +236,14 @@ return {
           f.owners, f.focusedWindow = { "space" }, f.window
           f.appWatcher.callback(f.window, "AXFocusedWindowChanged")
           assert(ten.handleRegistry:resolve({ windowId = 9, spaceId = "space" }) == f.window)
-          assert(ten.pendingGlobalFocus == nil)
+          assert(ten.focusHistory:pending() == nil)
           assert(not firstCore:state().manager.focus.desiredBySpace.space.pending)
           f.activeSpace, f.members = "space", { 9 }
           f.contextWatcher.callback()
           assert(ten.core == firstCore and not ten.core:state().manager.focus.desiredBySpace.space.pending)
           local queries = f.focusedWindowQueries
           assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
-          assert(otherFocuses() == 1 and f.focusedWindowQueries == queries + 1 and ten.pendingGlobalFocus.windowId == 10)
+          assert(otherFocuses() == 1 and f.focusedWindowQueries == queries + 1 and ten.focusHistory:pending().target.windowId == 10)
           ten:stop()
         end,
       },
@@ -256,10 +256,10 @@ return {
           assert(ten.core == firstCore and ten.core:state().manager.focus.desiredBySpace.space.pending)
           f.focusedWindow = f.window
           f.appWatcher.callback(f.window, "AXFocusedWindowChanged")
-          assert(ten.pendingGlobalFocus == nil)
+          assert(ten.focusHistory:pending() == nil)
           assert(not ten.core:state().manager.focus.desiredBySpace.space.pending)
           assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
-          assert(otherFocuses() == 1 and ten.pendingGlobalFocus.windowId == 10)
+          assert(otherFocuses() == 1 and ten.focusHistory:pending().target.windowId == 10)
           ten:stop()
         end,
       },
@@ -276,7 +276,7 @@ return {
           assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
           assert(ten.core:state().manager.focus.desiredBySpace.space.targetId == 9)
           ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
-          assert(ten.pendingGlobalFocus == nil and not ten.core:state().manager.focus.desiredBySpace.space.pending)
+          assert(ten.focusHistory:pending() == nil and not ten.core:state().manager.focus.desiredBySpace.space.pending)
           assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
           assert(ten.core:state().manager.focus.desiredBySpace.space.targetId == 10)
           ten:stop()

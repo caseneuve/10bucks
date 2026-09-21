@@ -105,6 +105,10 @@ Run the fullscreen portion immediately before fullscreen effects. It must answer
 
 **Status: conditional.** Run only if a completed slice exposes an intrinsic direct-AX/Hammerspoon boundary that cannot meet the required generic behavior or budget. Build the smallest native experiment for that boundary; a tangled legacy runtime or Lua line count is not evidence for a wholesale native rewrite.
 
+## POC-010 — Pre-existing fullscreen focus history
+
+**Status: narrow observation passed; candidate acceptance pending.** [`010-fullscreen-focus-history.md`](010-fullscreen-focus-history.md) records confirmed native-fullscreen ownership with locked AX position, managed-history omission, and the resulting wrong previous target. It enables independent unplaced fullscreen readiness, not focus-driven admission, invented regular placement, or an app-specific exception. No broad fullscreen-effects or latency pass is claimed.
+
 ## POC-009 — Unchanged native focus confirmation
 
 **Status: narrow mechanism observations passed.** [`009-focus-confirmation.md`](009-focus-confirmation.md) records a same-target command that remained pending without a callback, then a separate matching focus/read probe. These support one targeted post-effect confirmation read, not polling or confirmation from a stale Core. End-to-end acceptance and callback reliability are not established by those probes. The record also attributes Space-bootstrap blocking; no broad focus or performance pass is claimed.

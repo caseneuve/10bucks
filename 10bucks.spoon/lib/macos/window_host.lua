@@ -7,7 +7,8 @@ Host.__index = Host
 local function call(object, method, ...)
   if not object or type(object[method]) ~= "function" then return nil end
   local ok, value = pcall(object[method], object, ...)
-  return ok and value or nil
+  if ok then return value end
+  return nil
 end
 
 local function asWindow(element)
@@ -90,18 +91,23 @@ function Host:_remember(window, confirmedSpace)
   end
 end
 
-function Host:_regularOwner(id)
+function Host:_owner(id)
   local spaces = self.hs.spaces
   self:_record("targetedOwnershipQueries")
   local owners = spaces and moduleCall(spaces.windowSpaces, id)
-  if type(owners) ~= "table" or #owners ~= 1 or owners[1] ~= self.context.regularSpaceId then return false end
-  if type(spaces.spaceType) == "function" and moduleCall(spaces.spaceType, owners[1]) ~= "user" then return false end
-  return true
+  if type(owners) ~= "table" or #owners ~= 1 then return nil end
+  local kind = moduleCall(spaces.spaceType, owners[1])
+  if kind == "fullscreen" or (kind == "user" and owners[1] == self.context.regularSpaceId) then
+    return owners[1], kind
+  end
 end
 
-function Host:_metadata(window, origin)
+function Host:_metadata(window, origin, spaceId, spaceType)
   local app, id = call(window, "application"), call(window, "id")
   local pid = call(app, "pid")
+  local nativeFullscreen = booleanOrNil(call(window, "isFullScreen"))
+  if (spaceType == "fullscreen" and nativeFullscreen ~= true)
+    or (spaceType == "user" and nativeFullscreen == true) then return nil end
   local element = self.hs.axuielement.windowElement(window)
   if id == nil or pid == nil or not element then return nil end
   local modal = moduleCall(element.attributeValue, element, "AXModal")
@@ -109,7 +115,8 @@ function Host:_metadata(window, origin)
   local resizable = moduleCall(element.isAttributeSettable, element, "AXSize")
   return {
     id = id, application = { pid = pid, bundleID = call(app, "bundleID"), name = call(app, "name") },
-    title = call(window, "title"), displayId = self.context.displayId, spaceId = self.context.regularSpaceId,
+    title = call(window, "title"), displayId = self.context.displayId, spaceId = spaceId, spaceType = spaceType,
+    nativeFullscreen = nativeFullscreen,
     role = call(window, "role"), subrole = call(window, "subrole"),
     modal = booleanOrNil(modal),
     movable = booleanOrNil(movable),
@@ -120,15 +127,20 @@ end
 
 function Host:_ready(window, origin, callback, membershipSet)
   local id = call(window, "id")
-  if id == nil or (membershipSet and not membershipSet[id]) or (not membershipSet and not self:_regularOwner(id)) then return end
-  local metadata = self:_metadata(window, origin)
+  if id == nil or (membershipSet and not membershipSet[id]) then return end
+  local spaceId, spaceType
+  if membershipSet then spaceId, spaceType = self.context.regularSpaceId, "user"
+  else spaceId, spaceType = self:_owner(id) end
+  if not spaceId then return end
+  local metadata = self:_metadata(window, origin, spaceId, spaceType)
   if metadata then
-    self:_remember(window, true)
+    self:_remember(window, spaceType == "user")
     callback({ kind = "ready", metadata = metadata, handle = window })
   end
 end
 
 function Host:subscribeWindow(window, callback)
+  self:_remember(window)
   local id, generation = call(window, "id"), self.generation
   -- Verified by read-only installed-runtime query: focused hs.window.newWatcher
   -- is a function, its AX element's newWatcher is nil, and application.newWatcher
@@ -151,8 +163,10 @@ function Host:subscribeWindow(window, callback)
     elseif kinds[event] == "titleChanged" then callback({ kind = "titleChanged", id = id, title = call(window, "title") or "" })
     elseif kinds[event] then callback({ kind = kinds[event], id = id }) end
   end)
-  return self:_startOwned(watcher, call(call(window, "application"), "pid"),
+  local subscription = self:_startOwned(watcher, call(call(window, "application"), "pid"),
     { "AXUIElementDestroyed", "AXWindowMiniaturized", "AXWindowDeminiaturized", "AXTitleChanged", "AXWindowResized" })
+  subscription.initialNativeFullscreen = knownFullscreen
+  return subscription
 end
 
 function Host:_attachApp(app, callback)
@@ -209,18 +223,23 @@ end
 
 function Host:subscribeExistingWindows(callback)
   self.windowCallback = callback
-  local members = {}
-  self:_record("bootstrapSpaceQueries")
-  -- One relevant active-Space membership snapshot; absence only defers admission.
-  for _, id in ipairs(self.hs.spaces.windowsForSpace(self.context.regularSpaceId) or {}) do members[id] = true end
+  local members
+  if self.context.regularSpaceId then
+    members = {}
+    self:_record("bootstrapSpaceQueries")
+    -- One relevant regular-Space snapshot; absence only defers admission.
+    for _, id in ipairs(self.hs.spaces.windowsForSpace(self.context.regularSpaceId) or {}) do members[id] = true end
+  end
   self:_record("bootstrapApplicationQueries")
   for _, app in ipairs(self.hs.application.runningApplications()) do
     self:_attachApp(app, callback)
     -- Enumeration is bootstrap-only. Failure for one app is non-destructive
     -- and must not prevent subscriptions/bootstrap for its peers.
-    local ok, windows = pcall(app.allWindows, app)
-    if ok and type(windows) == "table" then
-      for _, window in ipairs(windows) do self:_ready(window, "bootstrap", callback, members) end
+    if members then
+      local ok, windows = pcall(app.allWindows, app)
+      if ok and type(windows) == "table" then
+        for _, window in ipairs(windows) do self:_ready(window, "bootstrap", callback, members) end
+      end
     end
   end
   return { detach = function() end }
@@ -228,7 +247,16 @@ end
 
 function Host:probeReadiness(id, callback)
   local record = self.handles[id]
-  if record and self:_regularOwner(id) then callback(self:_metadata(record.handle, "targetedReadiness"), record.handle) else callback(nil) end
+  local spaceId, spaceType
+  if record then spaceId, spaceType = self:_owner(id) end
+  local metadata = spaceId and self:_metadata(record.handle, "targetedReadiness", spaceId, spaceType)
+  if metadata then
+    self:_remember(record.handle, spaceType == "user")
+    local admitted = callback(metadata, record.handle)
+    -- Admission does not change MRU. Observe again only after the independent
+    -- fullscreen readiness transaction, guarding against intervening focus.
+    if admitted and spaceType == "fullscreen" then self:observeFocus(id) end
+  else callback(nil) end
   return { detach = function() end }
 end
 

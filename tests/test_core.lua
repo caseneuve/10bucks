@@ -50,6 +50,35 @@ local function frames(intents)
 end
 
 return {
+  ["FOCUS-004 FOCUS-006: background lifecycle events never replay an older pending focus request"] = function()
+    local observed = {}
+    local core = new(function(intents) observed[#observed + 1] = intents end)
+    core:submit(ready("one")); core:submit(ready("two"))
+    assert(core:state().manager.focus.desiredBySpace["space-1"].pending)
+    core:submit({ type = "WindowMinimized", id = "one" })
+    for _, intent in ipairs(observed[#observed]) do assert(intent.kind ~= "focus") end
+    core:submit({ type = "WindowDestroyed", id = "one" })
+    for _, intent in ipairs(observed[#observed]) do assert(intent.kind ~= "focus") end
+  end,
+  ["FS-002 FOCUS-005: native fullscreen retains its slot and explicit global focus can target it without recovery focus"] = function()
+    local observed = {}
+    local core = new(function(intents) observed[#observed + 1] = intents end)
+    core:submit(ready("one")); core:submit(ready("two"))
+    core:submit({ type = "ActualFocusChanged", id = "two" })
+    core:submit({ type = "WindowEnteredNativeFullscreen", id = "two" })
+    for _, intent in ipairs(observed[#observed]) do assert(intent.kind ~= "focus", "entering fullscreen must not focus behind it") end
+    assert(core:state().manager.spaces["space-1"].memberIds[2] == "two")
+    core:submit({ type = "FocusTarget", windowId = "two" })
+    local focus
+    for _, intent in ipairs(observed[#observed]) do
+      if intent.kind == "focus" then focus = intent end
+      assert(intent.kind ~= "result" or intent.accepted ~= false)
+      assert(intent.kind ~= "frame" or intent.windowId ~= "two")
+    end
+    assert(focus and focus.windowId == "two")
+    core:submit({ type = "ActualFocusChanged", id = "two" })
+    assert(not core:state().manager.focus.desiredBySpace["space-1"].pending)
+  end,
   ["STATE-001 STATE-002 ENV-004 PERF-003: core commits composite state before deduplicated explicit-identity projection"] = function()
     local observed, core
     core = new(function(intents)
@@ -164,6 +193,7 @@ return {
     local observed = {}
     local core = new(function(intents) observed[#observed + 1] = intents end)
     core:submit(ready("one")); core:submit(ready("two")); core:submit(ready("three"))
+    core:submit({ type = "ActualFocusChanged", id = "three" }) -- acknowledge admission before mouse focus
     core:submit({ type = "ActualFocusChanged", id = "one" })
     core:submit({ type = "ActualFocusChanged", id = "two" })
     core:submit({ type = "WindowMinimized", id = "two" })

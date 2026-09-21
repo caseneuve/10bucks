@@ -84,6 +84,26 @@ return {
     end
   end,
 
+  ["RULE-002 FS-005: native fullscreen readiness generically permits position-locking only with confirmed fullscreen facts"] = function()
+    local ordinary = assert(Rules.ready(metadata()))
+    equal(ordinary.metadata.spaceType, "user")
+    assert(not ordinary.metadata.nativeFullscreen)
+
+    local fullscreen = assert(Rules.ready(metadata({
+      movable = false, resizable = true, spaceType = "fullscreen", nativeFullscreen = true,
+    })))
+    equal(fullscreen.decision.action, "manage")
+    equal(fullscreen.metadata.spaceType, "fullscreen")
+    assert(fullscreen.metadata.nativeFullscreen)
+
+    equal(assert(Rules.ready(metadata({ movable = false })).decision.reason, "not-movable"))
+    equal(assert(Rules.ready(metadata({ movable = false, spaceType = "fullscreen" })).decision.reason, "not-movable"))
+    equal(assert(Rules.ready(metadata({ movable = false, nativeFullscreen = true })).decision.reason, "not-movable"))
+    equal(assert(Rules.ready(metadata({ movable = false, spaceType = "fullscreen", nativeFullscreen = true, resizable = false })).decision.reason, "not-resizable"))
+    assert(not Rules.ready(metadata({ spaceType = "tiled" })))
+    assert(not Rules.ready(metadata({ nativeFullscreen = "true" })))
+  end,
+
   ["RULE-002 DISC-002 FOCUS-003: unknown safety facts defer and focus is never an admission origin"] = function()
     for _, key in ipairs({ "role", "subrole", "modal", "movable", "resizable", "selfProcess" }) do
       local value = metadata()
@@ -109,6 +129,29 @@ return {
     local targeted = assert(Rules.ready(metadata({ origin = "targetedReadiness" })))
     assert(not targeted.metadata.createdAfterStart)
     equal(targeted.metadata.origin, "targetedReadiness")
+  end,
+
+  ["LIFE-003 RULE-002 FOCUS-003: prior managed decisions survive independent exit readiness but never focus admission"] = function()
+    local prior = { action = "manage", retained = { source = "first-ready" } }
+    local changed = metadata({
+      origin = "targetedReadiness", movable = false, resizable = false,
+      spaceType = "user", nativeFullscreen = false,
+    })
+    equal(assert(Rules.ready(changed)).decision.action, "exclude")
+    local retained = assert(Rules.ready(changed, prior))
+    equal(retained.decision.action, "manage")
+    assert(retained.decision ~= prior and retained.decision.retained ~= prior.retained)
+    prior.retained.source = "corrupt"
+    equal(retained.decision.retained.source, "first-ready")
+
+    local invalid = Rules.ready(metadata(), { action = "exclude" })
+    assert(invalid == nil)
+    invalid = Rules.ready(metadata(), { action = "manage", callback = function() end })
+    assert(invalid == nil)
+
+    local focus = assert(Rules.ready(metadata({ origin = "focus" }), { action = "manage" }))
+    equal(focus.decision.action, "defer")
+    equal(focus.decision.reason, "focus-is-not-readiness")
   end,
 
   ["LIFE-003 WIN-003: reducer admits only stable manage readiness, duplicates are idempotent, and later metadata cannot reclassify or reorder"] = function()

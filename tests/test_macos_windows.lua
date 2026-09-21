@@ -22,6 +22,7 @@ local function fake()
     return { detach = function() value.detached = value.detached + 1 end }
   end
   value.native = {
+    managedDecision = function(id) return value.decisions and value.decisions[id] end,
     subscribeApplications = function(callback) table.insert(value.applicationCallbacks, callback); return subscription() end,
     subscribeExistingWindows = function(callback) table.insert(value.existingCallbacks, callback); return subscription() end,
     subscribeWindow = function(handle, callback)

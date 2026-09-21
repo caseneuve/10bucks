@@ -112,6 +112,11 @@ local function setDesired(manager, spaceId, targetId, pending, sourceGroup)
   return nextManager
 end
 
+local function fullscreenFocusable(window)
+  local life = window and window.lifecycle
+  return life and life.nativeFullscreen and not life.minimized and not life.appHidden
+end
+
 local focusCommands = {
   FocusNext = true, FocusPrevious = true, FocusLeftGroup = true, FocusRightGroup = true,
   FocusTarget = true, MoveFocusedToOther = true, SwapGroups = true,
@@ -164,7 +169,7 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
       manager = setDesired(manager, spaceId, transaction.id, false, selectedGroup(coordinator))
     end
   end
-  if (transaction.type == "WindowMinimized" or transaction.type == "WindowEnteredNativeFullscreen")
+  if transaction.type == "WindowMinimized"
     and selectedId(coordinator) == transaction.id and not availability(manager)[transaction.id] then
     recoveryGroup = selectedGroup(coordinator)
     coordinator = Coordinator.reduce(coordinator, { type = "RecoverSource", sourceGroup = recoveryGroup }, newIds,
@@ -245,7 +250,8 @@ function Core.new(options)
         local capability
         if input.name == "FocusTarget" then
           local window = committed.manager.windows[input.windowId]
-          capability = { handled = window ~= nil and window.placementSpaceId == core.spaceId and available[input.windowId] == true,
+          capability = { handled = window ~= nil and window.placementSpaceId == core.spaceId
+              and (available[input.windowId] == true or fullscreenFocusable(window)),
             reason = "unknown-or-unavailable-target" }
         else
           _, capability = Coordinator.reduce(coordinator, event, members(committed.manager, core.spaceId),
@@ -254,18 +260,14 @@ function Core.new(options)
         if not capability.handled then intents[#intents + 1] = { kind = "result", accepted = false, reason = capability.reason } end
       end
       local desired = committed.manager.focus.desiredBySpace[core.spaceId]
-      local commandFocus = input.type == "Command" and focusCommands[input.name]
-      if commandFocus and (input.name == "FocusLeftGroup" or input.name == "FocusRightGroup") then
-        local oldGroup = previous and selectedGroup(previous.coordinators[core.spaceId])
-        commandFocus = oldGroup ~= selectedGroup(coordinator)
-      end
-      local newlyAdmitted = input.type == "WindowReady" and previous.manager.windows[input.id] == nil
-        and committed.manager.windows[input.id] ~= nil
-      local admissionFocus = newlyAdmitted and not (input.metadata and input.metadata.origin == "bootstrap")
-      local requestsFocus = admissionFocus or input.type == "WindowDestroyed"
-        or input.type == "ApplicationTerminated" or input.type == "WindowMinimized"
-        or input.type == "WindowEnteredNativeFullscreen" or commandFocus
-      if requestsFocus and desired.pending and desired.targetId and available[desired.targetId] then
+      -- Only this transaction's newly committed request may produce an effect.
+      -- Background lifecycle facts must not replay an older pending request
+      -- over a newer global fullscreen target.
+      local priorDesired = previous.manager.focus.desiredBySpace[core.spaceId]
+      local requestsFocus = desired.generation > priorDesired.generation
+      local explicitFullscreen = input.type == "Command" and input.name == "FocusTarget"
+        and fullscreenFocusable(committed.manager.windows[desired.targetId])
+      if requestsFocus and desired.pending and desired.targetId and (available[desired.targetId] or explicitFullscreen) then
         intents[#intents + 1] = { kind = "focus", windowId = desired.targetId, displayId = core.displayId,
           spaceId = core.spaceId, generation = desired.generation }
       end

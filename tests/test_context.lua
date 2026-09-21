@@ -1,11 +1,15 @@
 local Context = require("lib.macos.context")
 return {
-  ["context selects only explicit built-in UUID and rejects non-user active Space"] = function()
+  ["ENV-004 FS-005: context distinguishes native fullscreen without inventing a regular Space"] = function()
     local screen = { getUUID = function() return "built-in" end, frame = function() return { x = 0, y = 0, w = 1, h = 1 } end }
     local hs = { screen = { allScreens = function() return { screen } end }, spaces = { activeSpaceOnScreen = function() return "space" end, spaceType = function() return "user" end } }
     local context = Context.snapshot(hs, "built-in"); assert(context.displayId == "built-in")
     assert(context.workArea.x == 0 and context.workArea.y == 0 and context.workArea.w == 1 and context.workArea.h == 1)
     hs.spaces.spaceType = function() return "fullscreen" end
+    local fullscreen = Context.snapshot(hs, "built-in")
+    assert(fullscreen.spaceType == "fullscreen" and fullscreen.activeSpaceId == "space")
+    assert(fullscreen.regularSpaceId == nil and fullscreen.displayId == "built-in")
+    hs.spaces.spaceType = function() return "unknown" end
     assert(not pcall(Context.snapshot, hs, "built-in"))
     assert(not pcall(Context.snapshot, hs, "missing"))
   end,

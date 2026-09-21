@@ -178,7 +178,7 @@ Recovery MUST NOT cross Spaces. A transient native fallback focus observed betwe
 
 ### FOCUS-005 — Global previous window
 
-The previous-window command uses managed global focus history only. It may cross Spaces, unminimize a window, unhide its application, or enter its native fullscreen Space. Repeated invocation toggles according to actual managed focus observations. Dead entries are skipped/removed.
+The previous-window command uses managed global focus history only. It may cross Spaces, unminimize a window, unhide its application, or enter its native fullscreen Space. Repeated invocation toggles according to actual managed focus observations. Independently admitted native-fullscreen windows participate even when they have never had a regular layout slot. Readiness alone MUST NOT insert or reorder history. Dead entries are skipped/removed.
 
 ### FOCUS-006 — Effect ordering and mouse focus
 
@@ -210,7 +210,7 @@ There is no periodic reconciliation that prunes from an onscreen/eligible snapsh
 
 ### FS-002 — Manual fullscreen retention
 
-An already admitted window entering native fullscreen retains its exact saved placement. Its source projects remaining available members. Exiting restores the slot if the original regular Space still exists and remains the actual destination.
+An already admitted window entering native fullscreen retains its exact saved placement. Its source projects remaining available members without requesting recovery focus behind the fullscreen window. Exiting restores the slot if the original regular Space still exists and remains the actual destination.
 
 ### FS-003 — Removed source
 
@@ -276,7 +276,7 @@ Rules are ordered and first-match-wins. Matching uses normalized metadata. Curre
 
 ### RULE-002 — Generic default
 
-Default eligibility is based on generic AX role/subrole/modal/move/resize capabilities and self-process exclusion, not external bundle IDs.
+Default eligibility is based on generic AX role/subrole/modal/move/resize capabilities and self-process exclusion, not external bundle IDs. A confirmed native-fullscreen owner plus a true native-fullscreen property permits locked AX position for an otherwise standard, nonmodal, resizable foreign window; it is managed without inventing a regular layout slot. Ordinary immovable windows remain excluded. This mode-specific distinction is supported by POC-010.
 
 ### RULE-003 — Predicate boundary
 
@@ -294,7 +294,7 @@ MVP bootstraps pre-existing windows on the active regular Space. Pre-existing in
 
 ### DISC-002 — Uncertain unavailable windows
 
-A pre-existing minimized/hidden window is admitted only when its actual regular Space is confirmed. Otherwise it waits until restore/unhide or a focus-triggered targeted ownership/readiness probe emits an independent admission event. `ActualFocusChanged` itself never admits. Duplicate/delayed readiness results are idempotent. A pre-existing native-fullscreen window MAY be tracked when observed and is normally admitted when it exits.
+A pre-existing minimized/hidden window is admitted only when its actual regular Space is confirmed. Otherwise it waits until restore/unhide or a focus-triggered targeted ownership/readiness probe emits an independent admission event. `ActualFocusChanged` itself never admits. Duplicate/delayed readiness results are idempotent. A pre-existing native-fullscreen window MUST be tracked once independent ownership/readiness confirms its eligibility. Until actual regular ownership is confirmed it has no normal layout slot. On exit it is admitted to that actual regular Space, preserving its existing rule decision and history position. Unknown exit ownership remains unplaced, not guessed. Startup on native fullscreen MUST NOT invent a regular Space or request focus.
 
 ### DISC-003 — Global means discovered
 

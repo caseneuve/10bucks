@@ -36,7 +36,7 @@ function Windows.new(dependencies)
   if type(dependencies) ~= "table" or type(dependencies.sink) ~= "function" or type(dependencies.native) ~= "table" then
     error("window adapter requires sink and native dependencies", 2)
   end
-  for _, name in ipairs({ "subscribeApplications", "subscribeExistingWindows", "subscribeWindow", "probeReadiness" }) do
+  for _, name in ipairs({ "subscribeApplications", "subscribeExistingWindows", "subscribeWindow", "probeReadiness", "managedDecision" }) do
     requireFunction(dependencies.native[name], name)
   end
   return setmetatable({
@@ -61,28 +61,47 @@ function Windows:_emit(event)
   self.sink(event)
 end
 
+function Windows:_retain(id, handle, pid, generation)
+  local previous = self.cache[id]
+  if previous and previous.handle == handle then return previous.subscription end
+  local subscription = self.native.subscribeWindow(handle, function(observation)
+    self:_window(observation, generation)
+  end)
+  if previous then detach(previous.subscription) end
+  if not self:_active(generation) then detach(subscription); return end
+  self.cache[id] = { handle = handle, pid = pid, subscription = subscription }
+  return subscription
+end
+
+-- An already managed, still unplaced lifetime outlives an active regular host.
+-- Reattach its observer without another admission or history update. Reconcile
+-- an exit missed across detach/attach from the subscription's initial AX fact.
+function Windows:retainManaged(id, handle, pid)
+  if not self.started then return end
+  local subscription = self:_retain(id, handle, pid, self.generation)
+  if subscription and subscription.initialNativeFullscreen == false then
+    self:_window({ kind = "exitedNativeFullscreen", id = id }, self.generation)
+  end
+end
+
 function Windows:_ready(observation, generation)
   if not self:_active(generation) or type(observation) ~= "table" then return end
-  local event = Rules.ready(observation.metadata)
+  if type(observation.metadata) ~= "table" then return end
+  -- Re-observation/exit reuses the already committed lifetime decision.
+  local event = Rules.ready(observation.metadata, self.native.managedDecision(observation.metadata.id))
   if not event then return end
   -- Defer/exclude are still reducer-visible facts, but only managed readiness
   -- owns a native handle/subscription for later effect execution.
   if event.decision.action == "manage" and observation.handle ~= nil then
-    local previous = self.cache[event.id]
-    if not previous or previous.handle ~= observation.handle then
-      local subscription = self.native.subscribeWindow(observation.handle, function(nextObservation)
-        self:_window(nextObservation, generation)
-      end)
-      if previous then detach(previous.subscription) end
-      if not self:_active(generation) then detach(subscription); return end
-      self.cache[event.id] = { handle = observation.handle, pid = event.application.pid, subscription = subscription }
-    end
+    self:_retain(event.id, observation.handle, event.application.pid, generation)
+    if not self:_active(generation) then return end
   end
   self:_emit(event)
+  return event.decision.action == "manage"
 end
 
-function Windows:_probe(id, generation)
-  if not self:_active(generation) or not validId(id) or self.cache[id] or self.probing[id] then return end
+function Windows:_probe(id, generation, force)
+  if not self:_active(generation) or not validId(id) or (self.cache[id] and not force) or self.probing[id] then return end
   self.probing[id] = true
   local subscription, completed = nil, false
   local function completion(metadata, handle)
@@ -102,7 +121,7 @@ function Windows:_probe(id, generation)
         for key, value in pairs(metadata.application) do normalized.application[key] = value end
       end
       normalized.origin = "targetedReadiness"
-      self:_ready({ metadata = normalized, handle = handle }, generation)
+      return self:_ready({ metadata = normalized, handle = handle }, generation)
     end
   end
   subscription = self.native.probeReadiness(id, completion)
@@ -151,6 +170,7 @@ function Windows:_window(observation, generation)
     enteredNativeFullscreen = "WindowEnteredNativeFullscreen", exitedNativeFullscreen = "WindowExitedNativeFullscreen" }
   if types[observation.kind] and validId(observation.id) then
     self:_emit({ type = types[observation.kind], id = observation.id })
+    if observation.kind == "exitedNativeFullscreen" then self:_probe(observation.id, generation, true) end
   elseif observation.kind == "titleChanged" and validId(observation.id) and type(observation.title) == "string" then
     self:_emit({ type = "WindowTitleChanged", id = observation.id, title = observation.title })
   end
