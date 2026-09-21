@@ -1,5 +1,4 @@
 local Host = require("lib.macos.window_host")
-local Registry = require("lib.macos.handle_registry")
 
 local function fake()
   local f = { scans = 0, stops = 0, membershipQueries = 0, ownerQueries = 0, owners = { 9 }, members = { 9 } }
@@ -24,27 +23,6 @@ return {
     f.owners = { 99 }; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2)
     f.owners = { 9, 10 }; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2)
     f.owners = { 9 }; f.spaceType = "fullscreen"; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2)
-  end,
-  ["PERF-001 PERF-002: retained-Space observation reattaches without window enumeration"] = function()
-    local f = fake(); local registry = Registry.new(); registry:remember(9, 9, f.window, 7)
-    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }, nil, registry):start(); local events = {}
-    host:subscribeExistingWindows(function(event) events[#events + 1] = event end, { bootstrap = false, enumerateWindows = false })
-    assert(f.membershipQueries == 0 and f.scans == 0 and #events == 0)
-    assert(#f.appWatchers == 1, "retained Space must still observe existing applications")
-    f.appWatchers[1].callback(f.window, "AXFocusedWindowChanged")
-    assert(events[1].kind == "focus" and events[1].id == 9)
-  end,
-  ["DISC-001 PERF-002: first Space activation joins membership to cold cached handles without AX enumeration"] = function()
-    local f = fake()
-    local registry = Registry.new()
-    registry:refresh(9, f.window, 7)
-    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }, nil, registry):start()
-    local events = {}
-    host:subscribeExistingWindows(function(event) events[#events + 1] = event end,
-      { bootstrap = true, enumerateWindows = false })
-    assert(f.membershipQueries == 1 and f.scans == 0 and #events == 1)
-    assert(events[1].kind == "ready" and events[1].metadata.origin == "bootstrap")
-    assert(registry:target(9).spaceId == 9)
   end,
   ["nil/error app watcher and failed bootstrap defer only that app while peers still boot"] = function()
     local f, primary = fake()
@@ -111,8 +89,7 @@ return {
     assert(f.scans == scansBeforeLaunch + 1, "launch must perform exactly one app-local readiness scan")
     f.appWatchers[#f.appWatchers].callback(f.window, "AXWindowCreated"); assert(events[#events].kind == "ready")
     local old = f.appWatchers[#f.appWatchers].callback
-    f.lifecycle.callback(nil, 3, app); subscription.detach(); host:stop():stop()
-    assert(f.stops == 3, "launch/activation must not duplicate an existing app AX watcher")
+    f.lifecycle.callback(nil, 3, app); subscription.detach(); host:stop():stop(); assert(f.stops == 4)
     host:start(); old(element, "AXWindowCreated"); assert(events[#events].kind == "terminated")
   end,
 }

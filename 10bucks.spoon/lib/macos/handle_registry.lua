@@ -16,39 +16,16 @@ end
 -- A focus callback can precede the Space watcher. It refreshes a known native
 -- handle without guessing that the receiving host owns the descriptor's Space.
 function Registry:refresh(windowId, handle, pid)
-  if windowId == nil or handle == nil then return end
   local entry = self.entries[windowId]
-  if entry then entry.handle, entry.pid = handle, pid
-  else self.entries[windowId] = { windowId = windowId, handle = handle, pid = pid } end
-end
-
-function Registry:cached(windowId)
-  local entry = self.entries[windowId]
-  if not entry then return nil end
-  return { windowId = entry.windowId, spaceId = entry.spaceId, handle = entry.handle, pid = entry.pid }
+  if entry and handle ~= nil then
+    entry.handle, entry.pid = handle, pid
+  end
 end
 
 function Registry:target(windowId)
   local entry = self.entries[windowId]
-  if not entry or entry.spaceId == nil then return nil end
+  if not entry then return nil end
   return { windowId = entry.windowId, spaceId = entry.spaceId }
-end
-
-function Registry:record(target)
-  local entry = target and self.entries[target.windowId]
-  if not entry or entry.spaceId ~= target.spaceId then return nil end
-  return { windowId = entry.windowId, spaceId = entry.spaceId, handle = entry.handle, pid = entry.pid }
-end
-
-function Registry:recordsForSpace(spaceId)
-  local records = {}
-  for _, entry in pairs(self.entries) do
-    if entry.spaceId == spaceId then
-      records[#records + 1] = { windowId = entry.windowId, spaceId = entry.spaceId, handle = entry.handle, pid = entry.pid }
-    end
-  end
-  table.sort(records, function(left, right) return tostring(left.windowId) < tostring(right.windowId) end)
-  return records
 end
 
 function Registry:forget(windowId, handle)

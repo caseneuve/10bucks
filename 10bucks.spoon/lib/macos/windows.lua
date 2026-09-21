@@ -50,20 +50,6 @@ function Windows:handleForId(id)
   return entry and entry.handle or nil
 end
 
-function Windows:resume(id, pid, handle)
-  if not self.started or not validId(id) or not validId(pid) or handle == nil then return false end
-  local generation = self.generation
-  local previous = self.cache[id]
-  if previous and previous.handle == handle then return true end
-  local subscription = self.native.subscribeWindow(handle, function(observation)
-    self:_window(observation, generation)
-  end)
-  if previous then detach(previous.subscription) end
-  if not self:_active(generation) then detach(subscription); return false end
-  self.cache[id] = { handle = handle, pid = pid, subscription = subscription }
-  return true
-end
-
 function Windows:_active(generation)
   return self.started and self.generation == generation
 end
@@ -170,16 +156,14 @@ function Windows:_window(observation, generation)
   end
 end
 
-function Windows:start(options)
+function Windows:start()
   if self.started then return self end
-  options = options or {}
   self.generation = self.generation + 1
   self.started = true
   local generation, attached = self.generation, {}
   local ok, err = pcall(function()
     attached[#attached + 1] = self.native.subscribeApplications(function(event) self:_application(event, generation) end)
-    attached[#attached + 1] = self.native.subscribeExistingWindows(function(event) self:_window(event, generation) end,
-      { bootstrap = options.bootstrap ~= false, enumerateWindows = options.enumerateWindows ~= false })
+    attached[#attached + 1] = self.native.subscribeExistingWindows(function(event) self:_window(event, generation) end)
   end)
   if not ok then
     for _, subscription in ipairs(attached) do detach(subscription) end
