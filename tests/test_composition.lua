@@ -67,24 +67,61 @@ return {
   ["POC-009 FOCUS-006: no-callback unchanged focus confirms through one targeted read"] = function()
     local f = fakeHs(); local ten = load(f); ten:start()
     ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
-    local scans = f.scans
+    local scans, queries = f.scans, f.focusedWindowQueries
     f.focusedWindow = f.window
     ten.core:submit({ type = "FocusNext" })
     local desired = ten.core:state().manager.focus.desiredBySpace.space
-    assert(f.focuses == 1 and f.focusedWindowQueries == 1 and f.scans == scans)
+    assert(f.focuses == 1 and f.focusedWindowQueries == queries + 1 and f.scans == scans)
     assert(desired.targetId == 9 and not desired.pending)
     ten:stop()
   end,
   ["POC-009 FOCUS-006: nonmatching read awaits a later ordinary focus callback"] = function()
     local f = fakeHs(); local ten = load(f); ten:start()
     ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
-    local scans = f.scans
+    local scans, queries = f.scans, f.focusedWindowQueries
     f.focusedWindow = { id = function() return 10 end }
     ten.core:submit({ type = "FocusNext" })
-    assert(f.focuses == 1 and f.focusedWindowQueries == 1 and f.scans == scans)
+    assert(f.focuses == 1 and f.focusedWindowQueries == queries + 1 and f.scans == scans)
     assert(ten.core:state().manager.focus.desiredBySpace.space.pending)
     ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
     assert(not ten.core:state().manager.focus.desiredBySpace.space.pending)
+    ten:stop()
+  end,
+  ["FOCUS-001 FOCUS-006: bootstrap samples actual managed focus after readiness without requesting focus"] = function()
+    local f = fakeHs(); f.focusedWindow = f.window
+    local ten = load(f); ten:start()
+    local state = ten.core:state().manager
+    local desired = state.focus.desiredBySpace.space
+    assert(state.focus.actualWindow.id == 9 and desired.targetId == 9 and not desired.pending)
+    assert(#ten.focusHistory:snapshot() == 1 and ten.focusHistory:snapshot()[1].windowId == 9)
+    assert(f.focuses == 0 and f.focusedWindowQueries == 1)
+    ten:stop()
+  end,
+  ["FOCUS-001 FOCUS-006: stale AX payload normalizes the current native focus, not its payload"] = function()
+    local f = fakeHs(); local ten = load(f); ten:start()
+    f.focusedWindow = f.window
+    local queries = f.focusedWindowQueries
+    f.appWatcher.callback({ id = function() return 99 end }, "AXFocusedWindowChanged")
+    assert(f.focusedWindowQueries == queries + 1)
+    assert(ten.core:state().manager.focus.actualWindow.id == 9)
+    ten:stop()
+  end,
+  ["FOCUS-001 FOCUS-003 FOCUS-006: cold Space bootstrap observes an earlier focus after independent admission"] = function()
+    local f = fakeHs(); f.members = {}
+    local ten = load(f); ten:start()
+    f.owners, f.focusedWindow = { "next-space" }, f.window
+    local beforeRaw = f.focusedWindowQueries
+    f.appWatcher.callback({ id = function() return 9 end }, "AXFocusedWindowChanged") -- old host, before Space activation
+    assert(f.focusedWindowQueries == beforeRaw + 1)
+    assert(ten.core:state().manager.windows[9] == nil and #ten.focusHistory:snapshot() == 0 and f.focuses == 0)
+    f.activeSpace, f.members = "next-space", { 9 }
+    local queries, focuses = f.focusedWindowQueries, f.focuses
+    f.contextWatcher.callback()
+    local state = ten.core:state().manager
+    local desired = state.focus.desiredBySpace["next-space"]
+    assert(state.focus.actualWindow.id == 9 and desired.targetId == 9 and not desired.pending)
+    assert(#ten.focusHistory:snapshot() == 1 and ten.focusHistory:snapshot()[1].windowId == 9)
+    assert(f.focusedWindowQueries == queries + 1 and f.focuses == focuses)
     ten:stop()
   end,
   ["composition created/destroyed and availability callbacks update replacement Core only"] = function()
@@ -196,7 +233,7 @@ return {
           local f, ten, firstCore, otherFocuses = crossSpaceSetup()
           -- The old host receives the target focus while its context still says
           -- next-space. Its descriptor must retain the confirmed source Space.
-          f.owners = { "space" }
+          f.owners, f.focusedWindow = { "space" }, f.window
           f.appWatcher.callback(f.window, "AXFocusedWindowChanged")
           assert(ten.handleRegistry:resolve({ windowId = 9, spaceId = "space" }) == f.window)
           assert(ten.pendingGlobalFocus == nil)
@@ -204,8 +241,9 @@ return {
           f.activeSpace, f.members = "space", { 9 }
           f.contextWatcher.callback()
           assert(ten.core == firstCore and not ten.core:state().manager.focus.desiredBySpace.space.pending)
+          local queries = f.focusedWindowQueries
           assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
-          assert(otherFocuses() == 1 and f.focusedWindowQueries == 2 and ten.pendingGlobalFocus.windowId == 10)
+          assert(otherFocuses() == 1 and f.focusedWindowQueries == queries + 1 and ten.pendingGlobalFocus.windowId == 10)
           ten:stop()
         end,
       },
@@ -216,6 +254,7 @@ return {
           f.activeSpace, f.members, f.owners = "space", { 9 }, { "space" }
           f.contextWatcher.callback()
           assert(ten.core == firstCore and ten.core:state().manager.focus.desiredBySpace.space.pending)
+          f.focusedWindow = f.window
           f.appWatcher.callback(f.window, "AXFocusedWindowChanged")
           assert(ten.pendingGlobalFocus == nil)
           assert(not ten.core:state().manager.focus.desiredBySpace.space.pending)

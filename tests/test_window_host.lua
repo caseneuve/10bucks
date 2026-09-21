@@ -98,6 +98,7 @@ return {
     f.windowWatcher.callback(nil, "AXWindowMiniaturized"); f.fullscreen = true; f.windowWatcher.callback(nil, "AXWindowResized"); f.windowWatcher.callback(nil, "AXUIElementDestroyed")
     assert(events[#events].kind == "destroyed"); host:probeReadiness(9, function(metadata) assert(metadata == nil) end)
     local lifecycleCount, scansBeforeLaunch = #events, f.scans
+    f.focusedWindow = f.window
     f.lifecycle.callback(nil, 5, app)
     assert(events[#events].kind == "focus" and events[#events].id == 9)
     lifecycleCount = #events

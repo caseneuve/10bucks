@@ -53,6 +53,18 @@ Two cross-Space previous-window invocations both received target focus callbacks
 
 **Deferred:** unmatched/failed focus completion policy, full cross-Space and column acceptance, and 30-warm/5-cold performance certification. The blocking bootstrap is a separate measured defect, not solved by this confirmation change.
 
+## Production acceptance at `69115f6`
+
+The lead independently ran 113 passing Lua tests, parsed all production/test Lua, reviewed the diff, then reloaded only the development Spoon (old runtime stopped before the candidate started). Config/symlink and the stable checkout were unchanged.
+
+**Verified:** 30 synchronous same-target `FocusTarget` commands all returned with local pending cleared. Measured command-processing median/p95/maximum were **8.24/13.71/17.82 ms**. Counters increased by exactly 30 native focus requests and 30 targeted focus reads, with zero frame writes, application bootstrap queries, or ownership queries. These are warm synchronous command-processing samples, not physical-key delivery, next-key service, or cold-path certification.
+
+**Failed next acceptance boundary:** after that reload, externally focusing an owned test window on a previously undiscovered regular Space activated that Space and admitted both of its members. Native actual focus matched the test window, but the new Core's actual and desired IDs remained unset and global history still contained only the other Space's member. Acceptance stopped there. Source inspection confirms bootstrap emits readiness without subsequently sampling actual focus; an early focus event for an undiscovered member cannot establish its managed history. The exact callback order of this failed cold-entry action was not captured; callback-before-Space activation was observed in the earlier traced switches. The failing postcondition and missing post-bootstrap read are verified, while the precise lost-signal ordering remains a hypothesis. This is an implementation observation-boundary failure, not evidence that macOS failed to focus.
+
+A separate pre-fix diagnostic sampled native focus on entry to a normalized focus event: one callback payload named an unmanaged window while the native focused window still matched the managed target. The payload alone was therefore not a valid current global-focus observation in that sample. This does not establish frequency or representative-application reliability.
+
+**Target next increment:** use one actual-focus reader for post-effect confirmation, AX/application focus signals, and observation after bootstrap. It emits the native returned identity through normal reduction, never focus effects during bootstrap, never admission from the focus fact alone, and no event for a failed/nil read. Keep discovery and pending-order policy unchanged.
+
 ## Cleanup
 
 All temporary trace wrappers were explicitly restored after capture. Aliased trace exports remain under ignored `.pi/` for local review; no private native identity/title data is included here. The temporary diagnostic is not imported by production. No windows were closed, and no production timer or configuration change was made during this POC.

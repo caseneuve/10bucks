@@ -1,6 +1,6 @@
--- Concrete direct-AX host. Application callbacks deliver AX elements; only
--- element:asHSWindow() converts one to hs.window. Reverse conversion is used
--- exclusively to inspect an hs.window's AX metadata/watchers.
+-- Concrete direct-AX host. Creation callbacks can deliver hs.window wrappers
+-- or AX elements; conversion and native handles stay here. Focus signals trigger
+-- a current native focus read rather than treating their payload as global focus.
 local Host = {}
 Host.__index = Host
 
@@ -162,12 +162,13 @@ function Host:_attachApp(app, callback)
   -- Its absence is uncertainty: defer it without disturbing other apps.
   local ok, watcher = pcall(app.newWatcher, app, function(element, event)
     if not self.started or generation ~= self.generation then return end
-    local window = asWindow(element)
-    if not window then return end
-    if event == "AXWindowCreated" then self:_ready(window, "created", callback)
+    if event == "AXWindowCreated" then
+      local window = asWindow(element)
+      if window then self:_ready(window, "created", callback) end
     elseif event == "AXFocusedWindowChanged" then
-      self:_remember(window)
-      callback({ kind = "focus", id = call(window, "id"), title = call(window, "title"), applicationName = call(app, "name") })
+      -- Callback payloads can be queued/background observations. Normalize only
+      -- the current global native focus through the shared targeted-read path.
+      self:observeFocus()
     end
   end)
   if not ok or not watcher then return nil end
@@ -192,15 +193,9 @@ function Host:subscribeApplications(callback)
         end
       end
     elseif event == self.hs.application.watcher.activated then
-      -- Mouse activation can occur without the application's AX focused-window
-      -- callback reaching us. One app-local read immediately normalizes actual
-      -- focus so the first h/l/' command acts from native reality.
-      local window = call(app, "focusedWindow")
-      if window and self.windowCallback then
-        self:_remember(window)
-        self.windowCallback({ kind = "focus", id = call(window, "id"),
-          title = call(window, "title"), applicationName = call(app, "name") })
-      end
+      -- Application activation is not proof that its payload/window is globally
+      -- focused; use the same global actual-focus boundary as AX callbacks.
+      self:observeFocus()
     elseif event == self.hs.application.watcher.terminated then
       for _, record in ipairs(self.appOwned[pid] or {}) do self:_detach(record) end
       self.appOwned[pid] = nil; self:_forgetPid(pid)
@@ -250,21 +245,26 @@ function Host:stop()
 end
 
 -- POC-009 verified that unchanged native focus need not produce
--- AXFocusedWindowChanged. Confirm only an immediately observed matching window;
--- otherwise retain the pending reducer request for a later native callback.
--- This is one targeted read, never a scan or timer.
+-- AXFocusedWindowChanged. This is one targeted global actual-focus read, never
+-- a scan or timer. An optional expected ID guards post-effect confirmation.
+function Host:observeFocus(expectedId)
+  self:_record("targetedFocusQueries")
+  local focused = moduleCall(self.hs.window and self.hs.window.focusedWindow)
+  local actualId = call(focused, "id")
+  if actualId == nil or (expectedId ~= nil and actualId ~= expectedId) or not self.windowCallback then return false end
+  self:_remember(focused)
+  local app = call(focused, "application")
+  self.windowCallback({ kind = "focus", id = actualId, title = call(focused, "title"),
+    applicationName = call(app, "name") })
+  return true
+end
+
 function Host:focus(window)
   local requestedId = call(window, "id")
   if requestedId == nil then return end
   self:_record("focusRequests")
   window:focus()
-  self:_record("targetedFocusQueries")
-  local focused = moduleCall(self.hs.window and self.hs.window.focusedWindow)
-  if call(focused, "id") ~= requestedId or not self.windowCallback then return end
-  self:_remember(focused)
-  local app = call(focused, "application")
-  self.windowCallback({ kind = "focus", id = requestedId, title = call(focused, "title"),
-    applicationName = call(app, "name") })
+  return self:observeFocus(requestedId)
 end
 
 function Host:execute(adapter, intents)

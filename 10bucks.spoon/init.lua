@@ -176,6 +176,9 @@ function Tenbucks:_startHost(context)
       host:execute(adapter, intents)
     end
     adapter:start() -- bootstrap/re-synchronize only this confirmed original Space.
+    -- Bootstrap readiness may precede the only focus observation; sample the
+    -- current global native focus once without requesting focus.
+    host:observeFocus()
     self.context, self.host, self.windows = context, host, adapter
   end)
   if not ok then
