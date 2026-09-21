@@ -24,6 +24,14 @@ return {
     f.owners = { 9, 10 }; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2)
     f.owners = { 9 }; f.spaceType = "fullscreen"; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2)
   end,
+  ["PERF-001 PERF-002: retained-Space observation reattaches without window enumeration"] = function()
+    local f = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
+    host:subscribeExistingWindows(function(event) events[#events + 1] = event end, { bootstrap = false })
+    assert(f.membershipQueries == 0 and f.scans == 0 and #events == 0)
+    assert(#f.appWatchers == 1, "retained Space must still observe existing applications")
+    f.appWatchers[1].callback(f.window, "AXFocusedWindowChanged")
+    assert(events[1].kind == "focus" and events[1].id == 9)
+  end,
   ["nil/error app watcher and failed bootstrap defer only that app while peers still boot"] = function()
     local f, primary = fake()
     local peer = {}

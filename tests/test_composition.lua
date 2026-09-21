@@ -227,8 +227,9 @@ return {
 
     f.activeSpace, f.members, f.owners = "next-space", {}, { "next-space" }
     f.contextWatcher.callback()
-    local secondCore = ten.core
+    local secondCore, scansAfterNewSpace = ten.core, f.scans
     assert(secondCore ~= firstCore and ten.context.regularSpaceId == "next-space")
+    assert(scansAfterNewSpace == scans + 1, "a newly adopted Space bootstraps exactly once")
     assert(#secondCore:state().manager.spaces["next-space"].memberIds == 0)
     oldWindowWatcher(nil, "AXWindowMiniaturized")
     assert(firstCore:state().manager.windows[9] and not firstCore:state().manager.windows[9].lifecycle.minimized)
@@ -236,6 +237,7 @@ return {
     f.activeSpace, f.members, f.owners = "space", { 9 }, { "space" }
     f.contextWatcher.callback()
     assert(ten.core == firstCore and ten.context.regularSpaceId == "space")
+    assert(f.scans == scansAfterNewSpace, "a retained Space must not enumerate application windows again")
     assert(firstCore:state().manager.spaces.space.memberIds[1] == firstMember)
     f.windowWatcher.callback(nil, "AXWindowMiniaturized")
     assert(firstCore:state().manager.windows[9].lifecycle.minimized)

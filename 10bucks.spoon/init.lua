@@ -154,13 +154,13 @@ function Tenbucks:_submitCommand(command)
   return self.core:submit(command)
 end
 
-function Tenbucks:_startHost(context)
+function Tenbucks:_startHost(context, bootstrap)
   local host, adapter
   local ok, err = pcall(function()
     host = Host.new(hs, context, self.instrumentation, self.handleRegistry):start()
     local native = {
       subscribeApplications = function(callback) return host:subscribeApplications(callback) end,
-      subscribeExistingWindows = function(callback) return host:subscribeExistingWindows(callback) end,
+      subscribeExistingWindows = function(callback, options) return host:subscribeExistingWindows(callback, options) end,
       subscribeWindow = function(handle, callback) return host:subscribeWindow(handle, callback) end,
       probeReadiness = function(id, callback) return host:probeReadiness(id, callback) end,
       record = function(kind) self:_record(kind) end,
@@ -174,7 +174,14 @@ function Tenbucks:_startHost(context)
       end
       host:execute(adapter, intents)
     end
-    adapter:start() -- bootstrap/re-synchronize only this confirmed original Space.
+    adapter:start({ bootstrap = bootstrap ~= false })
+    if bootstrap == false then
+      local state = self.core:state()
+      for _, windowId in ipairs(state.manager.spaces[context.regularSpaceId].memberIds) do
+        local record = self.handleRegistry:record({ windowId = windowId, spaceId = context.regularSpaceId })
+        if record then adapter:resume(record.windowId, record.pid, record.handle) end
+      end
+    end
     self.context, self.host, self.windows = context, host, adapter
   end)
   if not ok then
@@ -189,7 +196,7 @@ function Tenbucks:_beginContext(context)
   self.core = newCore(context)
   self.cores[context.regularSpaceId] = self.core
   self.originContext, self.suspended = context, false
-  self:_startHost(context)
+  self:_startHost(context, true)
 end
 
 -- A confirmed regular-Space activation switches the single native host to that
@@ -199,12 +206,13 @@ function Tenbucks:_contextChanged(context)
   if self.context and context.regularSpaceId == self.context.regularSpaceId then return end
   self:_stopHost()
   self.core = self.cores[context.regularSpaceId]
-  if not self.core then
+  local bootstrap = self.core == nil
+  if bootstrap then
     self.core = newCore(context)
     self.cores[context.regularSpaceId] = self.core
   end
   self.suspended = false
-  self:_startHost(context)
+  self:_startHost(context, bootstrap)
   self.core:submit({ type = "Reflow" })
   local pending = self.pendingGlobalFocus
   if pending and pending.spaceId == context.regularSpaceId and self:_targetIsManaged(pending) then

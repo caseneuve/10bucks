@@ -212,20 +212,26 @@ function Host:subscribeApplications(callback)
   return self:_startOwned(watcher)
 end
 
-function Host:subscribeExistingWindows(callback)
+function Host:subscribeExistingWindows(callback, options)
   self.windowCallback = callback
+  local bootstrap = options == nil or options.bootstrap ~= false
   local members = {}
-  self:_record("bootstrapSpaceQueries")
-  -- One relevant active-Space membership snapshot; absence only defers admission.
-  for _, id in ipairs(self.hs.spaces.windowsForSpace(self.context.regularSpaceId) or {}) do members[id] = true end
-  self:_record("bootstrapApplicationQueries")
+  if bootstrap then
+    self:_record("bootstrapSpaceQueries")
+    -- One relevant active-Space membership snapshot; absence only defers admission.
+    for _, id in ipairs(self.hs.spaces.windowsForSpace(self.context.regularSpaceId) or {}) do members[id] = true end
+  end
+  self:_record("runningApplicationQueries")
   for _, app in ipairs(self.hs.application.runningApplications()) do
     self:_attachApp(app, callback)
-    -- Enumeration is bootstrap-only. Failure for one app is non-destructive
-    -- and must not prevent subscriptions/bootstrap for its peers.
-    local ok, windows = pcall(app.allWindows, app)
-    if ok and type(windows) == "table" then
-      for _, window in ipairs(windows) do self:_ready(window, "bootstrap", callback, members) end
+    if bootstrap then
+      -- Enumeration is bootstrap-only. Failure for one app is non-destructive
+      -- and must not prevent subscriptions/bootstrap for its peers.
+      self:_record("bootstrapApplicationQueries")
+      local ok, windows = pcall(app.allWindows, app)
+      if ok and type(windows) == "table" then
+        for _, window in ipairs(windows) do self:_ready(window, "bootstrap", callback, members) end
+      end
     end
   end
   return { detach = function() end }

@@ -23,7 +23,9 @@ local function fake()
   end
   value.native = {
     subscribeApplications = function(callback) table.insert(value.applicationCallbacks, callback); return subscription() end,
-    subscribeExistingWindows = function(callback) table.insert(value.existingCallbacks, callback); return subscription() end,
+    subscribeExistingWindows = function(callback, options)
+      table.insert(value.existingCallbacks, callback); value.existingOptions = options; return subscription()
+    end,
     subscribeWindow = function(handle, callback)
       value.windowSubscriptions = value.windowSubscriptions + 1
       value.windowCallbacks = value.windowCallbacks or {}
@@ -50,7 +52,19 @@ return {
     equal(f.events[1].type, "WindowReady")
     assert(f.events[1].handle == nil)
     assert(instance:handleForId("window-1") == handle)
+    assert(f.existingOptions.bootstrap == true)
     assert(f.globalQueries == 0 and f.timers == 0)
+  end,
+
+  ["PERF-001 PERF-002: retained-Space start suppresses native bootstrap enumeration"] = function()
+    local f = fake()
+    local instance = adapter(f):start({ bootstrap = false })
+    assert(f.existingOptions.bootstrap == false)
+    local handle = { retained = true }
+    assert(instance:resume("window-1", 41, handle))
+    assert(instance:handleForId("window-1") == handle and f.windowSubscriptions == 1)
+    f.windowCallbacks[handle]({ kind = "minimized", id = "window-1" })
+    assert(f.events[1].type == "WindowMinimized")
   end,
 
   ["LIFE-001 LIFE-002 FS-002 WIN-004: direct callbacks normalize independently in callback order"] = function()

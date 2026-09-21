@@ -14,8 +14,10 @@ return {
     assert(registry:resolve({ windowId = "window", spaceId = "two" }) == first)
     local target = registry:target("window")
     assert(target.windowId == "window" and target.spaceId == "two")
+    local record = registry:record(target)
+    assert(record.handle == first and record.pid == 7 and record.spaceId == "two")
     target.spaceId = "changed"
-    assert(registry:target("window").spaceId == "two")
+    assert(registry:target("window").spaceId == "two" and registry:record(target) == nil)
     registry:forget("window", second)
     assert(registry:resolve({ windowId = "window", spaceId = "two" }) == first)
     registry:forgetPid(7)
