@@ -58,13 +58,8 @@ return {
 
   ["PERF-001 PERF-002: retained-Space start suppresses native bootstrap enumeration"] = function()
     local f = fake()
-    local instance = adapter(f):start({ bootstrap = false, enumerateWindows = false })
+    adapter(f):start({ bootstrap = false, enumerateWindows = false })
     assert(f.existingOptions.bootstrap == false and f.existingOptions.enumerateWindows == false)
-    local handle = { retained = true }
-    assert(instance:resume("window-1", 41, handle))
-    assert(instance:handleForId("window-1") == handle and f.windowSubscriptions == 1)
-    f.windowCallbacks[handle]({ kind = "minimized", id = "window-1" })
-    assert(f.events[1].type == "WindowMinimized")
   end,
 
   ["LIFE-001 LIFE-002 FS-002 WIN-004: direct callbacks normalize independently in callback order"] = function()

@@ -95,6 +95,12 @@ function Tenbucks:_coreForManagedWindow(windowId)
   local core = target and self.cores and self.cores[target.spaceId]
   local window = core and core:state().manager.windows[windowId]
   if window then return core, window end
+  -- Destruction forgets the native descriptor before normalization. The rare
+  -- removal path may search retained pure scopes; ordinary focus stays O(1).
+  for _, candidate in pairs(self.cores or {}) do
+    window = candidate:state().manager.windows[windowId]
+    if window then return candidate, window end
+  end
 end
 
 function Tenbucks:_afterCoreEvent(event, eventCore)
@@ -120,10 +126,19 @@ function Tenbucks:_afterCoreEvent(event, eventCore)
 end
 
 function Tenbucks:_submitEvent(event)
+  if event.type == "ApplicationHidden" or event.type == "ApplicationUnhidden"
+    or event.type == "ApplicationTerminated" then
+    for _, core in pairs(self.cores or {}) do
+      local accepted, failure = core:submit(event)
+      if not accepted then error(failure, 0) end
+    end
+    self:_afterCoreEvent(event, self.core)
+    return true
+  end
   local eventCore = self.core
-  if event.type == "ActualFocusChanged" then
-    local pending = self.pendingGlobalFocus
-    eventCore = (pending and self.cores[pending.spaceId]) or self:_coreForManagedWindow(event.id) or eventCore
+  if event.id ~= nil then eventCore = self:_coreForManagedWindow(event.id) or eventCore end
+  if event.type == "ActualFocusChanged" and self.pendingGlobalFocus then
+    eventCore = self.cores[self.pendingGlobalFocus.spaceId] or eventCore
   end
   local accepted, failure = eventCore:submit(event)
   if not accepted then error(failure, 0) end
@@ -154,7 +169,7 @@ function Tenbucks:_submitCommand(command)
   return self.core:submit(command)
 end
 
-function Tenbucks:_startHost(context, bootstrap, enumerateWindows)
+function Tenbucks:_startHost(context)
   local host, adapter
   local ok, err = pcall(function()
     host = Host.new(hs, context, self.instrumentation, self.handleRegistry):start()
@@ -174,14 +189,7 @@ function Tenbucks:_startHost(context, bootstrap, enumerateWindows)
       end
       host:execute(adapter, intents)
     end
-    adapter:start({ bootstrap = bootstrap ~= false, enumerateWindows = enumerateWindows ~= false })
-    if bootstrap == false then
-      local state = self.core:state()
-      for _, windowId in ipairs(state.manager.spaces[context.regularSpaceId].memberIds) do
-        local record = self.handleRegistry:record({ windowId = windowId, spaceId = context.regularSpaceId })
-        if record then adapter:resume(record.windowId, record.pid, record.handle) end
-      end
-    end
+    adapter:start()
     self.context, self.host, self.windows = context, host, adapter
   end)
   if not ok then
@@ -196,7 +204,7 @@ function Tenbucks:_beginContext(context)
   self.core = newCore(context)
   self.cores[context.regularSpaceId] = self.core
   self.originContext, self.suspended = context, false
-  self:_startHost(context, true, true)
+  self:_startHost(context)
 end
 
 -- A confirmed regular-Space activation switches the single native host to that
@@ -204,15 +212,22 @@ end
 -- returning Space reuses its existing order, selection, and layout state.
 function Tenbucks:_contextChanged(context)
   if self.context and context.regularSpaceId == self.context.regularSpaceId then return end
-  self:_stopHost()
+  if self.core then self.core.observer = function() end end
   self.core = self.cores[context.regularSpaceId]
   local bootstrap = self.core == nil
   if bootstrap then
     self.core = newCore(context)
     self.cores[context.regularSpaceId] = self.core
   end
-  self.suspended = false
-  self:_startHost(context, bootstrap, false)
+  self.context, self.suspended = context, false
+  self.core.observer = function(intents, version)
+    if version > (self.canaryObservedVersion or 0) then
+      self.canaryObservedVersion = version
+      self:_record("reducerCommitVersions")
+    end
+    self.host:execute(self.windows, intents)
+  end
+  self.host:changeContext(context, bootstrap)
   self.core:submit({ type = "Reflow" })
   local pending = self.pendingGlobalFocus
   if pending and pending.spaceId == context.regularSpaceId and self:_targetIsManaged(pending) then

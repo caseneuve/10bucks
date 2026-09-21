@@ -255,6 +255,20 @@ function Host:probeReadiness(id, callback)
   return { detach = function() end }
 end
 
+function Host:changeContext(context, bootstrap)
+  self.context = context
+  if not bootstrap or not self.windowCallback then return end
+  local members = {}
+  self:_record("bootstrapSpaceQueries")
+  for _, id in ipairs(self.hs.spaces.windowsForSpace(context.regularSpaceId) or {}) do members[id] = true end
+  if self.handleRegistry then
+    for id in pairs(members) do
+      local record = self.handleRegistry:cached(id)
+      if record then self:_ready(record.handle, "bootstrap", self.windowCallback, members) end
+    end
+  end
+end
+
 function Host:start()
   if self.started then return self end
   self.generation = self.generation + 1; self.started = true; return self

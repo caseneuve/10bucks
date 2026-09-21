@@ -34,12 +34,6 @@ function Registry:target(windowId)
   return { windowId = entry.windowId, spaceId = entry.spaceId }
 end
 
-function Registry:record(target)
-  local entry = target and self.entries[target.windowId]
-  if not entry or entry.spaceId ~= target.spaceId then return nil end
-  return { windowId = entry.windowId, spaceId = entry.spaceId, handle = entry.handle, pid = entry.pid }
-end
-
 function Registry:forget(windowId, handle)
   local entry = self.entries[windowId]
   if entry and (handle == nil or entry.handle == handle) then self.entries[windowId] = nil end
