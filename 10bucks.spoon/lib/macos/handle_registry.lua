@@ -40,6 +40,17 @@ function Registry:record(target)
   return { windowId = entry.windowId, spaceId = entry.spaceId, handle = entry.handle, pid = entry.pid }
 end
 
+function Registry:recordsForSpace(spaceId)
+  local records = {}
+  for _, entry in pairs(self.entries) do
+    if entry.spaceId == spaceId then
+      records[#records + 1] = { windowId = entry.windowId, spaceId = entry.spaceId, handle = entry.handle, pid = entry.pid }
+    end
+  end
+  table.sort(records, function(left, right) return tostring(left.windowId) < tostring(right.windowId) end)
+  return records
+end
+
 function Registry:forget(windowId, handle)
   local entry = self.entries[windowId]
   if entry and (handle == nil or entry.handle == handle) then self.entries[windowId] = nil end

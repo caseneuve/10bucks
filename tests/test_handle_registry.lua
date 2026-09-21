@@ -10,6 +10,8 @@ return {
     assert(registry:resolve({ windowId = "window", spaceId = "two" }) == nil)
     registry:remember("window", "two", second, 7)
     assert(registry:resolve({ windowId = "window", spaceId = "two" }) == second)
+    local records = registry:recordsForSpace("two")
+    assert(#records == 1 and records[1].handle == second and records[1].pid == 7)
     registry:forget("window", first)
     assert(registry:resolve({ windowId = "window", spaceId = "two" }) == second)
     registry:refresh("window", first, 7)

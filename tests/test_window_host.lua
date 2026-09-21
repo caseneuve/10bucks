@@ -26,7 +26,8 @@ return {
     f.owners = { 9 }; f.spaceType = "fullscreen"; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2)
   end,
   ["PERF-001 PERF-002: retained-Space observation reattaches without window enumeration"] = function()
-    local f = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
+    local f = fake(); local registry = Registry.new(); registry:remember(9, 9, f.window, 7)
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }, nil, registry):start(); local events = {}
     host:subscribeExistingWindows(function(event) events[#events + 1] = event end, { bootstrap = false, enumerateWindows = false })
     assert(f.membershipQueries == 0 and f.scans == 0 and #events == 0)
     assert(#f.appWatchers == 1, "retained Space must still observe existing applications")
@@ -110,7 +111,8 @@ return {
     assert(f.scans == scansBeforeLaunch + 1, "launch must perform exactly one app-local readiness scan")
     f.appWatchers[#f.appWatchers].callback(f.window, "AXWindowCreated"); assert(events[#events].kind == "ready")
     local old = f.appWatchers[#f.appWatchers].callback
-    f.lifecycle.callback(nil, 3, app); subscription.detach(); host:stop():stop(); assert(f.stops == 4)
+    f.lifecycle.callback(nil, 3, app); subscription.detach(); host:stop():stop()
+    assert(f.stops == 3, "launch/activation must not duplicate an existing app AX watcher")
     host:start(); old(element, "AXWindowCreated"); assert(events[#events].kind == "terminated")
   end,
 }

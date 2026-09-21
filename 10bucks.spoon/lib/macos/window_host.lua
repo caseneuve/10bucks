@@ -34,7 +34,7 @@ end
 
 function Host.new(hs, context, instrumentation, handleRegistry)
   return setmetatable({ hs = hs, context = context, instrumentation = instrumentation, handleRegistry = handleRegistry,
-    generation = 0, started = false, owned = {}, appOwned = {}, handles = {}, frames = {} }, Host)
+    generation = 0, started = false, owned = {}, appOwned = {}, appWatchers = {}, handles = {}, frames = {} }, Host)
 end
 
 function Host:_record(kind)
@@ -162,6 +162,7 @@ end
 
 function Host:_attachApp(app, callback)
   local pid, generation = call(app, "pid"), self.generation
+  if pid ~= nil and self.appWatchers[pid] then return self.appWatchers[pid] end
   -- Read-only runtime preflight separately requires application.newWatcher on
   -- the focused app. An ordinary running/background application may still not expose an AX watcher.
   -- Its absence is uncertainty: defer it without disturbing other apps.
@@ -176,7 +177,9 @@ function Host:_attachApp(app, callback)
     end
   end)
   if not ok or not watcher then return nil end
-  return self:_startOwned(watcher, pid, { "AXWindowCreated", "AXFocusedWindowChanged" })
+  local subscription = self:_startOwned(watcher, pid, { "AXWindowCreated", "AXFocusedWindowChanged" })
+  if pid ~= nil then self.appWatchers[pid] = subscription end
+  return subscription
 end
 
 function Host:subscribeApplications(callback)
@@ -197,9 +200,9 @@ function Host:subscribeApplications(callback)
         end
       end
     elseif event == self.hs.application.watcher.activated then
-      -- Mouse activation can occur without the application's AX focused-window
-      -- callback reaching us. One app-local read immediately normalizes actual
-      -- focus so the first h/l/' command acts from native reality.
+      -- Attach lazily instead of rebuilding AX observers for every running app
+      -- on each Space change. Activation also closes the focus-before-attach gap.
+      if self.windowCallback then self:_attachApp(app, self.windowCallback) end
       local window = call(app, "focusedWindow")
       if window and self.windowCallback then
         self:_remember(window)
@@ -208,7 +211,7 @@ function Host:subscribeApplications(callback)
       end
     elseif event == self.hs.application.watcher.terminated then
       for _, record in ipairs(self.appOwned[pid] or {}) do self:_detach(record) end
-      self.appOwned[pid] = nil; self:_forgetPid(pid)
+      self.appOwned[pid], self.appWatchers[pid] = nil, nil; self:_forgetPid(pid)
       if self.handleRegistry then self.handleRegistry:forgetPid(pid) end
       callback({ kind = "terminated", pid = pid })
     elseif event == self.hs.application.watcher.hidden then callback({ kind = "hidden", pid = pid })
@@ -227,23 +230,38 @@ function Host:subscribeExistingWindows(callback, options)
     -- One relevant active-Space membership snapshot; absence only defers admission.
     for _, id in ipairs(self.hs.spaces.windowsForSpace(self.context.regularSpaceId) or {}) do members[id] = true end
   end
-  self:_record("runningApplicationQueries")
-  for _, app in ipairs(self.hs.application.runningApplications()) do
-    self:_attachApp(app, callback)
-    if bootstrap and enumerateWindows then
-      -- Global application-window enumeration is cold-start-only. Failure for
-      -- one app is non-destructive and must not prevent its peers.
-      self:_record("bootstrapApplicationQueries")
-      local ok, windows = pcall(app.allWindows, app)
-      if ok and type(windows) == "table" then
-        for _, window in ipairs(windows) do self:_ready(window, "bootstrap", callback, members) end
+  if enumerateWindows then
+    self:_record("runningApplicationQueries")
+    for _, app in ipairs(self.hs.application.runningApplications()) do
+      self:_attachApp(app, callback)
+      if bootstrap then
+        -- Global application-window enumeration is cold-start-only. Failure for
+        -- one app is non-destructive and must not prevent its peers.
+        self:_record("bootstrapApplicationQueries")
+        local ok, windows = pcall(app.allWindows, app)
+        if ok and type(windows) == "table" then
+          for _, window in ipairs(windows) do self:_ready(window, "bootstrap", callback, members) end
+        end
+      end
+    end
+  elseif self.handleRegistry then
+    local apps = {}
+    for _, record in ipairs(self.handleRegistry:recordsForSpace(self.context.regularSpaceId)) do
+      local app = call(record.handle, "application")
+      if app and record.pid ~= nil and not apps[record.pid] then
+        apps[record.pid] = true
+        self:_attachApp(app, callback)
       end
     end
   end
   if bootstrap and not enumerateWindows and self.handleRegistry then
     for id in pairs(members) do
       local record = self.handleRegistry:cached(id)
-      if record then self:_ready(record.handle, "bootstrap", callback, members) end
+      if record then
+        local app = call(record.handle, "application")
+        if app then self:_attachApp(app, callback) end
+        self:_ready(record.handle, "bootstrap", callback, members)
+      end
     end
   end
   return { detach = function() end }
@@ -263,7 +281,7 @@ function Host:stop()
   if not self.started then return self end
   self.started = false; self.generation = self.generation + 1
   for _, record in ipairs(self.owned) do self:_detach(record) end
-  self.owned, self.appOwned, self.handles, self.frames, self.windowCallback = {}, {}, {}, {}, nil
+  self.owned, self.appOwned, self.appWatchers, self.handles, self.frames, self.windowCallback = {}, {}, {}, {}, {}, nil
   return self
 end
 
