@@ -123,6 +123,21 @@ local cases = {
     end,
   },
   {
+    name = "FOCUS-005: same-Space previous managed window uses actual managed history",
+    run = function(h)
+      h:send(ready("A")):send({ type = "ActualFocusChanged", id = "A" })
+       :send(ready("B")):send({ type = "ActualFocusChanged", id = "B" })
+       :send(ready("C")):send({ type = "ActualFocusChanged", id = "C" })
+      h:send({ type = "FocusManagedPrevious" })
+      equal(h:focusIntent().windowId, "B")
+      equal(h:desired().targetId, "B"); assert(h:desired().pending)
+      h:send({ type = "ActualFocusChanged", id = "A" })
+      equal(h:desired().targetId, "B"); assert(h:desired().pending)
+      h:send({ type = "ActualFocusChanged", id = "B" }); assert(not h:desired().pending)
+      h:send({ type = "FocusManagedPrevious" }); equal(h:focusIntent().windowId, "C")
+    end,
+  },
+  {
     name = "CMD-005 FOCUS-006: rapid j/k reduce desired selection and only latest callback confirms",
     run = function(h)
       h:send(ready("A")):send({ type = "ActualFocusChanged", id = "A" }):send(ready("B"))

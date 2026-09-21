@@ -8,6 +8,7 @@ Config.defaults = {
     focusNextGroup = { { "cmd", "alt", "ctrl", "shift" }, "l" },
     focusPrevious = { { "cmd", "alt", "ctrl", "shift" }, "k" },
     focusNext = { { "cmd", "alt", "ctrl", "shift" }, "j" },
+    focusManagedPrevious = { { "cmd", "alt", "ctrl", "shift" }, "'" },
     moveFocusedToOtherGroup = { { "cmd", "alt", "ctrl", "shift" }, "o" },
     swapGroups = { { "cmd", "alt", "ctrl", "shift" }, "g" },
     resizeLeft = { { "cmd", "alt", "ctrl", "shift" }, "[" },

@@ -324,8 +324,13 @@ function Model.reduce(state, event)
     nextState.focus.actualWindow = { id = event.id, title = event.title, applicationName = event.applicationName }
     local member = nextState.windows[event.id]
     if member then
-      removeFromArray(nextState.focus.managedHistory, event.id)
-      table.insert(nextState.focus.managedHistory, event.id)
+      local desired = nextState.focus.desiredBySpace[member.placementSpaceId]
+      -- A stale callback may update actual-focus presentation, but it cannot
+      -- rewrite managed history while a newer focus target is pending.
+      if not desired.pending or desired.targetId == event.id then
+        removeFromArray(nextState.focus.managedHistory, event.id)
+        table.insert(nextState.focus.managedHistory, event.id)
+      end
     end
     changed = true
   else

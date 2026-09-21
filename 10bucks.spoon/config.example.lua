@@ -10,6 +10,7 @@ return {
     focusNextGroup = { hyper, "l" },
     focusPrevious = { hyper, "k" },
     focusNext = { hyper, "j" },
+    focusManagedPrevious = { hyper, "'" },
     moveFocusedToOtherGroup = { hyper, "o" },
     swapGroups = { hyper, "g" },
     resizeLeft = { hyper, "[" },

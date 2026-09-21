@@ -7,6 +7,7 @@ local actions = {
   focusNextGroup = "FocusNextGroup",
   focusPrevious = "FocusPrevious",
   focusNext = "FocusNext",
+  focusManagedPrevious = "FocusManagedPrevious",
   moveFocusedToOtherGroup = "MoveFocusedToOther",
   swapGroups = "SwapGroups",
   resizeLeft = { type = "ResizeRatioDelta", delta = -0.05 },

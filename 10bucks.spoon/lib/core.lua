@@ -108,7 +108,7 @@ end
 
 local focusCommands = {
   FocusNext = true, FocusPrevious = true, FocusNextGroup = true, FocusPreviousGroup = true,
-  MoveFocusedToOther = true, SwapGroups = true,
+  FocusManagedPrevious = true, MoveFocusedToOther = true, SwapGroups = true,
 }
 
 local function validateComposite(state, displayId, spaceId, dependencies)
@@ -169,9 +169,29 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
       context(manager, displayId, spaceId), dependencies)
   end
   if isCommand then
-    local event = { type = transaction.name }
-    for key, value in pairs(transaction) do if key ~= "type" and key ~= "name" then event[key] = value end end
-    coordinator = Coordinator.reduce(coordinator, event, newIds, context(manager, displayId, spaceId), dependencies)
+    if transaction.name == "FocusManagedPrevious" then
+      local history = manager.focus.managedHistory
+      local actual = manager.focus.actualWindow.id
+      local target
+      for index = #history, 1, -1 do
+        local candidate = history[index]
+        local window = manager.windows[candidate]
+        if candidate ~= actual and window and window.placementSpaceId == spaceId
+          and availability(manager)[candidate] then
+          target = candidate
+          break
+        end
+      end
+      if target then
+        coordinator = Coordinator.reduce(coordinator,
+          { type = "ManagedFocusObserved", memberId = target }, newIds,
+          context(manager, displayId, spaceId), dependencies)
+      end
+    else
+      local event = { type = transaction.name }
+      for key, value in pairs(transaction) do if key ~= "type" and key ~= "name" then event[key] = value end end
+      coordinator = Coordinator.reduce(coordinator, event, newIds, context(manager, displayId, spaceId), dependencies)
+    end
   end
   local target = selectedId(coordinator)
   local admitted = #newIds > #oldIds
@@ -242,7 +262,7 @@ end
 function Core:submit(input)
   local translated = input
   if input.type ~= "Command" and ({ CycleLayout = true, ActivateLayout = true, FocusNext = true, FocusPrevious = true,
-      FocusNextGroup = true, FocusPreviousGroup = true, MoveFocusedToOther = true, SwapGroups = true,
+      FocusNextGroup = true, FocusPreviousGroup = true, FocusManagedPrevious = true, MoveFocusedToOther = true, SwapGroups = true,
       ResizeRatio = true, ResizeRatioDelta = true, ResetRatio = true, Synchronize = true, Reflow = true })[input.type] then
     translated = copy(input)
     translated.name = translated.type == "Reflow" and "Synchronize" or translated.type
