@@ -249,6 +249,24 @@ function Host:stop()
   return self
 end
 
+-- POC-009 verified that unchanged native focus need not produce
+-- AXFocusedWindowChanged. Confirm only an immediately observed matching window;
+-- otherwise retain the pending reducer request for a later native callback.
+-- This is one targeted read, never a scan or timer.
+function Host:focus(window)
+  local requestedId = call(window, "id")
+  if requestedId == nil then return end
+  self:_record("focusRequests")
+  window:focus()
+  self:_record("targetedFocusQueries")
+  local focused = moduleCall(self.hs.window and self.hs.window.focusedWindow)
+  if call(focused, "id") ~= requestedId or not self.windowCallback then return end
+  self:_remember(focused)
+  local app = call(focused, "application")
+  self.windowCallback({ kind = "focus", id = requestedId, title = call(focused, "title"),
+    applicationName = call(app, "name") })
+end
+
 function Host:execute(adapter, intents)
   for _, intent in ipairs(intents) do
     local window = adapter:handleForId(intent.windowId)
@@ -267,8 +285,7 @@ function Host:execute(adapter, intents)
       end
       self.frames[intent.windowId] = { x = intent.frame.x, y = intent.frame.y, w = intent.frame.w, h = intent.frame.h }
     elseif window and intent.kind == "focus" then
-      self:_record("focusRequests")
-      window:focus()
+      self:focus(window)
     end
   end
 end

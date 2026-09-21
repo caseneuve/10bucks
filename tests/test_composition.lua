@@ -1,6 +1,6 @@
 local function fakeHs(options)
   options = options or {}
-  local f = { deleted = 0, frames = 0, focuses = 0, bindings = {}, scans = 0,
+  local f = { deleted = 0, frames = 0, focuses = 0, bindings = {}, scans = 0, focusedWindowQueries = 0,
     actual = { x = 99, y = 99, w = 1, h = 1 }, owners = { "space" }, members = { 9 } }
   local function watcher(callback, label)
     return { callback = callback, label = label, start = function() end,
@@ -31,6 +31,7 @@ local function fakeHs(options)
       watcher = { new = contextWatcher } },
     axuielement = { windowElement = function(x) assert(x == f.window); return element end },
     application = { runningApplications = function() return { app } end, watcher = { new = function(cb) f.life = watcher(cb, "life"); return f.life end, terminated = 3, hidden = 4, unhidden = 5, launched = 2 } },
+    window = { focusedWindow = function() f.focusedWindowQueries = f.focusedWindowQueries + 1; if f.focusedWindowError then error("focused-window read failed") end; return f.focusedWindow end },
     hotkey = { bind = function(_, _, cb) bindCount = bindCount + 1; if options.failBind == bindCount then error("bind failed") end; local h = { delete = function(self) if not self.deleted then self.deleted = true; f.deleted = f.deleted + 1 end end }; f.bindings[#f.bindings + 1] = { callback = cb, handle = h }; return h end }, }
   return f, element
 end
@@ -61,6 +62,29 @@ return {
       "cold bootstrap must tile without stealing native focus")
     ten.core:submit({ type = "Reflow" }); assert(f.frames == 1 and f.focuses == 0)
     f.actual = { x = 7, y = 0, w = 100, h = 80 }; ten.core:submit({ type = "Reflow" }); assert(f.frames == 2)
+    ten:stop()
+  end,
+  ["POC-009 FOCUS-006: no-callback unchanged focus confirms through one targeted read"] = function()
+    local f = fakeHs(); local ten = load(f); ten:start()
+    ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+    local scans = f.scans
+    f.focusedWindow = f.window
+    ten.core:submit({ type = "FocusNext" })
+    local desired = ten.core:state().manager.focus.desiredBySpace.space
+    assert(f.focuses == 1 and f.focusedWindowQueries == 1 and f.scans == scans)
+    assert(desired.targetId == 9 and not desired.pending)
+    ten:stop()
+  end,
+  ["POC-009 FOCUS-006: nonmatching read awaits a later ordinary focus callback"] = function()
+    local f = fakeHs(); local ten = load(f); ten:start()
+    ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+    local scans = f.scans
+    f.focusedWindow = { id = function() return 10 end }
+    ten.core:submit({ type = "FocusNext" })
+    assert(f.focuses == 1 and f.focusedWindowQueries == 1 and f.scans == scans)
+    assert(ten.core:state().manager.focus.desiredBySpace.space.pending)
+    ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+    assert(not ten.core:state().manager.focus.desiredBySpace.space.pending)
     ten:stop()
   end,
   ["composition created/destroyed and availability callbacks update replacement Core only"] = function()
@@ -105,29 +129,67 @@ return {
     ten:stop(); assert(ten:canaryStatus().started == false)
   end,
   ["FOCUS-001 FOCUS-005 FOCUS-006 CMD-005 COL-007: global previous confirmation routes by retained Core for every callback/activation order"] = function()
-    local function crossSpaceSetup()
+    local function crossSpaceSetup(confirmImmediately, withColumns)
       local f = fakeHs(); local ten = load(f); ten:start()
       ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
       local firstCore = ten.core
+      local columnHandle
+      if withColumns then
+        firstCore:submit({ type = "WindowReady", id = 11, title = "Column", displayId = "built-in", spaceId = "space", application = { pid = 11, name = "Column" } })
+        columnHandle = { id = function() return 11 end, title = function() return "Column" end,
+          application = function() return { name = function() return "Column" end } end, focus = function() end,
+          frame = function() return { x = 0, y = 0, w = 100, h = 80 } end, setFrame = function() end }
+        ten.handleRegistry:remember(11, "space", columnHandle, 11)
+        firstCore:submit({ type = "CycleLayout" })
+        ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
+      end
       f.activeSpace, f.members, f.owners = "next-space", {}, { "next-space" }
       f.contextWatcher.callback()
       ten.core:submit({ type = "WindowReady", id = 10, title = "Other", displayId = "built-in", spaceId = "next-space", application = { pid = 10, name = "Other" } })
       local otherFocuses = 0
-      local otherHandle = { focus = function() otherFocuses = otherFocuses + 1 end,
+      local otherHandle = { id = function() return 10 end, title = function() return "Other" end,
+        application = function() return { name = function() return "Other" end } end,
+        focus = function() otherFocuses = otherFocuses + 1 end,
         frame = function() return { x = 0, y = 0, w = 100, h = 80 } end, setFrame = function() end }
       ten.handleRegistry:remember(10, "next-space", otherHandle, 10)
       ten:_submitEvent({ type = "ActualFocusChanged", id = 10 })
+      if confirmImmediately then f.focusedWindow = f.window end
       assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
-      local targetDesired = firstCore:state().manager.focus.desiredBySpace.space
-      assert(targetDesired.pending and targetDesired.targetId == 9) -- committed before the native cross-Space effect
-      ten:_submitEvent({ type = "ActualFocusChanged", id = 99 }) -- unmanaged focus preserves the managed anchor
-      ten:_submitEvent({ type = "ActualFocusChanged", id = 10 }) -- stale managed callback cannot replace the request
-      targetDesired = firstCore:state().manager.focus.desiredBySpace.space
-      assert(ten.pendingGlobalFocus.windowId == 9 and targetDesired.pending and targetDesired.targetId == 9)
-      return f, ten, firstCore, function() return otherFocuses end
+      if not confirmImmediately then
+        local targetDesired = firstCore:state().manager.focus.desiredBySpace.space
+        assert(targetDesired.pending and targetDesired.targetId == 9) -- committed before the native cross-Space effect
+        ten:_submitEvent({ type = "ActualFocusChanged", id = 99 }) -- unmanaged focus preserves the managed anchor
+        ten:_submitEvent({ type = "ActualFocusChanged", id = 10 }) -- stale managed callback cannot replace the request
+        targetDesired = firstCore:state().manager.focus.desiredBySpace.space
+        assert(ten.pendingGlobalFocus.windowId == 9 and targetDesired.pending and targetDesired.targetId == 9)
+      end
+      return f, ten, firstCore, function() return otherFocuses end, otherHandle, columnHandle
     end
 
     local cases = {
+      {
+        name = "POC-009 matching cross-Space read confirms pending, later callback is harmless, and mouse h/l works",
+        run = function()
+          local f, ten, firstCore, otherFocuses, otherHandle, columnHandle = crossSpaceSetup(true, true)
+          assert(ten.pendingGlobalFocus == nil and not firstCore:state().manager.focus.desiredBySpace.space.pending)
+          f.appWatcher.callback(f.window, "AXFocusedWindowChanged") -- later real callback
+          assert(ten.pendingGlobalFocus == nil and not firstCore:state().manager.focus.desiredBySpace.space.pending)
+          f.focusedWindow = otherHandle
+          assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
+          assert(otherFocuses() == 1 and ten.pendingGlobalFocus == nil)
+          f.activeSpace, f.members, f.owners = "space", { 9 }, { "space" }
+          f.contextWatcher.callback()
+          ten:_submitEvent({ type = "ActualFocusChanged", id = 11 }) -- native mouse focus
+          assert(ten.core == firstCore and ten.core:state().coordinators.space.layouts.columns.activeStack == 2)
+          f.focusedWindow = f.window
+          ten.core:submit({ type = "FocusLeftGroup" })
+          assert(not ten.core:state().manager.focus.desiredBySpace.space.pending)
+          f.focusedWindow = columnHandle
+          ten.core:submit({ type = "FocusRightGroup" })
+          assert(not ten.core:state().manager.focus.desiredBySpace.space.pending)
+          ten:stop()
+        end,
+      },
       {
         name = "managed focus callback before Space activation",
         run = function()
@@ -143,7 +205,7 @@ return {
           f.contextWatcher.callback()
           assert(ten.core == firstCore and not ten.core:state().manager.focus.desiredBySpace.space.pending)
           assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
-          assert(otherFocuses() == 1 and ten.pendingGlobalFocus.windowId == 10)
+          assert(otherFocuses() == 1 and f.focusedWindowQueries == 2 and ten.pendingGlobalFocus.windowId == 10)
           ten:stop()
         end,
       },
@@ -168,7 +230,8 @@ return {
           local f = fakeHs(); local ten = load(f); ten:start()
           ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
           ten.core:submit({ type = "WindowReady", id = 10, title = "B", displayId = "built-in", spaceId = "space", application = { pid = 10, name = "B" } })
-          ten.handleRegistry:remember(10, "space", { focus = function() end,
+          ten.handleRegistry:remember(10, "space", { id = function() return 10 end, title = function() return "B" end,
+            application = function() return { name = function() return "B" end } end, focus = function() end,
             frame = function() return { x = 0, y = 0, w = 100, h = 80 } end, setFrame = function() end }, 10)
           ten:_submitEvent({ type = "ActualFocusChanged", id = 10 })
           assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
@@ -186,7 +249,8 @@ return {
           local f = fakeHs(); local ten = load(f); ten:start()
           ten:_submitEvent({ type = "ActualFocusChanged", id = 9 })
           ten.core:submit({ type = "WindowReady", id = 10, title = "B", displayId = "built-in", spaceId = "space", application = { pid = 10, name = "B" } })
-          ten.handleRegistry:remember(10, "space", { focus = function() end,
+          ten.handleRegistry:remember(10, "space", { id = function() return 10 end, title = function() return "B" end,
+            application = function() return { name = function() return "B" end } end, focus = function() end,
             frame = function() return { x = 0, y = 0, w = 100, h = 80 } end, setFrame = function() end }, 10)
           ten:_submitEvent({ type = "ActualFocusChanged", id = 10 })
           ten.core:submit({ type = "CycleLayout" })

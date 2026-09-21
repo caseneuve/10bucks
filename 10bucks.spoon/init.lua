@@ -144,8 +144,9 @@ function Tenbucks:_focusManagedPrevious()
   if not targetCore or not handle then self.pendingGlobalFocus = nil; return false, "previous-managed-window-unavailable" end
   local accepted, failure = targetCore:submit({ type = "FocusTarget", windowId = target.windowId })
   if not accepted then self.pendingGlobalFocus = nil; return false, failure end
-  self:_record("focusRequests")
-  handle:focus() -- Hammerspoon hs.window:focus() performs the native Space transition.
+  -- Use the same targeted post-effect confirmation path as Core focus intents;
+  -- hs.window:focus() may not emit an unchanged-focus AX callback.
+  self.host:focus(handle) -- Hammerspoon hs.window:focus() performs the native Space transition.
   return true
 end
 

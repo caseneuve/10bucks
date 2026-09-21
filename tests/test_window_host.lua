@@ -1,7 +1,7 @@
 local Host = require("lib.macos.window_host")
 
 local function fake()
-  local f = { scans = 0, stops = 0, membershipQueries = 0, ownerQueries = 0, owners = { 9 }, members = { 9 } }
+  local f = { scans = 0, stops = 0, membershipQueries = 0, ownerQueries = 0, focusedWindowQueries = 0, focusRequests = 0, owners = { 9 }, members = { 9 } }
   local function watcher(callback) return { start = function(self) self.callback = callback; if f.failStart == self then error("start failed") end end, stop = function(self) if not self.stopped then self.stopped = true; f.stops = f.stops + 1 end end } end
   -- Installed Hammerspoon 1.1.1: docs.json describes hs.uielement:newWatcher,
   -- but axuielement.windowElement(window) is a different userdata with no watcher.
@@ -10,8 +10,8 @@ local function fake()
   local app = { pid = function() return 7 end, name = function() return "App" end, bundleID = function() return "app" end, focusedWindow = function() return f.window end, allWindows = function() f.scans = f.scans + 1; return { f.window } end, newWatcher = function(_, callback) local w = watcher(callback); f.appWatchers[#f.appWatchers + 1] = w; return w end }
   f.appWatchers = {}
   f.actual = { x = 0, y = 0, w = 10, h = 10 }
-  f.window = { id = function() return 9 end, title = function() return "Title" end, application = function() return app end, role = function() return "AXWindow" end, subrole = function() return "AXStandardWindow" end, isFullScreen = function() return f.fullscreen end, newWatcher = function(_, callback) return windowWatcher(callback) end, frame = function() return f.actual end, setFrame = function(_, frame, duration) f.duration = duration; f.writes = (f.writes or 0) + 1; f.actual = frame end, focus = function() f.focused = true end }
-  f.hs = { processInfo = { processID = 1 }, axuielement = { windowElement = function(value) assert(value == f.window, "reverse conversion forbidden"); return element end }, spaces = { windowsForSpace = function() f.membershipQueries = f.membershipQueries + 1; return f.members end, windowSpaces = function(id) assert(id == 9); f.ownerQueries = f.ownerQueries + 1; return f.owners end, spaceType = function(id) assert(id == 9); return f.spaceType or "user" end }, application = { runningApplications = function() return { app } end, watcher = { new = function(callback) f.lifecycle = watcher(callback); return f.lifecycle end, terminated = 3, hidden = 4, unhidden = 5, launched = 2, activated = 5 } } }
+  f.window = { id = function() return 9 end, title = function() return "Title" end, application = function() return app end, role = function() return "AXWindow" end, subrole = function() return "AXStandardWindow" end, isFullScreen = function() return f.fullscreen end, newWatcher = function(_, callback) return windowWatcher(callback) end, frame = function() return f.actual end, setFrame = function(_, frame, duration) f.duration = duration; f.writes = (f.writes or 0) + 1; f.actual = frame end, focus = function() f.focusRequests = f.focusRequests + 1 end }
+  f.hs = { processInfo = { processID = 1 }, window = { focusedWindow = function() f.focusedWindowQueries = f.focusedWindowQueries + 1; if f.focusedWindowError then error("focused-window read failed") end; return f.focusedWindow end }, axuielement = { windowElement = function(value) assert(value == f.window, "reverse conversion forbidden"); return element end }, spaces = { windowsForSpace = function() f.membershipQueries = f.membershipQueries + 1; return f.members end, windowSpaces = function(id) assert(id == 9); f.ownerQueries = f.ownerQueries + 1; return f.owners end, spaceType = function(id) assert(id == 9); return f.spaceType or "user" end }, application = { runningApplications = function() return { app } end, watcher = { new = function(callback) f.lifecycle = watcher(callback); return f.lifecycle end, terminated = 3, hidden = 4, unhidden = 5, launched = 2, activated = 5 } } }
   return f, app, element
 end
 return {
@@ -70,6 +70,24 @@ return {
     f.actual = { x = 3, y = 0, w = 10, h = 10 }
     host:execute(adapter, { { kind = "frame", windowId = 9, frame = { x = 0, y = 0, w = 10, h = 10 } } }); assert(f.writes == 1)
     host:execute(adapter, { { kind = "frame", windowId = 9, frame = { x = 0, y = 0, w = 10, h = 10 } } }); assert(f.writes == 1)
+  end,
+  ["POC-009 host focus confirms only a matching targeted read without an AX callback"] = function()
+    local f = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
+    host:subscribeExistingWindows(function(event) events[#events + 1] = event end)
+    local baseline, scans, memberships, owners = #events, f.scans, f.membershipQueries, f.ownerQueries
+    f.focusedWindow = f.window
+    host:focus(f.window)
+    assert(f.focusRequests == 1 and f.focusedWindowQueries == 1)
+    assert(#events == baseline + 1 and events[#events].kind == "focus" and events[#events].id == 9)
+    f.focusedWindow = { id = function() return 10 end }
+    host:focus(f.window)
+    f.focusedWindow = nil
+    host:focus(f.window)
+    f.focusedWindowError = true
+    host:focus(f.window)
+    assert(f.focusRequests == 4 and f.focusedWindowQueries == 4 and #events == baseline + 1)
+    assert(f.scans == scans and f.membershipQueries == memberships and f.ownerQueries == owners)
+    host:stop()
   end,
   ["host caches known handles, clears destruction/termination, and owns watchers once"] = function()
     local f, app, element = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}

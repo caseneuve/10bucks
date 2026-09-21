@@ -105,6 +105,10 @@ Run the fullscreen portion immediately before fullscreen effects. It must answer
 
 **Status: conditional.** Run only if a completed slice exposes an intrinsic direct-AX/Hammerspoon boundary that cannot meet the required generic behavior or budget. Build the smallest native experiment for that boundary; a tangled legacy runtime or Lua line count is not evidence for a wholesale native rewrite.
 
+## POC-009 — Unchanged native focus confirmation
+
+**Status: narrow mechanism observations passed.** [`009-focus-confirmation.md`](009-focus-confirmation.md) records a same-target command that remained pending without a callback, then a separate matching focus/read probe. These support one targeted post-effect confirmation read, not polling or confirmation from a stale Core. End-to-end acceptance and callback reliability are not established by those probes. The record also attributes Space-bootstrap blocking; no broad focus or performance pass is claimed.
+
 ## Slice cleanup gate
 
 Before merging a replacement that used a POC, record the narrow result and decision, remove disposable code, retain only justified diagnostics, and copy a selected fact into architecture/performance/settings documentation where it changes a target contract. A POC never authorizes compatibility paths, app-specific production behavior, or a second runtime.
