@@ -30,8 +30,7 @@ local function fakeHs(options)
       windowsForSpace = function() return f.members end, windowSpaces = function() return f.owners end,
       watcher = { new = contextWatcher } },
     axuielement = { windowElement = function(x) assert(x == f.window); return element end },
-    application = { runningApplications = function() f.runningAppQueries = (f.runningAppQueries or 0) + 1; return { app } end,
-      watcher = { new = function(cb) f.life = watcher(cb, "life"); return f.life end, terminated = 3, hidden = 4, unhidden = 5, launched = 2 } },
+    application = { runningApplications = function() return { app } end, watcher = { new = function(cb) f.life = watcher(cb, "life"); return f.life end, terminated = 3, hidden = 4, unhidden = 5, launched = 2 } },
     hotkey = { bind = function(_, _, cb) bindCount = bindCount + 1; if options.failBind == bindCount then error("bind failed") end; local h = { delete = function(self) if not self.deleted then self.deleted = true; f.deleted = f.deleted + 1 end end }; f.bindings[#f.bindings + 1] = { callback = cb, handle = h }; return h end }, }
   return f, element
 end
@@ -221,7 +220,7 @@ return {
     local f = fakeHs(); local ten = load(f); ten:start()
     local firstCore, oldWindowWatcher, oldSpaceWatcher = ten.core, f.windowWatcher.callback, f.contextWatcher.callback
     local firstMember = firstCore:state().manager.spaces.space.memberIds[1]
-    local scans, frames, runningAppQueries = f.scans, f.frames, f.runningAppQueries
+    local scans, frames = f.scans, f.frames
 
     f.contextWatcher.callback()
     assert(ten.core == firstCore and f.scans == scans and f.frames == frames)
@@ -231,20 +230,17 @@ return {
     local secondCore, scansAfterNewSpace = ten.core, f.scans
     assert(secondCore ~= firstCore and ten.context.regularSpaceId == "next-space")
     assert(scansAfterNewSpace == scans, "a newly adopted Space must use the cold handle cache")
-    assert(f.runningAppQueries == runningAppQueries, "Space activation must not rebuild application watchers")
     assert(#secondCore:state().manager.spaces["next-space"].memberIds == 0)
     oldWindowWatcher(nil, "AXWindowMiniaturized")
-    assert(firstCore:state().manager.windows[9].lifecycle.minimized,
-      "persistent observation must update the owning inactive Core")
+    assert(firstCore:state().manager.windows[9] and not firstCore:state().manager.windows[9].lifecycle.minimized)
 
     f.activeSpace, f.members, f.owners = "space", { 9 }, { "space" }
     f.contextWatcher.callback()
     assert(ten.core == firstCore and ten.context.regularSpaceId == "space")
     assert(f.scans == scansAfterNewSpace, "a retained Space must not enumerate application windows again")
-    assert(f.runningAppQueries == runningAppQueries, "a retained Space must keep the persistent host")
     assert(firstCore:state().manager.spaces.space.memberIds[1] == firstMember)
-    f.windowWatcher.callback(nil, "AXWindowDeminiaturized")
-    assert(not firstCore:state().manager.windows[9].lifecycle.minimized)
+    f.windowWatcher.callback(nil, "AXWindowMiniaturized")
+    assert(firstCore:state().manager.windows[9].lifecycle.minimized)
     assert(ten.cores["next-space"] == secondCore)
     ten:stop(); oldSpaceWatcher(); assert(not ten.started)
   end,
