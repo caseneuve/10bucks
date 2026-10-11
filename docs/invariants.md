@@ -244,7 +244,7 @@ Previous/next desktop commands navigate regular positions cyclically and skip na
 
 ### SPACE-005 — Confirmed history
 
-10bucks retains current and previously active regular Space IDs only after watcher confirmation. This history does not change SPACE-004 behavior.
+10bucks retains current and previously active regular Space IDs only after confirmed native activation. The previous-desktop command (default digit `0`) focuses the previously active existing regular desktop; after confirmation, another invocation toggles back. Repeated invocation before confirmation targets the same previous desktop. Missing history is a no-op/rejection, never creation. Fullscreen activation does not enter regular-desktop history. History tracks native identity across reordering, not numbered position. This history does not change SPACE-004 behavior.
 
 ### SPACE-006 — Native authority and removal
 
@@ -267,6 +267,10 @@ Skip an absent/uncertain/source-resolving candidate before issuing effects. If a
 ### SPACE-009 — External changes
 
 Manual Space reorder/create/delete and manual window-to-Space movement MUST update 10bucks from observed native topology; they MUST NOT leave ghost scopes or membership.
+
+### SPACE-010 — Keyboard move without following
+
+A move-to-desktop command targets the actually focused managed window on the current regular desktop and an existing regular desktop position. It moves the window without activating the destination, integrates it into that desktop's layout, and tiles it there. Source focus recovery MUST use the same source-stack/column preference as focused destruction (FOCUS-004 and COL-005). Destination admission MUST NOT request focus across Spaces. The old source column/slot does not follow the window; the confirmed native destination receives normal layout admission. Moving to the current desktop is a no-op; a missing destination never creates a desktop. Native-fullscreen windows and fullscreen/tiled destination Spaces are outside this command's initial scope. Native movement and inactive-desktop frame application require recorded evidence before implementation relies on them.
 
 ## Rules
 
@@ -413,3 +417,7 @@ The following are not MVP invariants:
 - dedicated desktop after spawn-fullscreen exit
 - configurable third-party bar/layout plugin distribution
 - support shims for other macOS/Hammerspoon versions
+
+## Current delivery priority
+
+The September 22 user-approved desktop sequence is existing-desktop switching (positions 1–9 and previous-desktop on 0), creation, then keyboard move without following. Desktop deletion is deferred from this sequence; SPACE-007/008 remain its target contracts, not implemented or waived safeguards. Positions beyond nine remain reachable through cyclic navigation; 0 is not position ten.

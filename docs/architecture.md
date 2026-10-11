@@ -221,6 +221,7 @@ Keyboard concurrency is explicit:
 | Stack/group focus (`j/k/h/l`) | Every keypress updates committed desired selection; only the newest focus request remains authoritative. |
 | Relative desktop focus (`n/p`) | Advance from the pending desired destination, not the last confirmed desktop. Thus `n,n` from 1 desires 3 and `n,p` desires 1. Native switching remains serialized and intermediate destinations coalesce. |
 | Numbered desktop focus | Replace the pending desired destination with that absolute existing position. |
+| Previous regular desktop (`0`) | Resolve from confirmed regular-desktop history; repeated invocation before confirmation targets the same previous desktop. Native switching remains serialized. |
 | Chooser/previous-window focus | The latest explicit target wins. Repeated previous-window before actual focus confirmation resolves from unchanged actual history and therefore targets the same previous window. |
 | Create/delete Space | Reject another structural mutation and any command that would change regular Space until completion/failure. Same-Space layout/focus commands remain available. |
 | Toggle fullscreen for the same target | Reject another toggle until completion/failure. |
@@ -329,7 +330,7 @@ The workspace adapter exposes display identity explicitly even though MVP accept
 Responsibilities:
 
 - current topology snapshot and active regular Space
-- cyclic previous/next regular destination
+- cyclic previous/next regular destination and previous-confirmed-desktop toggle
 - focus existing Space
 - create one next contiguous Space
 - immediately before removal, freshly reconfirm that the source exists, is inactive, and remains natively empty; abort on changed/uncertain facts
@@ -337,7 +338,9 @@ Responsibilities:
 - confirm operation completion through Space events
 - detect removed/reordered Spaces
 
-It does not own layout state, stable labels, or persisted ID-to-number maps.
+It does not own layout state, stable labels, or persisted ID-to-number maps. Position changes update shortcuts and bar labels without moving per-Space layout state or changing the identities in confirmed desktop history.
+
+The user-approved delivery order is switching, creation, then keyboard window movement; deletion is deferred. Keyboard movement stays on the source desktop and uses focused-destruction recovery there. Confirmed destination admission tiles the window without issuing destination focus. Do not implement this by temporarily activating the destination or silently postponing tiling until a visit; the native boundary needs narrow evidence first.
 
 For deletion, a previous-window destination is eligible only when its actual target Space is confirmed and differs from the source; otherwise try the next fallback without issuing an effect. If an issued destination fails to leave the source, abort rather than cascading more potentially late effects. Every path still performs the fresh final source check.
 
@@ -407,6 +410,8 @@ MVP commands include:
 - open chooser
 - toggle native fullscreen for a managed target
 - focus numbered regular desktop 1–9
+- toggle previous confirmed regular desktop (`0`)
+- move focused managed regular window to an existing regular desktop without following
 - cyclic previous/next regular desktop
 - create next regular desktop
 - delete empty regular desktop
