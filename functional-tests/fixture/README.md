@@ -12,7 +12,16 @@ artifacts remain under ignored `vm/results/`.
 The repaired controller explicitly quotes the closed A/B alias alphabet and
 advances sequence only after atomic publication. Deterministic table-only encoder
 and publication-failure checks passed; repaired source review is READY. Native
-rerun is pending operator approval, with unchanged deadlines and a new manifest.
+rerun was separately approved and passed with unchanged deadlines/new manifest.
+
+**Verified fixture-only result:** SIP-enabled disposable guest; real Hammerspoon
+API gate 11/11; exact A/B standard movable/resizable resource joins; native global
+focus A then B; B close produced matching destruction AND retained AX invalidity
+while A remained valid and app alive. Quit acknowledged, process exited normally,
+observer stopped, claims absent, no forced termination. Guest proof 1.152s; host
+verified VM stopped and Tart child exited. All 12 frozen artifact hashes match.
+Artifacts: ignored `vm/results/10bucks-run-fixture-proof-20261011-r2/5bea3605b1954a7eafde3eaa6c2f2341/`.
+This does not prove candidate tiling/recovery, real-app quirks, or latency budgets.
 
 `run-proof.py` snapshots/hashes executed artifacts, starts the guest controller,
 monitors within 40s, then owns a separate 15s shutdown/verification budget. It
