@@ -14,6 +14,7 @@ INVARIANTS = ("COL-002", "COL-005", "WIN-005", "FOCUS-004", "FOCUS-006")
 TIMEOUT_SECONDS = 5.0
 STABLE_SECONDS = 0.25
 SAMPLE_SECONDS = 0.05
+MAX_SAMPLE_GAP_SECONDS = 0.15
 FRAME_TOLERANCE = 2.0  # macOS logical points, not backing pixels
 
 
@@ -27,6 +28,11 @@ class Frame:
 
 @dataclass(frozen=True)
 class Observation:
+    # Guest monotonic seconds; sampled_at is acquisition, observed_at is current
+    # guest time when delivered. Both must be in the same clock domain.
+    sample_id: int
+    sampled_at: float
+    observed_at: float
     # Only test-owned aliases. Frames/focus/closed come from native observation.
     frames: dict[str, Frame]
     focused: str | None
@@ -83,19 +89,42 @@ def run(driver: Driver, *, clock=time.monotonic, sleep=time.sleep) -> None:
     left = Frame(area.x, area.y, area.w / 2, area.h)
     right = Frame(area.x + area.w / 2, area.y, area.w / 2, area.h)
 
+    last_sample_id = -1
+    last_acquired = None
+    last_delivered = None
+
     def eventually(name, predicate):
+        nonlocal last_sample_id, last_acquired, last_delivered
         deadline = clock() + TIMEOUT_SECONDS
         matching_since = None
+        previous_sample = clock()
         while True:
             observation = driver.observe()
             driver.record(name, observation)
             now = clock()
+            if now - previous_sample > MAX_SAMPLE_GAP_SECONDS:
+                raise RuntimeError(f"{SCENARIO_ID}: {name}: native sampling gap exceeded 150ms")
+            previous_sample = now
+            if (observation.sample_id <= last_sample_id
+                    or not math.isfinite(observation.sampled_at)
+                    or not math.isfinite(observation.observed_at)
+                    or observation.observed_at < observation.sampled_at
+                    or observation.observed_at - observation.sampled_at > MAX_SAMPLE_GAP_SECONDS
+                    or (last_acquired is not None and observation.sampled_at <= last_acquired)
+                    or (last_delivered is not None and observation.observed_at < last_delivered)):
+                raise RuntimeError(f"{SCENARIO_ID}: {name}: stale or replayed native sample")
+            if (matching_since is not None and last_acquired is not None
+                    and observation.sampled_at - last_acquired > MAX_SAMPLE_GAP_SECONDS):
+                raise RuntimeError(f"{SCENARIO_ID}: {name}: native acquisition gap exceeded 150ms")
+            last_sample_id = observation.sample_id
+            last_acquired = observation.sampled_at
+            last_delivered = observation.observed_at
             if now > deadline:
                 raise AcceptanceFailure(f"{SCENARIO_ID}: {name} timed out; last={observation!r}")
             if predicate(observation):
                 if matching_since is None:
-                    matching_since = now
-                if now - matching_since >= STABLE_SECONDS:
+                    matching_since = observation.sampled_at
+                if observation.sampled_at - matching_since >= STABLE_SECONDS:
                     return observation
             else:
                 matching_since = None
@@ -125,7 +154,8 @@ def run(driver: Driver, *, clock=time.monotonic, sleep=time.sleep) -> None:
     # With one survivor both directions wrap to A. Callback acknowledgement
     # prevents an undelivered/no-op sender from falsely passing these assertions.
     for command in ("focusNext", "focusPrevious"):
-        before = driver.observe().commands_received.get(command, 0)
+        baseline = eventually(f"{command} fresh receipt baseline", recovered)
+        before = baseline.commands_received.get(command, 0)
         driver.hotkey(command)
         eventually(f"{command} received, no dead target", lambda o:
                    o.commands_received.get(command, 0) == before + 1 and recovered(o))

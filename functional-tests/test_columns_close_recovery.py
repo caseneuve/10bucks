@@ -1,5 +1,6 @@
 """Deterministic self-checks of the acceptance oracle, NOT native evidence."""
 import unittest
+from dataclasses import replace
 
 from scenarios.columns_close_recovery import (
     AcceptanceFailure, Frame, Observation, run,
@@ -14,6 +15,7 @@ class ModelDriver:
         self.commands = {}
         self.actions = []
         self.samples = []
+        self.sample_id = 0
 
     def clock(self):
         return self.time
@@ -38,6 +40,7 @@ class ModelDriver:
             self.commands[command] = self.commands.get(command, 0) + 1
 
     def observe(self):
+        self.time += 0.001  # acquisition clock advances even across checkpoints
         a = Frame(10, 30, 1200, 800)
         b = Frame(610, 30, 600, 800)
         if self.stage == 1:
@@ -55,8 +58,9 @@ class ModelDriver:
                 managed.add("B")
             elif self.defect == "absence-not-death":
                 closed.clear()
-        return Observation(frames, focused, frozenset(closed),
-                           frozenset(managed), dict(self.commands))
+        self.sample_id += 1
+        return Observation(self.sample_id, self.time, self.time, frames, focused,
+                           frozenset(closed), frozenset(managed), dict(self.commands))
 
     def record(self, checkpoint, observation):
         self.samples.append((self.time, checkpoint, observation))
@@ -73,7 +77,7 @@ class ScenarioChecks(unittest.TestCase):
             ("create", "A"), ("create", "B"), ("close", "B"),
             ("hotkey", "focusNext"), ("hotkey", "focusPrevious"),
         ])
-        self.assertEqual(len({s[1] for s in driver.samples}), 5)
+        self.assertEqual(len({s[1] for s in driver.samples}), 7)
 
     def test_native_and_secondary_mismatches_fail(self):
         for defect in ("half-width", "wrong-focus", "dead-membership",
@@ -91,6 +95,40 @@ class ScenarioChecks(unittest.TestCase):
             raise RuntimeError("guest IPC unavailable")
         driver.observe = broken_observation
         with self.assertRaisesRegex(RuntimeError, "IPC unavailable"):
+            self.execute(driver)
+
+    def test_delivery_clock_cannot_regress(self):
+        driver = ModelDriver()
+        original = driver.observe
+        def observation():
+            sample = original()
+            return replace(sample, observed_at=sample.sampled_at +
+                           (0.14 if sample.sample_id % 2 else 0))
+        driver.observe = observation
+        with self.assertRaisesRegex(RuntimeError, "stale or replayed"):
+            self.execute(driver)
+
+    def test_cached_observations_cannot_establish_stability(self):
+        driver = ModelDriver()
+        original = driver.observe
+        cached = None
+        def cached_observation():
+            nonlocal cached
+            if cached is None:
+                cached = original()
+            return cached
+        driver.observe = cached_observation
+        with self.assertRaisesRegex(RuntimeError, "stale or replayed"):
+            self.execute(driver)
+
+    def test_sparse_observations_are_harness_failure_not_stability(self):
+        driver = ModelDriver()
+        original = driver.observe
+        def delayed_observation():
+            driver.time += 0.3
+            return original()
+        driver.observe = delayed_observation
+        with self.assertRaisesRegex(RuntimeError, "sampling gap"):
             self.execute(driver)
 
     def test_transient_match_does_not_pass(self):

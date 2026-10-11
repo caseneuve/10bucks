@@ -19,6 +19,13 @@ Contracts: COL-002, COL-005, WIN-005, FOCUS-004, FOCUS-006.
 
 Each checkpoint gets a **5-second deadline**, must match for **250ms** of
 observations, sampled every **50ms**, with **2 logical points** frame tolerance.
+A sampling gap over **150ms** is a harness failure, not continuous stability.
+Samples carry increasing IDs and guest-monotonic acquisition/delivery timestamps.
+Replayed, out-of-order or older-than-150ms samples fail as harness errors; stability
+uses acquisition time, not host consumption time. Both guest timestamps must be
+obtained independently in the same clock domain.
+The driver must return a fresh bounded native sample, never cached observations;
+50ms sampling cannot be implemented as a new SSH/IPC round-trip per sample.
 These are functional completion thresholds, NOT latency-budget acceptance.
 Sampled stability does not prove no transient frame/focus error occurred between
 samples. Timeouts retain the last observation and must not silently retry.
