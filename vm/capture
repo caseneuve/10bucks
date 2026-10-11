@@ -1,0 +1,216 @@
+#!/bin/bash
+# Authorized owned disposable guest only: may AXPress Allow for the exact
+# UserNotificationCenter sshd-session screen/audio private-picker prompt below.
+# No arbitrary permission approval, host capture, TCC edits, or SIP changes.
+# Usage: TENBUCKS_VM=10bucks-run-ft-... vm/capture '/Volumes/My Shared Files/results/name.png'
+# Frozen coordinator copies set TENBUCKS_VM_OWNER_ROOT to original host vm/results.
+set -euo pipefail
+[[ $# == 1 ]] || { echo 'capture_usage' >&2; exit 2; }
+exec python3 - "$(dirname "$0")" "$1" <<'PY'
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import select
+import subprocess
+import sys
+import time
+
+started = time.monotonic()
+helpers = Path(sys.argv[1]).resolve()
+vm = os.environ.get('TENBUCKS_VM', '')
+destination = sys.argv[2]
+
+def fail(code):
+    print(code, file=sys.stderr)
+    sys.exit(1)
+
+if not re.fullmatch(r'10bucks-run-ft-[a-zA-Z0-9-]+', vm):
+    fail('capture_vm_not_owned_ft')
+try:
+    owner_root = Path(os.environ.get('TENBUCKS_VM_OWNER_ROOT', str(helpers / 'results')))
+    if not owner_root.is_absolute() or not owner_root.is_dir():
+        fail('capture_owner_root_invalid')
+    owner = json.loads((owner_root / vm / 'debug-owner.json').read_text())
+except (OSError, ValueError):
+    fail('capture_owner_record_required')
+# Fresh runs must publish this same runner-created owner record before capture.
+if owner.get('vm') != vm:
+    fail('capture_owner_identity_mismatch')
+p = PurePosixPath(destination)
+base = PurePosixPath('/Volumes/My Shared Files/results')
+if (not p.is_absolute() or '..' in p.parts or p == base
+        or base not in p.parents or p.suffix != '.png'
+        or str(p) != destination or '\n' in destination or '\r' in destination):
+    fail('capture_destination_rejected')
+
+# The remote Python process owns the actual screencapture child and its PID.
+# It independently enforces the deadline even if host IPC/SSH fails. No broad
+# process-name kill, no shell background PID, no overwrite of existing evidence.
+remote = r'''
+import os, signal, struct, subprocess, sys, time, zlib
+path = sys.argv[1]
+if os.path.lexists(path) or not os.path.isdir(os.path.dirname(path)):
+    print('capture_destination_unavailable', flush=True); sys.exit(1)
+# Resolve parents in the guest as well; symlinks must not escape the share.
+base = os.path.realpath('/Volumes/My Shared Files/results')
+if os.path.commonpath([base, os.path.realpath(os.path.dirname(path))]) != base:
+    print('capture_destination_escape', flush=True); sys.exit(1)
+child = subprocess.Popen(['/usr/sbin/screencapture', '-x', '-t', 'png', path],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+print('capture_started:' + str(child.pid), flush=True)
+try:
+    code = child.wait(timeout=8)
+except subprocess.TimeoutExpired:
+    child.terminate()  # exact owned Popen PID only
+    try:
+        child.wait(timeout=0.4)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        try:
+            child.wait(timeout=0.4)
+        except subprocess.TimeoutExpired:
+            print('capture_cleanup_unresolved', flush=True); sys.exit(1)
+    print('capture_timeout_terminated', flush=True); sys.exit(1)
+if code != 0:
+    print('capture_process_failed', flush=True); sys.exit(1)
+try:
+    with open(path, 'rb') as f:
+        data = f.read(64 * 1024 * 1024 + 1)
+    assert len(data) <= 64 * 1024 * 1024 and data[:8] == b'\x89PNG\r\n\x1a\n'
+    offset, first, ended, image = 8, True, False, False
+    while offset < len(data):
+        assert offset + 12 <= len(data)
+        n = struct.unpack('>I', data[offset:offset+4])[0]
+        kind = data[offset+4:offset+8]
+        end = offset + 12 + n
+        assert end <= len(data)
+        payload = data[offset+8:offset+8+n]
+        crc = struct.unpack('>I', data[offset+8+n:end])[0]
+        assert zlib.crc32(kind + payload) & 0xffffffff == crc
+        if first:
+            assert kind == b'IHDR' and n == 13
+            width, height = struct.unpack('>II', payload[:8])
+            assert width > 0 and height > 0
+            first = False
+        if kind == b'IDAT': image = True
+        offset = end
+        if kind == b'IEND':
+            assert n == 0 and offset == len(data)
+            ended = True
+            break
+    assert ended and image
+except (OSError, AssertionError, ValueError, struct.error):
+    print('capture_invalid_png', flush=True); sys.exit(1)
+print('capture_ok', flush=True)
+'''
+
+# Documented AX API shapes: attributeValue -> value/nil,error;
+# actionNames -> array/nil,error; performAction -> AX element/false/nil,error.
+# Inspect only dialogs owned by UserNotificationCenter. Export codes, not text.
+lua = r'''
+local function inspect()
+  local app = hs.application.find('com.apple.UserNotificationCenter', true)
+  if not app then return 'capture_prompt_absent' end
+  if app:bundleID() ~= 'com.apple.UserNotificationCenter' then
+    return 'capture_prompt_owner_mismatch'
+  end
+  local root = hs.axuielement.applicationElement(app)
+  local windows, err = root:attributeValue('AXWindows')
+  if err or type(windows) ~= 'table' then return 'capture_ax_windows_unavailable' end
+  local heading = '“com.apple.sshd-session” is requesting to bypass the system private window picker and directly access your screen and audio.'
+  local detail = 'This will allow com.apple.sshd-session to record your screen and system audio, including personal or sensitive information that may be visible or audible.'
+  local candidates = {}
+  for _, window in ipairs(windows) do
+    local role = window:attributeValue('AXSubrole')
+    if role == 'AXSystemDialog' then
+      local texts, buttons, count = {}, {}, 0
+      local function walk(node, depth)
+        count = count + 1
+        if count > 200 or depth > 12 then error('bounded') end
+        local nodeRole, roleErr = node:attributeValue('AXRole')
+        if roleErr then error('ax') end
+        if nodeRole == 'AXStaticText' then
+          local value, valueErr = node:attributeValue('AXValue')
+          if valueErr then error('ax') end
+          if type(value) == 'string' then texts[value] = true end
+        elseif nodeRole == 'AXButton' then
+          local title, titleErr = node:attributeValue('AXTitle')
+          if titleErr then error('ax') end
+          if title == 'Allow' then buttons[#buttons + 1] = node end
+        end
+        local children, childErr = node:attributeValue('AXChildren')
+        if childErr then error('ax') end
+        if type(children) == 'table' then
+          for _, child in ipairs(children) do walk(child, depth + 1) end
+        end
+      end
+      local ok = pcall(walk, window, 0)
+      if not ok then return 'capture_ax_subtree_unavailable' end
+      if texts[heading] and texts[detail] and #buttons == 1 then
+        candidates[#candidates + 1] = buttons[1]
+      end
+    end
+  end
+  if #candidates == 0 then return 'capture_prompt_absent_or_mismatch' end
+  if #candidates ~= 1 then return 'capture_prompt_ambiguous' end
+  local button = candidates[1]
+  local enabled, enabledErr = button:attributeValue('AXEnabled')
+  if enabledErr or enabled ~= true then return 'capture_allow_disabled' end
+  local actions, actionErr = button:actionNames()
+  if actionErr or type(actions) ~= 'table' then return 'capture_actions_unavailable' end
+  local press = false
+  for _, action in ipairs(actions) do if action == 'AXPress' then press = true end end
+  if not press then return 'capture_press_unavailable' end
+  local result, pressErr = button:performAction('AXPress')
+  if pressErr or result == nil or result == false then return 'capture_allow_rejected' end
+  return 'capture_allow_requested'
+end
+local ok, code = pcall(inspect)
+return ok and code or 'capture_ax_error'
+'''
+
+import shlex
+command = 'python3 -c ' + shlex.quote(remote) + ' ' + shlex.quote(destination)
+process = None
+try:
+    process = subprocess.Popen([str(helpers / 'ssh'), command],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, text=True)
+    # Startup capped at 3s; guest watchdog starts at actual child launch.
+    ready, _, _ = select.select([process.stdout], [], [], 3)
+    if not ready:
+        fail('capture_start_timeout')
+    line = process.stdout.readline().strip()
+    if not re.fullmatch(r'capture_started:[1-9][0-9]*', line):
+        fail('capture_start_failed')
+    print('capture_started')  # do not export native PID
+    # One bounded inspection/action attempt, after prompt has had time to appear.
+    time.sleep(0.4)
+    try:
+        result = subprocess.run([str(helpers / 'hs'), lua], stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, timeout=3)
+        codes = re.findall(r'capture_[a-z_]+', result.stdout)
+        print(codes[-1] if result.returncode == 0 and codes else 'capture_ax_request_failed')
+    except subprocess.TimeoutExpired:
+        print('capture_ax_request_timeout')
+    output, _ = process.communicate(timeout=max(0.1, 13.5 - (time.monotonic() - started)))
+    codes = output.strip().splitlines()
+    allowed = {'capture_ok', 'capture_process_failed', 'capture_invalid_png',
+               'capture_timeout_terminated', 'capture_cleanup_unresolved'}
+    code = codes[-1] if codes and codes[-1] in allowed else 'capture_result_unavailable'
+    print(code)
+    sys.exit(0 if process.returncode == 0 and code == 'capture_ok' else 1)
+except (OSError, subprocess.TimeoutExpired):
+    fail('capture_transport_timeout_or_error')
+finally:
+    # Guest watchdog handles exact capture PID even when transport is interrupted.
+    if process is not None and process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=0.3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=0.3)
+PY

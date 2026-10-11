@@ -161,9 +161,11 @@ local function sample()
     local managed,unknown,diagnostics=candidateSnapshot()
     timings.snapshot=now()-snapshotStarted
     local bar=s.candidate and s.candidate.bar
+    local pointer=hs.mouse.absolutePosition()
     local barFacts={requested=bar and bar.presentation and bar.presentation.visible or false,
         showing=bar and bar.canvas and bar.canvas:isShowing() or false,
-        handoff=bar and bar.handoff or false,frame=bar and copy(bar.frame)}
+        handoff=bar and bar.handoff or false,frame=bar and copy(bar.frame),
+        pointerTracking=bar and bar.pointerTimer~=nil or false,pointer={x=pointer.x,y=pointer.y}}
     s.sampleId=s.sampleId+1
     s.latest={sample_id=s.sampleId,sampled_at=sampledAt,frames=frames,closed=closed,
         focused=focusedAlias,managed=managed,commands_received=copy(s.receipts),
@@ -183,6 +185,8 @@ local function finalize()
     end
     s.cleanup.observerStopped=observerStopped
     s.cleanup.timerStopped=s.timer==nil
+    hs.mouse.absolutePosition(s.originalPointer)
+    s.cleanup.pointerRestored=true
     s.cleanup.bindWrapperRestored=hs.hotkey.bind==s.originalBind
     s.cleanup.taskStopped=not s.task or not s.task:isRunning()
     s.cleanup.normalExit=s.exitCode==0
@@ -294,9 +298,20 @@ bootstrap=function()
     assert(ok,err)
     local host=s.candidate.host
     local ready=host._ready
-    host._ready=function(h,...)
+    host._ready=function(h,window,...)
         s.nativeDebug.ready=s.nativeDebug.ready+1
-        return ready(h,...)
+        s.nativeDebug.readyAttempts=s.nativeDebug.readyAttempts or {}
+        local id=window and window:id()
+        s.nativeDebug.readyAttempts[#s.nativeDebug.readyAttempts+1]={alias=s.byId[id] or 'unjoined',
+            owned=window and window:application() and window:application():pid()==s.pid or false}
+        return ready(h,window,...)
+    end
+    local owner=host._owner
+    host._owner=function(h,...)
+        local space,kind=owner(h,...)
+        s.nativeDebug.ownerReads=(s.nativeDebug.ownerReads or 0)+1
+        s.nativeDebug.lastOwner={known=space~=nil,active=space==s.candidate.context.regularSpaceId,kind=kind}
+        return space,kind
     end
     local metadata=host._metadata
     host._metadata=function(h,...)
@@ -393,6 +408,7 @@ function M.start(o)
     local screens=hs.screen.allScreens(); assert(#screens==1,'sole_screen_required')
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
+        originalPointer=copy(hs.mouse.absolutePosition()),
         sequence=0,actionSequence=0,windows={},axes={},byId={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}
     local native,full=s.screen:frame(),s.screen:fullFrame()
@@ -452,7 +468,16 @@ function M.command(op,alias)
         else assert(s.windows[alias],'alias_not_joined') end
         return publish(op,alias)
     end
-    assert(alias==nil and (op=='focusNext' or op=='focusPrevious'),'unsupported_acceptance_command')
+    if op=='pointerInsideBar' or op=='pointerOutsideBar' then
+        assert(alias==nil,'pointer_alias_forbidden')
+        local full=s.screen:fullFrame()
+        local point={x=full.x+full.w/2,y=full.y+(op=='pointerInsideBar' and 1 or 100)}
+        hs.mouse.absolutePosition(point)
+        hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved,point):post()
+        return {accepted=true,operation=op,submitted_at=now()}
+    end
+    assert(alias==nil and (op=='focusNext' or op=='focusPrevious' or op=='focusLeftGroup'
+        or op=='focusRightGroup' or op=='focusManagedPrevious' or op=='cycleLayout'),'unsupported_acceptance_command')
     key(op)
     return {accepted=true,operation=op,submitted_at=now()} -- receipt is ONLY callback count
 end

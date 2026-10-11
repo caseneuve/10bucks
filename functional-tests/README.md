@@ -39,12 +39,18 @@ self-checks below validate the oracle only, not macOS/10bucks behavior.
 
 ## columns-close-recovery
 
-Contracts: COL-002, COL-005, WIN-005, FOCUS-004, FOCUS-006.
+Contracts: COL-002, COL-005, COL-007, STACK-002, LAY-003, WIN-005,
+FOCUS-004, FOCUS-005, FOCUS-006.
 
 | Step | Native assertion | Secondary assertion |
 | --- | --- | --- |
 | Create A | A fills independently computed usable area; A focused | managed aliases = A |
 | Create B | A left half, B right half; B focused | managed aliases = A,B |
+| Directional h/l | B→A→B actual focus; split frames unchanged | one callback per command; membership A,B |
+| Previous managed twice | B→A→B actual focus; split frames unchanged | one callback per command |
+| Cycle to stack | both full-width; B remains focused | cycle callback received |
+| Stack j/k | B→A→B actual focus; both full-width | one callback per command |
+| Cycle back to columns | A left/B right; B remains focused | cycle callback received |
 | Normally close B | exact retained B resource confirms destruction/invalidity; A full-width and focused | B absent from candidate membership |
 | Send focusNext hotkey | A remains full-width and focused | one actual callback receipt; no B membership |
 | Send focusPrevious hotkey | A remains full-width and focused | one actual callback receipt; no B membership |
@@ -104,8 +110,32 @@ Implement the `Driver` protocol in the scenario. It must:
 Native fixture eligibility and exact resource joins passed the no-manager proof.
 Candidate-driver integration and hotkey receipt passed the recorded fresh-clone
 sequence. Native focus/frame snapshots are independent of candidate diagnostics.
-Bar canvas request/show/handoff facts are diagnostic only: pixels are not asserted. This scenario does not certify Ghostty silent
-close behavior or third-party apps; add real-app regressions separately.
+Optional regular-Space bar capture:
+
+```sh
+./functional-tests/run --headed --bar-capture --reuse-debug VM_NAME columns-close-recovery
+```
+
+After the focus/close sequence, moves the guest pointer outside → inside → outside
+and captures three native screenshots. Strict fresh observations verify requested
+visibility, showing, handoff, temporary pointer tracking and actual pointer position
+for ≥250ms and throughout capture. `bar-evidence.json` plus images require independent
+visual review; canvas state or PNG validity alone is not pixel acceptance.
+The frozen `vm/capture` helper contains its exact screenshot child and may approve
+only the explicitly authorized owned-guest `com.apple.sshd-session` capture prompt.
+It never changes host permissions, disables SIP or writes TCC databases.
+
+**Verified 2026-10-11:** reused debug session `8b9e9f8e636d` passed 23 native
+focus checkpoints and independently reviewed custom-bar → native-menu hover →
+custom-bar return pixels. All 49 frozen artifacts verified; normal cleanup.
+This is not cold isolation, fullscreen/Mission Control acceptance or performance.
+The earlier `78f869c3c4ad` B-readiness failure remains unresolved and preserved;
+one green run does not establish general admission reliability. Two-member j/k
+cannot distinguish forward from reverse ordering; rapid pending commands are untested.
+The expanded scenario has not yet passed in a fresh clone.
+
+This scenario does not certify Ghostty silent close behavior or third-party apps;
+add real-app regressions separately.
 
 ## Scenario self-checks
 

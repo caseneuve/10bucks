@@ -20,6 +20,7 @@ def main():
     parser.add_argument("scenario", choices=["columns-close-recovery"])
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--demo", action="store_true", help="2s pauses between actions; not a latency benchmark")
+    parser.add_argument("--bar-capture", action="store_true", help="capture native bar outside/hover/return pixels for independent visual review")
     parser.add_argument("--keep-open", action="store_true", help="debug only: preserve live guest and controller after failure")
     parser.add_argument("--reuse-debug", metavar="VM", help="reuse running owned debug guest; reset HS modules, no reboot")
     args = parser.parse_args()
@@ -57,7 +58,11 @@ def main():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     Frame, Observation, scenario = module.Frame, module.Observation, module.run
-    env = dict(os.environ, TENBUCKS_VM=vm)
+    bar_spec = importlib.util.spec_from_file_location("frozen_bar_gate", snapshot / "functional-tests/bar_capture.py")
+    bar_module = importlib.util.module_from_spec(bar_spec)
+    bar_spec.loader.exec_module(bar_module)
+    env = dict(os.environ, TENBUCKS_VM=vm,
+               TENBUCKS_VM_OWNER_ROOT=str(ROOT / "vm/results"))
     guest_results = "/Volumes/My Shared Files/results"
     if args.reuse_debug:
         guest_results += "/" + results.name
@@ -182,6 +187,9 @@ def main():
                     command.append("--no-graphics")
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                            start_new_session=args.keep_open)
+            (results / "debug-owner.json").write_text(json.dumps({"vm": vm,
+                "tartPid": process.pid, "run": nonce, "source": str(snapshot),
+                "acceptance": False}, indent=2))
         # Readiness is bounded and separate from the scenario, no actions before ready.
         deadline = min(execution_deadline - 20, time.monotonic() + 60)
         while time.monotonic() < deadline:
@@ -213,7 +221,79 @@ def main():
         hs('ft=dofile("' + guest_root + '/functional-tests/guest.lua"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
            f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
-        scenario(Driver())
+        driver = Driver()
+        scenario(driver)
+        if args.bar_capture:
+            evidence = []
+            for label, operation, showing in (("outside", "pointerOutsideBar", True),
+                                               ("hover", "pointerInsideBar", False),
+                                               ("returned", "pointerOutsideBar", True)):
+                driver.action(operation)
+                baseline = read("observation.json")
+                if baseline is None:
+                    raise RuntimeError("bar post-action baseline unavailable")
+                gate = bar_module.BarGate(baseline, showing, time.monotonic())
+
+                def next_bar_sample():
+                    deadline = time.monotonic() + remaining(0.14)
+                    while time.monotonic() < deadline:
+                        sample = read("observation.json")
+                        if sample is not None:
+                            bar_module.BarGate.validate(sample)
+                            if sample["sample_id"] < gate.last["sample_id"]:
+                                raise RuntimeError("bar sample ID regressed")
+                            if sample["sample_id"] > gate.last["sample_id"]:
+                                return sample
+                        time.sleep(0.005)
+                    raise RuntimeError("fresh bar sample unavailable")
+
+                deadline = time.monotonic() + remaining(5)
+                while time.monotonic() < deadline:
+                    value = next_bar_sample()
+                    if gate.accept(value, time.monotonic()):
+                        break
+                    time.sleep(0.05)
+                else:
+                    raise RuntimeError("bar pointer checkpoint failed: " + label)
+                capture_deadline = time.monotonic() + remaining(15)
+                with (results / f"bar-{label}-capture.log").open("w") as capture_log:
+                    capture = subprocess.Popen([str(snapshot / "vm/capture"),
+                        f"{guest_results}/bar-{label}.png"], env=env,
+                        stdin=subprocess.DEVNULL, stdout=capture_log, stderr=capture_log)
+                    try:
+                        while capture.poll() is None:
+                            if time.monotonic() > capture_deadline:
+                                raise RuntimeError("bar capture deadline exceeded")
+                            sample = next_bar_sample()
+                            gate.accept(sample, time.monotonic())
+                            if not bar_module.matches(sample, showing):
+                                raise RuntimeError("bar changed during pixel capture: " + label)
+                            time.sleep(0.05)
+                        if capture.returncode != 0:
+                            raise RuntimeError("owned guest capture failed: " + label)
+                        completion = read("observation.json")
+                        if completion is None:
+                            raise RuntimeError("bar capture completion baseline unavailable")
+                        bar_module.BarGate.validate(completion)
+                        if completion["sample_id"] > gate.last["sample_id"]:
+                            gate.after_capture(completion, time.monotonic())
+                        elif completion["sample_id"] != gate.last["sample_id"]:
+                            raise RuntimeError("bar capture completion sample regressed")
+                        # Strictly newer than the baseline read AFTER process exit.
+                        after = next_bar_sample()
+                        gate.after_capture(after, time.monotonic())
+                    finally:
+                        if capture.poll() is None:
+                            capture.terminate()
+                            try:
+                                capture.wait(timeout=0.3)
+                            except subprocess.TimeoutExpired:
+                                capture.kill()
+                                capture.wait(timeout=0.3)
+                evidence.append({"checkpoint": label, "before": value, "after": after,
+                                 "image": f"bar-{label}.png"})
+            (results / "bar-evidence.json").write_text(json.dumps({"captured": True,
+                "pixelAcceptance": "requires independent visual review", "checkpoints": evidence}, indent=2))
         passed = True
     except BaseException as exc:
         error = str(exc) or type(exc).__name__
@@ -276,6 +356,7 @@ def main():
         success = passed and error is None and not (final or {}).get("error") and (args.reuse_debug or (cleanup.get("vmStopped") and cleanup.get("tartExited"))) and cleanup.get("guest", {}).get("ok") is True
         summary = {"pass": bool(success), "scenarioPassed": passed, "error": error,
                    "cleanup": cleanup, "vm": vm, "cloneCreated": cloned, "demo": args.demo, "debugReuse": bool(args.reuse_debug),
+                   "barEvidenceCaptured": bool(args.bar_capture and (results / "bar-evidence.json").exists()),
                    "acceptance": bool(success and not args.reuse_debug)}
         (results / "host-result.json").write_text(json.dumps(summary, indent=2) + "\n")
         print(f"{'PASS' if success else 'FAIL'}; artifacts: {results}", flush=True)

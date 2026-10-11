@@ -16,6 +16,10 @@ class ModelDriver:
         self.actions = []
         self.samples = []
         self.sample_id = 0
+        self.focused = None
+        self.layout = "columns"
+        self.previous = None
+        self.last_command = None
 
     def clock(self):
         return self.time
@@ -29,15 +33,33 @@ class ModelDriver:
     def create(self, alias):
         self.actions.append(("create", alias))
         self.stage += 1
+        self.previous, self.focused = self.focused, alias
 
     def close(self, alias):
         self.actions.append(("close", alias))
         self.stage = 3
+        self.focused = "A"
 
     def hotkey(self, command):
         self.actions.append(("hotkey", command))
-        if self.defect != "undelivered":
-            self.commands[command] = self.commands.get(command, 0) + 1
+        self.last_command = command
+        if self.defect == "undelivered":
+            return
+        self.commands[command] = self.commands.get(command, 0) + 1
+        target = self.focused
+        if command == "cycleLayout":
+            self.layout = "stack" if self.layout == "columns" else "columns"
+        elif self.stage == 2:
+            if command == "focusLeftGroup":
+                target = "A"
+            elif command == "focusRightGroup":
+                target = "B"
+            elif command == "focusManagedPrevious":
+                target = self.previous
+            elif command in ("focusNext", "focusPrevious"):
+                target = "A" if self.focused == "B" else "B"
+        if target != self.focused:
+            self.previous, self.focused = self.focused, target
 
     def observe(self):
         self.time += 0.001  # acquisition clock advances even across checkpoints
@@ -47,7 +69,9 @@ class ModelDriver:
             frames, focused, managed, closed = {"A": a}, "A", {"A"}, set()
         elif self.stage == 2:
             frames = {"A": Frame(10, 30, 600, 800), "B": b}
-            focused, managed, closed = "B", {"A", "B"}, set()
+            if self.layout == "stack":
+                frames = {"A": a, "B": a}
+            focused, managed, closed = self.focused, {"A", "B"}, set()
         else:
             frames, focused, managed, closed = {"A": a}, "A", {"A"}, {"B"}
             if self.defect == "half-width":
@@ -74,10 +98,15 @@ class ScenarioChecks(unittest.TestCase):
         driver = ModelDriver()
         self.execute(driver)
         self.assertEqual(driver.actions, [
-            ("create", "A"), ("create", "B"), ("close", "B"),
+            ("create", "A"), ("create", "B"),
+            ("hotkey", "focusLeftGroup"), ("hotkey", "focusRightGroup"),
+            ("hotkey", "focusManagedPrevious"), ("hotkey", "focusManagedPrevious"),
+            ("hotkey", "cycleLayout"),
+            ("hotkey", "focusNext"), ("hotkey", "focusPrevious"),
+            ("hotkey", "cycleLayout"), ("close", "B"),
             ("hotkey", "focusNext"), ("hotkey", "focusPrevious"),
         ])
-        self.assertEqual(len({s[1] for s in driver.samples}), 7)
+        self.assertEqual(len({s[1] for s in driver.samples}), 23)
 
     def test_native_and_secondary_mismatches_fail(self):
         for defect in ("half-width", "wrong-focus", "dead-membership",
@@ -101,6 +130,45 @@ class ScenarioChecks(unittest.TestCase):
         with self.assertRaisesRegex(AcceptanceFailure, "B right and focused"):
             self.execute(driver)
         self.assertNotIn(("close", "B"), driver.actions)
+
+    def test_receipt_with_wrong_actual_focus_fails_each_changing_command(self):
+        for command, occurrence in (("focusLeftGroup", 1), ("focusRightGroup", 1),
+                                    ("focusManagedPrevious", 1),
+                                    ("focusManagedPrevious", 2),
+                                    ("focusNext", 1), ("focusPrevious", 1)):
+            with self.subTest(command=command, occurrence=occurrence):
+                driver = ModelDriver()
+                original = driver.hotkey
+                def hotkey(name):
+                    old_focus = driver.focused
+                    original(name)
+                    if name == command and driver.commands[name] == occurrence:
+                        driver.focused = old_focus  # receipt exists, native target unchanged
+                driver.hotkey = hotkey
+                with self.assertRaisesRegex(AcceptanceFailure, f"{command} received"):
+                    self.execute(driver)
+                self.assertEqual(driver.commands[command], occurrence)
+                self.assertNotIn(("close", "B"), driver.actions)
+
+    def test_layout_receipt_cannot_hide_lost_focus_or_wrong_geometry(self):
+        for occurrence in (1, 2):
+            for defect in ("focus", "geometry"):
+                with self.subTest(occurrence=occurrence, defect=defect):
+                    driver = ModelDriver()
+                    original = driver.hotkey
+                    def hotkey(name):
+                        old_layout = driver.layout
+                        original(name)
+                        if name == "cycleLayout" and driver.commands[name] == occurrence:
+                            if defect == "focus":
+                                driver.focused = "A"
+                            else:
+                                driver.layout = old_layout
+                    driver.hotkey = hotkey
+                    with self.assertRaisesRegex(AcceptanceFailure, "cycleLayout received"):
+                        self.execute(driver)
+                    self.assertEqual(driver.commands["cycleLayout"], occurrence)
+                    self.assertNotIn(("close", "B"), driver.actions)
 
     def test_driver_failure_is_not_reclassified(self):
         driver = ModelDriver()
@@ -162,7 +230,7 @@ class ScenarioChecks(unittest.TestCase):
         # Recovery briefly matches for <250ms, then loses its geometry.
         with self.assertRaises(AcceptanceFailure):
             self.execute(driver)
-        self.assertFalse(any(action[0] == "hotkey" for action in driver.actions))
+        self.assertEqual(driver.actions[-1], ("close", "B"))
 
 
 if __name__ == "__main__":

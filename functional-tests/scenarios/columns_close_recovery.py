@@ -10,7 +10,7 @@ from typing import Protocol
 
 
 SCENARIO_ID = "columns-close-recovery"
-INVARIANTS = ("COL-002", "COL-005", "WIN-005", "FOCUS-004", "FOCUS-006")
+INVARIANTS = ("COL-002", "COL-005", "COL-007", "STACK-002", "LAY-003", "WIN-005", "FOCUS-004", "FOCUS-005", "FOCUS-006")
 TIMEOUT_SECONDS = 5.0
 STABLE_SECONDS = 0.25
 SAMPLE_SECONDS = 0.05
@@ -148,14 +148,46 @@ def run(driver: Driver, *, clock=time.monotonic, sleep=time.sleep) -> None:
                same_frame(o.frames.get("A"), left)
                and same_frame(o.frames.get("B"), right)
                and o.focused == "B" and o.managed == frozenset({"A", "B"}))
+    def paired(focused, *, stack=False):
+        return lambda o: (
+            same_frame(o.frames.get("A"), area if stack else left)
+            and same_frame(o.frames.get("B"), area if stack else right)
+            and o.focused == focused
+            and o.managed == frozenset({"A", "B"})
+            and not o.closed
+        )
+
+    def command_checkpoint(command, before_predicate, after_predicate, name):
+        baseline = eventually(f"{name} fresh receipt baseline", before_predicate)
+        before = baseline.commands_received.get(command, 0)
+        driver.hotkey(command)
+        eventually(name, lambda o:
+                   o.commands_received.get(command, 0) == before + 1
+                   and after_predicate(o))
+
+    command_checkpoint("focusLeftGroup", paired("B"), paired("A"),
+                       "focusLeftGroup received, native A focused")
+    command_checkpoint("focusRightGroup", paired("A"), paired("B"),
+                       "focusRightGroup received, native B focused")
+    # lib/config.lua names the previous-managed-window binding
+    # focusManagedPrevious (Hyper+'); focusPrevious is stack navigation (k).
+    for source, target in (("B", "A"), ("A", "B")):
+        command_checkpoint("focusManagedPrevious", paired(source), paired(target),
+                           f"focusManagedPrevious received, native {target} focused")
+    command_checkpoint("cycleLayout", paired("B"), paired("B", stack=True),
+                       "cycleLayout received, stack preserves native B focus")
+    command_checkpoint("focusNext", paired("B", stack=True), paired("A", stack=True),
+                       "focusNext received, native A focused in stack")
+    command_checkpoint("focusPrevious", paired("A", stack=True), paired("B", stack=True),
+                       "focusPrevious received, native B focused in stack")
+    command_checkpoint("cycleLayout", paired("B", stack=True), paired("B"),
+                       "cycleLayout received, columns preserves native B focus")
+
     driver.close("B")
     eventually("B destroyed, A expanded and focused", recovered)
 
     # With one survivor both directions wrap to A. Callback acknowledgement
     # prevents an undelivered/no-op sender from falsely passing these assertions.
     for command in ("focusNext", "focusPrevious"):
-        baseline = eventually(f"{command} fresh receipt baseline", recovered)
-        before = baseline.commands_received.get(command, 0)
-        driver.hotkey(command)
-        eventually(f"{command} received, no dead target", lambda o:
-                   o.commands_received.get(command, 0) == before + 1 and recovered(o))
+        command_checkpoint(command, recovered, recovered,
+                           f"{command} received, no dead target")
