@@ -23,8 +23,8 @@ Tenbucks.__index = Tenbucks
 Tenbucks.name, Tenbucks.version = "10bucks", "Canary A"
 Tenbucks.defaultHotkeys = Config.defaults.hotkeys
 
-function Tenbucks.new()
-  return setmetatable({ hotkeyBindings = {}, getenv = os.getenv,
+function Tenbucks.new(nativeValidity)
+  return setmetatable({ nativeValidity = nativeValidity, hotkeyBindings = {}, getenv = os.getenv,
     focusHistory = FocusHistory.new(), actualPresentation = {}, handleRegistry = HandleRegistry.new() }, Tenbucks):configure({})
 end
 
@@ -378,7 +378,7 @@ function Tenbucks:_startHost(context)
   self.context = context
   local host, adapter
   local ok, err = pcall(function()
-    host = Host.new(hs, context, self.instrumentation, self.handleRegistry):start()
+    host = Host.new(hs, context, self.instrumentation, self.handleRegistry, self.nativeValidity):start()
     local native = {
       subscribeApplications = function(callback) return host:subscribeApplications(callback) end,
       subscribeExistingWindows = function(callback, bootstrap) return host:subscribeExistingWindows(callback, bootstrap) end,

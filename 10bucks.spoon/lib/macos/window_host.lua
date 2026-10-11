@@ -34,9 +34,9 @@ local function booleanOrNil(value)
   return nil
 end
 
-function Host.new(hs, context, instrumentation, handleRegistry)
+function Host.new(hs, context, instrumentation, handleRegistry, nativeValidity)
   return setmetatable({ hs = hs, context = context, instrumentation = instrumentation, handleRegistry = handleRegistry,
-    generation = 0, serial = 0, started = false, owned = {}, appResources = {}, handles = {}, managedObservers = {}, frames = {}, readiness = {} }, Host)
+    nativeValidity = nativeValidity, validitySerial = 0, generation = 0, serial = 0, started = false, owned = {}, appResources = {}, handles = {}, managedObservers = {}, frames = {}, readiness = {} }, Host)
 end
 
 function Host:_record(kind)
@@ -73,6 +73,7 @@ end
 function Host:_forget(id, lease)
   local record = self.handles[id]
   if not record or record.lease ~= lease then return false end
+  if self.validityTarget and self.validityTarget.record == record then self:_cancelValidity() end
   record.active = false
   if record.subscription then record.subscription.detach() end
   self.handles[id], self.frames[id], self.managedObservers[id] = nil, nil, nil
@@ -319,11 +320,13 @@ function Host:subscribeWindow(window, callback)
       callback({ kind = "destroyed", id = id, resource = record.lease,
         presentationResource = self.presentationWindow == window and self.presentationLease or nil })
     elseif event == "AXWindowMiniaturized" or event == "AXWindowDeminiaturized" then
+      if event == "AXWindowMiniaturized" and self.validityTarget and self.validityTarget.record == record then self:_cancelValidity() end
       self.frames[id] = nil; callback({ kind = kinds[event], id = id, resource = record.lease,
         presentationResource = self.presentationWindow == window and self.presentationLease or nil })
     elseif event == "AXWindowResized" then
       local fullscreen = call(window, "isFullScreen")
       if type(fullscreen) == "boolean" and fullscreen ~= knownFullscreen then
+        if fullscreen and self.validityTarget and self.validityTarget.record == record then self:_cancelValidity() end
         knownFullscreen = fullscreen; self.frames[id] = nil; callback({ kind = fullscreen and "enteredNativeFullscreen" or "exitedNativeFullscreen", id = id, resource = record.lease,
           presentationResource = self.presentationWindow == window and self.presentationLease or nil })
       end
@@ -354,6 +357,7 @@ function Host:subscribeWindow(window, callback)
     self.presentationSubscription.detach()
     self.presentationSubscription = nil
   end
+  self:_trackValidity()
   return subscription
 end
 
@@ -441,6 +445,8 @@ function Host:subscribeApplications(callback)
         callback({ kind = "terminated", pid = pid, resource = record.lease })
       end
     elseif event == self.hs.application.watcher.hidden then
+      local target = self.validityTarget
+      if target and target.appRecord.app == app then self:_cancelValidity() end
       local record = self.appResources[pid]
       if record and record.active and record.app == app then callback({ kind = "hidden", pid = pid, resource = record.lease }) end
     elseif event == self.hs.application.watcher.unhidden then
@@ -554,6 +560,8 @@ function Host:setContext(context)
   end
   if self.discoveryTimer then self.discoveryTimer:stop(); self.discoveryTimer = nil end
   self.context = context
+  if sameScope and self.validityTarget then self.validityTarget.context = context
+  else self:_cancelValidity() end
 end
 
 function Host:releaseWindow(id, lease)
@@ -579,6 +587,9 @@ end
 function Host:stop()
   if not self.started then return self end
   self.started = false; self.generation = self.generation + 1
+  self:_cancelValidity()
+  local worker = self.validityWorker; self.validityWorker = nil
+  if worker and not pcall(worker.stop, worker) then self.validityError = "worker_stop_failed" end
   for id in pairs(self.readiness) do self:_cancelReadiness(id) end
   if self.discoveryTimer then self.discoveryTimer:stop(); self.discoveryTimer = nil end
   self:_observePresentation(nil, nil, nil, nil)
@@ -589,7 +600,98 @@ function Host:stop()
   return self
 end
 
+function Host:_cancelValidity()
+  self.validityTarget = nil
+  local timer = self.validityTimer; self.validityTimer = nil
+  if timer then
+    local ok = pcall(timer.stop, timer)
+    if not ok then self.validityError = "mailbox_stop_failed" end
+  end
+  if self.validityWorker then
+    local ok = pcall(self.validityWorker.set, self.validityWorker, nil, self.validitySerial)
+    if not ok then self.validityError = "worker_clear_failed" end
+  end
+end
+
+function Host:_validityCurrent(target)
+  local record = self.handles[target.id]
+  local app = self.appResources[target.pid]
+  return self.started and self.validityTarget == target and self.generation == target.generation
+    and self.context == target.context and self.context.regularSpaceId == target.spaceId
+    and record == target.record and record.active and record.lease == target.lease
+    and record.element == target.element and record.appLease == target.appLease
+    and app == target.appRecord and app.active and app.lease == target.appLease
+    and self.managedObservers[target.id] and self.presentationWindow == record.handle
+    and self.presentationId == target.id
+end
+
+function Host:_trackValidity()
+  local id = self.presentationId
+  local record = id and self.handles[id]
+  local app = record and self.appResources[record.pid]
+  local minimized = record and call(record.handle, "isMinimized")
+  local hidden = app and call(app.app, "isHidden")
+  local fullscreen = record and call(record.handle, "isFullScreen")
+  if not self.started or not record or not record.active or not app or not app.active
+    or not self.managedObservers[id] or self.presentationWindow ~= record.handle
+    or minimized ~= false or hidden ~= false or fullscreen ~= false
+    or not self.context.regularSpaceId or not record.element then self:_cancelValidity(); return end
+  if self.handles[id] ~= record or self.appResources[record.pid] ~= app
+    or not record.active or not app.active or self.presentationWindow ~= record.handle then return end
+  if self.validityTarget and self:_validityCurrent(self.validityTarget) then return end
+  self:_cancelValidity()
+  self.validitySerial = self.validitySerial + 1
+  local target = { id = id, pid = record.pid, record = record, appRecord = app,
+    lease = record.lease, appLease = record.appLease, element = record.element,
+    token = self.validitySerial, generation = self.generation, context = self.context,
+    spaceId = self.context.regularSpaceId }
+  self.validityTarget = target
+  local ok, failure = pcall(function()
+  local worker = self.validityWorker
+  if not worker then
+    local factory = self.nativeValidity or require("lib.macos.ax_validity")
+    worker = factory.create()
+    if not self:_validityCurrent(target) then worker:stop(); return end
+    self.validityWorker = worker
+  end
+  worker:set(target.element, target.token)
+  if not self:_validityCurrent(target) then
+    if self.validityWorker == worker then worker:set(nil, target.token) end
+    return
+  end
+  local timer = assert(self.hs.timer.doEvery(0.05, function()
+    if not self:_validityCurrent(target) then
+      if self.validityTarget == target then self:_cancelValidity() end
+      return
+    end
+    local read, rows = pcall(worker.poll, worker) -- no AX query here
+    if not read then
+      if self.validityTarget == target then self.validityError = "mailbox_poll_failed"; self:_cancelValidity() end
+      return
+    end
+    if not self:_validityCurrent(target) then return end
+    for _, row in ipairs(rows) do
+      if row.token == target.token and row.status == "invalid" and row.error == -25202
+        and self:_validityCurrent(target) and self.windowCallback then
+        self:_cancelValidity()
+        self:_record("asynchronousValidityRemovals")
+        self.windowCallback({ kind = "destroyed", id = target.id, resource = target.lease,
+          observationOrigin = "asynchronousValidity", presentationResource = self.presentationLease })
+        return
+      end
+    end
+  end), "validity mailbox timer allocation failed")
+  if not self:_validityCurrent(target) then pcall(timer.stop, timer); return end
+  self.validityTimer = timer
+  end)
+  if not ok then
+    if self.validityTarget == target then self:_cancelValidity() end
+    error(failure, 0)
+  end
+end
+
 function Host:_observePresentation(window, id, pid, app)
+  if self.presentationWindow ~= window or self.presentationId ~= id then self:_cancelValidity() end
   -- Presentation is a focused native source, not a numerical window/PID alias.
   -- Its stable token exists even when optional title observation cannot attach.
   if self.presentationId == id and self.presentationWindow == window then return end
@@ -674,6 +776,7 @@ function Host:observeFocus(expectedId)
   if focused == nil then
     if expectedId ~= nil then return false end
     self:_observePresentation(nil, nil, nil, nil)
+    self:_cancelValidity()
     self.windowCallback({ kind = "focus" }); return true
   end
   local actualId = call(focused, "id")
@@ -693,6 +796,7 @@ function Host:observeFocus(expectedId)
   self.windowCallback({ kind = "focus", id = actualId, title = call(focused, "title"),
     applicationName = call(app, "name"), applicationPid = pid, nativeFullscreen = call(focused, "isFullScreen") == true,
     resource = record and record.lease, appResource = appRecord and appRecord.lease, presentationResource = self.presentationLease })
+  self:_trackValidity()
   return true
 end
 

@@ -37,6 +37,84 @@ local function readinessFixture()
 end
 
 return {
+  ["LIFE-004: async setup faults reentry and mailbox faults clean exact resources"] = function()
+    for _,phase in ipairs({'create','set','timer','poll','stopTimer'})do
+      local f=fake();f.window.isFullScreen=function()return false end
+      local host,cb,stopped,cleared= nil,nil,0,0
+      local worker={stop=function()stopped=stopped+1 end,set=function(_,element)
+        if not element then cleared=cleared+1 elseif phase=='set' then host:stop()end
+      end,poll=function()if phase=='poll'then error('private')end;return {}end}
+      f.hs.timer={doEvery=function(_,callback)
+        cb=callback
+        if phase=='timer'then host:stop()end
+        return {stop=function()if phase=='stopTimer'then error('private')end end}
+      end}
+      host=Host.new(f.hs,{displayId='d',regularSpaceId=9},nil,nil,{create=function()
+        if phase=='create'then host:stop()end;return worker
+      end}):start()
+      host:subscribeExistingWindows(function()end);host:subscribeWindow(f.window,function()end)
+      host.windowCallback=function()end;f.focusedWindow=f.window;host:observeFocus()
+      if phase=='poll'then cb();assert(host.validityError=='mailbox_poll_failed');cb()end
+      host:stop();assert(stopped==1 and not host.validityTarget and not host.validityTimer)
+      if phase=='stopTimer'then assert(host.validityError=='mailbox_stop_failed' and cleared>0)end
+    end
+  end,
+  ["WIN-005 FOCUS-004: focused asynchronous invalidity removes exact lease without native callback"] = function()
+    local f, app = fake(); f.window.isFullScreen = function() return false end
+    local callback, rows, stops, sets = nil, {}, 0, 0
+    f.hs.timer = { doEvery = function(delay, cb)
+      assert(delay == 0.05); callback = cb
+      return { stop = function() end }
+    end }
+    local worker = { set = function(_, _, token) sets = sets + 1; assert(type(token) == "number") end,
+      poll = function() return rows end, stop = function() stops = stops + 1 end }
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }, nil, nil,
+      { create = function() return worker end }):start()
+    local events = {}
+    host:subscribeExistingWindows(function() end)
+    host:subscribeWindow(f.window, function() end)
+    host.windowCallback = function(e)
+      events[#events + 1] = e
+      if e.kind == "destroyed" then host:releaseWindow(e.id, e.resource) end
+    end
+    f.focusedWindow = f.window; host:observeFocus()
+    assert(callback and sets == 1)
+    host:observeFocus(); assert(sets == 1)
+    local target = host.validityTarget
+    rows = {{ token = target.token, status = "unknown", error = -25204 }}; callback()
+    assert(host.handles[9])
+    rows = {{ token = target.token + 1, status = "invalid", error = -25202 }}; callback()
+    assert(host.handles[9])
+    rows = {{ token = target.token, status = "invalid", error = -25202 }}; callback()
+    assert(not host.handles[9] and events[#events].kind == "destroyed" and events[#events].resource == target.lease)
+    assert(stops == 0); callback(); host:stop(); assert(stops == 1)
+  end,
+  ["LIFE-004 FOCUS-004: mailbox rejects reentrant focus scope lease stop and unavailable targets"] = function()
+    for _,mode in ipairs({ "focus", "scope", "lease", "stop", "minimized", "hidden", "fullscreen" }) do
+      local f, app = fake(); f.window.isFullScreen = function() return false end
+      local cb, host, token
+      f.hs.timer = { doEvery = function(_, callback) cb = callback; return { stop = function() end } end }
+      local worker = { set = function(_, _, value) token = value end, stop = function() end,
+        poll = function()
+          if mode == "focus" then host.presentationWindow = nil
+          elseif mode == "scope" then host:setContext({ displayId = "d", regularSpaceId = 10 })
+          elseif mode == "lease" then host.handles[9].lease = 999
+          elseif mode == "stop" then host:stop() end
+          return {{token=token,status="invalid",error=-25202}}
+        end }
+      host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }, nil, nil, {create=function()return worker end}):start()
+      host:subscribeExistingWindows(function() end); host:subscribeWindow(f.window,function()end)
+      local destroyed = 0; host.windowCallback = function(e) if e.kind == "destroyed" then destroyed = destroyed + 1 end end
+      f.focusedWindow = f.window
+      if mode == "minimized" then f.window.isMinimized=function()return true end
+      elseif mode == "hidden" then app.isHidden=function()return true end
+      elseif mode == "fullscreen" then f.window.isFullScreen=function()return true end end
+      host:observeFocus()
+      if mode == "minimized" or mode == "hidden" or mode == "fullscreen" then assert(not cb)
+      else assert(cb); cb() end
+      assert(destroyed == 0); host:stop()
+    end
+  end,
   ["DISC-002: repeated same-scope refresh preserves exact timer and three-attempt budget"] = function()
     local f, host, timers, events, create = readinessFixture()
     create(); local token = host.readiness[9]

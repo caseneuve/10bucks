@@ -188,6 +188,12 @@ local function sample()
     diagnostics.ghosttyAXInvalid=s.axes.C and s.ownerPids.C==s.ghosttyPid and s.axes.C:isValid()==false or false
     diagnostics.ghosttyCloseAt=s.ghosttyCloseAt
     timings.snapshot=now()-snapshotStarted
+    local host=s.candidate and s.candidate.host
+    diagnostics.validityTarget=host and host.validityTarget and s.byId[host.validityTarget.id]
+    diagnostics.validityWorker=host and host.validityWorker and host.validityWorker:status() or nil
+    diagnostics.validityMailbox=host and host.validityTimer~=nil or false
+    local instrumentation=s.candidate and s.candidate.instrumentation
+    diagnostics.asyncRemovalRequests=instrumentation and instrumentation:status().counts.asynchronousValidityRemovals or 0
     local bar=s.candidate and s.candidate.bar
     local pointer=hs.mouse.absolutePosition()
     local barFacts={requested=bar and bar.presentation and bar.presentation.visible or false,
@@ -212,6 +218,7 @@ local function finalize()
         observerStopped=observerStopped and ok and result
     end
     s.cleanup.observerStopped=observerStopped
+    s.cleanup.nativeWorkerDrained=not s.stoppedWorker or s.stoppedWorker:status().drained==true
     s.cleanup.timerStopped=s.timer==nil
     hs.mouse.absolutePosition(s.originalPointer)
     s.cleanup.pointerRestored=true
@@ -233,7 +240,7 @@ local function finalize()
     s.cleanup.ghosttyNormal=not s.ghosttyLaunchSubmitted or
         (s.cleanup.ghosttyExited and s.ghosttyExit==0 and not s.ghosttyLaunchForced
          and s.cleanup.ghosttyLaunchStopped)
-    s.cleanup.ok=s.cleanup.ghosttyNormal and s.cleanup.candidateStopped and observerStopped and s.cleanup.bindWrapperRestored
+    s.cleanup.ok=s.cleanup.nativeWorkerDrained and s.cleanup.ghosttyNormal and s.cleanup.candidateStopped and observerStopped and s.cleanup.bindWrapperRestored
         and s.cleanup.taskStopped and s.cleanup.normalExit and s.cleanup.callbackReceived
         and s.cleanup.claimsAbsent and s.cleanup.quitAcknowledged and not s.cleanup.forced
     if not s.cleanup.ok then s.cleanup.error=s.cleanup.error or 'cleanup_incomplete' end
@@ -247,6 +254,7 @@ end
 local function cleanupTick()
     if not s.cleanup.candidateStopAttempted then
         s.cleanup.candidateStopAttempted=true
+        s.stoppedWorker=s.candidate and s.candidate.host and s.candidate.host.validityWorker
         s.cleanup.candidateStopped=not s.candidate or pcall(function()
             s.candidate:stop()
             assert(not s.candidate.started and #s.candidate.hotkeyBindings==0,'candidate_still_started')
@@ -361,7 +369,7 @@ local function tick()
 end
 bootstrap=function()
     s.candidate=dofile(s.sourceRoot..'/10bucks.spoon/init.lua').new()
-    s.candidate:configure({builtInDisplayUUID=s.screen:getUUID()})
+    s.candidate:configure({builtInDisplayUUID=s.screen:getUUID(),canaryInstrumentation=true})
     local submit=s.candidate._submitEvent
     s.nativeDebug={ready=0,normalizedReady=0,metadataMissing=0}
     s.candidate._submitEvent=function(candidate,event,...)

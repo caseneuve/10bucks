@@ -56,9 +56,13 @@ local function fakeHs(options)
   return f, element
 end
 
+local function validityFake()
+  return {create=function()return {set=function()end,poll=function()return {} end,stop=function()end}end}
+end
+
 local function load(f)
   package.loaded["init"] = nil
-  local ten = dofile("10bucks.spoon/init.lua")
+  local ten = dofile("10bucks.spoon/init.lua").new(validityFake())
   ten:configure({ builtInDisplayUUID = "built-in" })
   return ten
 end
@@ -73,7 +77,7 @@ local function loadConfiguredFile(f, config)
   local Config = require("lib.config")
   local original = Config.loadFile
   Config.loadFile = function(path) assert(path == "test-config.lua"); return config end
-  local ten = dofile("10bucks.spoon/init.lua")
+  local ten = dofile("10bucks.spoon/init.lua").new(validityFake())
   local ok, err = pcall(function() ten:configureFile("test-config.lua"):bindHotkeys():start() end)
   Config.loadFile = original
   assert(ok, err)
@@ -81,6 +85,44 @@ local function loadConfiguredFile(f, config)
 end
 
 return {
+  ["WIN-005 COL-005: native mailbox alone removes focused close and recovers occupied or emptied columns"] = function()
+    for _,count in ipairs({2,3}) do
+      local f = fakeHs(); local app=f.window:application(); local windows={f.window}
+      local elements={}; local mailbox, token, rows
+      hs.timer.doEvery=function(delay,cb)
+        if delay==0.05 then mailbox=cb end
+        return {stop=function()end}
+      end
+      f.window.isFullScreen=function()return false end
+      f.window.focus=function()f.focusedWindow=f.window end
+      elements[f.window]={attributeValue=function()return false end,isAttributeSettable=function()return true end,isValid=function()return nil end}
+      hs.axuielement.windowElement=function(w)return elements[w]end
+      local factory={create=function()return {set=function(_,_,t)token=t end,
+        poll=function()return rows or {} end,stop=function()end}end}
+      local ten=dofile('10bucks.spoon/init.lua').new(factory):configure({builtInDisplayUUID='built-in'}):start()
+      ten.core:submit({type='CycleLayout'})
+      for i=2,count do
+        local w={};for k,v in pairs(f.window)do w[k]=v end
+        w.id=function()return 8+i end;w.newWatcher=function()return {start=function()end,stop=function()end}end
+        w.focus=function()f.focusedWindow=w end;w.setFrame=function()end
+        windows[i]=w;elements[w]={attributeValue=function()return false end,isAttributeSettable=function()return true end,isValid=function()return nil end}
+        f.appWatcher.callback(w,'AXWindowCreated')
+        f.focusedWindow=w;ten.host:observeFocus()
+      end
+      local dead=windows[count]:id(); local lease=ten.host.handles[dead].lease
+      assert(mailbox and ten.host.validityTarget.id==dead)
+      rows={{token=token,status='invalid',error=-25202}}
+      mailbox() -- no window/app callback, no reducer death injection
+      local state=ten.core:state()
+      assert(not state.manager.windows[dead] and not ten.host.handles[dead])
+      assert(not ten.handleRegistry:target(dead) and not ten.windows:handleForId(dead))
+      local columns=state.coordinators.space.layouts.columns
+      assert(#columns.stacks==(count==2 and 1 or 2))
+      assert(f.focusedWindow==windows[count-1], 'mailbox removal must trigger native recovery')
+      for _,group in ipairs(columns.stacks)do for _,id in ipairs(group.members)do assert(id~=dead)end end
+      ten:stop()
+    end
+  end,
   ["DISC-002 LAY-003: same-scope geometry refresh preserves pending positive creation admission"] = function()
     local f = fakeHs(); f.members = {}; f.owners = {}
     local timers = {}

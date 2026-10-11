@@ -47,6 +47,7 @@ def main():
     results.mkdir(parents=True)
     fixture = ROOT / "functional-tests/fixture"
     subprocess.run([str(fixture / "build.sh")], check=True, timeout=remaining(30), capture_output=True)
+    subprocess.run([str(ROOT / '10bucks.spoon/native/build.sh')], check=True, timeout=remaining(20), capture_output=True)
     shutil.copytree(ROOT / "10bucks.spoon", snapshot / "10bucks.spoon")
     shutil.copytree(ROOT / "functional-tests", snapshot / "functional-tests",
                     ignore=shutil.ignore_patterns("build", "__pycache__"))

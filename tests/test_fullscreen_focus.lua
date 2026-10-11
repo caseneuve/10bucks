@@ -53,7 +53,7 @@ local function setup()
     timer = { secondsSinceEpoch = function() return 1 end, doAfter = function() return barTimer() end, doEvery = function() return barTimer() end },
     hotkey = { bind = function() return { delete = function() end } end },
   }
-  local ten = dofile("10bucks.spoon/init.lua"):configure({ builtInDisplayUUID = "built-in" }):start()
+  local ten = dofile("10bucks.spoon/init.lua").new({create=function()return {set=function()end,poll=function()return {}end,stop=function()end}end}):configure({ builtInDisplayUUID = "built-in" }):start()
   f.ten, f.windows = ten, windows
   function f:activateRegular()
     self.activeSpace, self.focused = "regular", windows[2]
