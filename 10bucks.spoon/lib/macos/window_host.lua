@@ -545,7 +545,13 @@ function Host:probeReadiness(id, callback)
 end
 
 function Host:setContext(context)
-  for id in pairs(self.readiness) do self:_cancelReadiness(id) end
+  local previous = self.context
+  local sameScope = previous and previous.displayId == context.displayId
+    and previous.regularSpaceId == context.regularSpaceId
+    and previous.spaceType == context.spaceType
+  for id, token in pairs(self.readiness) do
+    if sameScope then token.context = context else self:_cancelReadiness(id) end
+  end
   if self.discoveryTimer then self.discoveryTimer:stop(); self.discoveryTimer = nil end
   self.context = context
 end

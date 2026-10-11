@@ -161,6 +161,27 @@ preserved; its exact root cause is not asserted. Prior native regression
 `c64997e5d01e` also passed. Details: `docs/pocs/014-bounded-readiness-layout-order.md`.
 Not cold isolation, general app reliability or performance certification.
 
+## ghostty-close-recovery
+
+```sh
+./functional-tests/run --headed --reuse-debug VM_NAME ghostty-close-recovery
+```
+
+Requires Ghostty1.3.1 installed and prepared in the owned guest. Runner records
+its executable hash/version/bundle, strict signature verification and notarization
+assessment before launch. All A/B/C belong to one real Ghostty process: launch A,
+Cmd+N B/C, then Ctrl+D exact C. Requires C native invalidity/removal and actual
+B focus with [A]|[B] order, groups and selections intact; no navigation repair.
+Owned argv disables restored windows and quit confirmation, not host settings.
+
+**Verified guest pass:** `aa4f3c814f1a`, independently reviewed53hashes/six
+checkpoints/normal cleanup. This does **not** fix or explain the reported host
+silent close. Full trace includes an action-time sampling gap; matching checkpoint
+windows pass, not uninterrupted sampling or performance certification. The host
+observation-boundary decision remains blocked pending exact host signal evidence.
+See `docs/pocs/015-ghostty-close-and-host-boundary.md` for preserved failures,
+separate same-scope readiness correction and next native decision.
+
 ## Scenario self-checks
 
 ```sh

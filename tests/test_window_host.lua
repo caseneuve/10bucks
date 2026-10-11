@@ -37,6 +37,28 @@ local function readinessFixture()
 end
 
 return {
+  ["DISC-002: repeated same-scope refresh preserves exact timer and three-attempt budget"] = function()
+    local f, host, timers, events, create = readinessFixture()
+    create(); local token = host.readiness[9]
+    for i = 1, 4 do host:setContext({ displayId = "d", regularSpaceId = 9, workArea = { w = i } }) end
+    assert(host.readiness[9] == token and token.timer == timers[1] and token.attempts == 1)
+    timers[1].callback()
+    host:setContext({ displayId = "d", regularSpaceId = 9 })
+    timers[1].callback(); assert(f.ownerQueries == 2 and token.timer == timers[2])
+    timers[2].callback(); assert(f.ownerQueries == 3 and #timers == 2 and not host.readiness[9])
+    host:stop()
+  end,
+  ["DISC-002: scope changes during ownership query cancel even after same-scope refresh"] = function()
+    for _, context in ipairs({ { displayId = "other", regularSpaceId = 9 },
+        { displayId = "d", regularSpaceId = 10 },
+        { displayId = "d", regularSpaceId = nil, spaceType = "fullscreen" } }) do
+      local f, host, timers, events, create = readinessFixture()
+      create(); host:setContext({ displayId = "d", regularSpaceId = 9 })
+      f.hs.spaces.windowSpaces = function() host:setContext(context); return { 9 } end
+      timers[1].callback(); assert(#events == 0 and not host.readiness[9] and #timers == 1)
+      host:stop()
+    end
+  end,
   ["DISC-002 LIFE-004: actual Host Windows subscription rejection settles creation"] = function()
     local f = fake(); f.members, f.owners = {}, {}
     local timers = {}
@@ -194,8 +216,9 @@ return {
       host:setContext({ displayId = "d", regularSpaceId = 10 })
       return false
     end
-    -- Pending token retains original callback; exercise direct success reentry
-    -- separately with the replacement callback and a fresh exact creation token.
+    -- A real scope transition cancels the old callback; geometry-only refresh
+    -- now deliberately preserves it. Exercise a fresh token for sink reentry.
+    host:setContext({ displayId = "d", regularSpaceId = 10 })
     host:setContext({ displayId = "d", regularSpaceId = 9 })
     host:_creationReady(f.window, "created", host.windowCallback)
     assert(#timers == 1 and not host.readiness[9])

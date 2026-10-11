@@ -17,7 +17,7 @@ BASE = "10bucks-functional-sip-base-20261011"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=["columns-close-recovery", "stack-columns-membership"])
+    parser.add_argument("scenario", choices=["columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery"])
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--demo", action="store_true", help="2s pauses between actions; not a latency benchmark")
     parser.add_argument("--bar-capture", action="store_true", help="capture native bar outside/hover/return pixels for independent visual review")
@@ -144,6 +144,12 @@ def main():
         def close(self, alias):
             self.action("close", alias)
 
+        def create_ghostty(self, alias):
+            self.action("createGhostty", alias)
+
+        def close_ghostty(self):
+            self.action("closeGhostty", "C")
+
         def hotkey(self, command):
             self.action(command)
 
@@ -221,12 +227,25 @@ def main():
         preflight["settings"] = {"mruSpaces": 0, "hideMenuBar": 1}
         if not preflight["onConsole"] or preflight["loginwindow"] or not preflight["osVersion"].startswith("26.") or preflight["hsVersion"] != "1.1.1" or not preflight["ax"] or preflight["locked"] or preflight["secureInput"] or preflight["screens"] != 1 or not preflight["separateSpaces"] or preflight["managerLoaded"]:
             raise RuntimeError("guest environment preflight failed")
+        if args.scenario=='ghostty-close-recovery':
+            identity=hs('local p="/Applications/Ghostty.app/Contents/Info.plist"; local v=hs.plist.read(p); return hs.json.encode({bundle=v.CFBundleIdentifier,version=v.CFBundleShortVersionString})')
+            if identity['bundle']!='com.mitchellh.ghostty' or identity['version']!='1.3.1':
+                raise RuntimeError('unexpected owned Ghostty version/identity')
+            identity['executableSHA256']=ssh('shasum -a 256 /Applications/Ghostty.app/Contents/MacOS/ghostty').split()[0]
+            ssh('codesign --verify --deep --strict /Applications/Ghostty.app')
+            assessment=ssh('spctl --assess --type execute --verbose=4 /Applications/Ghostty.app 2>&1')
+            if 'accepted' not in assessment or 'Notarized Developer ID' not in assessment:
+                raise RuntimeError('Ghostty signature/notarization preflight failed')
+            identity['signatureVerified']=True
+            identity['assessment']=assessment.strip()
+            identity['argv']=['--window-save-state=never','--initial-window=true','--command=/bin/zsh -f','--confirm-close-surface=false']
+            (results / 'ghostty-environment.json').write_text(json.dumps(identity,indent=2))
         (results / "environment.json").write_text(json.dumps(preflight, indent=2))
         control = f"/tmp/tenbucks-ft-{nonce}"
         ssh(f"mkdir -m 700 {control}")
         hs('ft=dofile("' + guest_root + '/functional-tests/guest.lua"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
-           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario=="stack-columns-membership" else "columns"}",cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
+           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario=="stack-columns-membership" else "columns"}",ghostty={str(args.scenario=="ghostty-close-recovery").lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
         driver = Driver()
         scenario(driver)
         if args.bar_capture:

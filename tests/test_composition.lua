@@ -81,6 +81,24 @@ local function loadConfiguredFile(f, config)
 end
 
 return {
+  ["DISC-002 LAY-003: same-scope geometry refresh preserves pending positive creation admission"] = function()
+    local f = fakeHs(); f.members = {}; f.owners = {}
+    local timers = {}
+    hs.timer.doAfter = function(delay, callback)
+      local t = { callback = callback, stop = function(self) self.stopped = true end }
+      timers[#timers + 1] = t; return t
+    end
+    local ten = load(f):start()
+    f.appWatcher.callback(f.window, "AXWindowCreated")
+    local pending = ten.host.readiness[9]; assert(pending and pending.timer)
+    local timer = pending.timer
+    f.geometry = { x = 0, y = 0, w = 120, h = 100 }
+    f.screenWatcher.callback()
+    assert(ten.host.readiness[9] == pending and pending.timer == timer, "same scope refresh cancelled creation")
+    f.owners = { "space" }; timer.callback()
+    assert(ten.core:state().manager.windows[9], "positive owner after geometry refresh remains unmanaged")
+    ten:stop()
+  end,
   ["WIN-005 FOCUS-004 STATE-002: command effects remove an invalid target when native close omitted focus and destruction callbacks"] = function()
     local f = fakeHs(); f.focusedWindow = f.window
     local ten = load(f); ten:start()

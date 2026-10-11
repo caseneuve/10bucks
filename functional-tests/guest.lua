@@ -106,38 +106,45 @@ local function candidateSnapshot()
     table.sort(managed)
     return managed,unknown,diagnostics
 end
-local function join(alias,number)
-    local app=hs.application.applicationForPID(s.pid)
+local function join(alias,number,pid)
+    pid=pid or s.pid
+    local app=hs.application.applicationForPID(pid)
     if not app then return false end
     local matched
     for _, w in ipairs(app:allWindows()) do
         local owner=w:application()
-        if w:id()==number and owner and owner:pid()==s.pid then
+        if w:id()==number and owner and owner:pid()==pid then
             assert(not matched,'ambiguous_join'); matched=w
         end
     end
     if not matched then return false end
     local ax=hs.axuielement.windowElement(matched)
-    assert(ax:pid()==s.pid and ax:isValid()==true,'invalid_join')
+    assert(ax:pid()==pid and ax:isValid()==true,'invalid_join')
     assert(ax:attributeValue('AXRole')=='AXWindow'
         and ax:attributeValue('AXSubrole')=='AXStandardWindow'
         and ax:isAttributeSettable('AXPosition')==true
         and ax:isAttributeSettable('AXSize')==true,'fixture_not_standard')
-    s.windows[alias]=matched; s.axes[alias]=ax; s.byId[number]=alias
+    s.windows[alias]=matched; s.axes[alias]=ax; s.byId[number]=alias; s.ownerPids[alias]=pid
     for _, row in ipairs((s.debugById or {})[number] or {}) do row.alias=alias end
-    if not s.observer then
-        s.observer=hs.axuielement.observer.new(s.pid)
-        s.observer:callback(function(_,element,notification)
+    s.observers=s.observers or {}
+    if not s.observers[pid] then
+        s.observers[pid]=hs.axuielement.observer.new(pid)
+        local owner=s
+        s.observers[pid]:callback(function(_,element,notification)
+            if s~=owner or not owner.running or owner.phase=='cleanup' then return end
             if notification=='AXUIElementDestroyed' then
-                for a,original in pairs(s.axes) do if element==original then s.destroyed[a]=true end end
+                for a,original in pairs(owner.axes) do
+                    if owner.ownerPids[a]==pid and element==original then owner.destroyed[a]=true end
+                end
             end
         end)
     end
-    s.observer:addWatcher(ax,'AXUIElementDestroyed')
+    local observer=s.observers[pid]
+    observer:addWatcher(ax,'AXUIElementDestroyed')
     local registered=false
-    for _, n in ipairs(s.observer:watching(ax)) do if n=='AXUIElementDestroyed' then registered=true end end
+    for _, n in ipairs(observer:watching(ax)) do if n=='AXUIElementDestroyed' then registered=true end end
     assert(registered,'observer_registration_failed')
-    s.observer:start(); assert(s.observer:isRunning(),'observer_not_running')
+    observer:start(); assert(observer:isRunning(),'observer_not_running')
     return true
 end
 local function drain()
@@ -171,13 +178,15 @@ local function sample()
         elseif ax:isValid()==true then
             local f=w:frame(); frames[alias]={x=f.x,y=f.y,w=f.w,h=f.h}
             local owner=focused and focused:application()
-            if focused==w and owner and owner:pid()==s.pid then focusedAlias=alias end
+            if focused==w and owner and owner:pid()==s.ownerPids[alias] then focusedAlias=alias end
         end
         timings[alias]=now()-aliasStarted
     end
     table.sort(closed)
     local snapshotStarted=now()
     local managed,unknown,diagnostics=candidateSnapshot()
+    diagnostics.ghosttyAXInvalid=s.axes.C and s.ownerPids.C==s.ghosttyPid and s.axes.C:isValid()==false or false
+    diagnostics.ghosttyCloseAt=s.ghosttyCloseAt
     timings.snapshot=now()-snapshotStarted
     local bar=s.candidate and s.candidate.bar
     local pointer=hs.mouse.absolutePosition()
@@ -198,9 +207,9 @@ end
 local function finalize()
     if s.timer then s.timer:stop(); s.timer=nil end
     local observerStopped=true
-    if s.observer then
-        local ok,result=pcall(function() s.observer:stop(); return not s.observer:isRunning() end)
-        observerStopped=ok and result
+    for _,observer in pairs(s.observers or {}) do
+        local ok,result=pcall(function() observer:stop(); return not observer:isRunning() end)
+        observerStopped=observerStopped and ok and result
     end
     s.cleanup.observerStopped=observerStopped
     s.cleanup.timerStopped=s.timer==nil
@@ -213,7 +222,18 @@ local function finalize()
     s.cleanup.claimsAbsent=claimsAbsent()
     s.cleanup.quitAcknowledged=s.quitAck==true
     s.cleanup.forced=s.forced==true
-    s.cleanup.ok=s.cleanup.candidateStopped and observerStopped and s.cleanup.bindWrapperRestored
+    s.cleanup.ghosttyLaunchSubmitted=s.ghosttyLaunchSubmitted==true
+    s.cleanup.ghosttyLaunchResolved=s.ghosttyLaunchResolved==true
+    s.cleanup.ghosttyLaunchForced=s.ghosttyLaunchForced==true
+    s.cleanup.ghosttyLaunchExitZero=s.ghosttyExit==0
+    s.cleanup.ghosttyExited=not s.ghosttyLaunchSubmitted or
+        (s.ghosttyLaunchResolved==true and s.ghosttyApp~=nil
+         and hs.application.applicationForPID(s.ghosttyPid)==nil)
+    s.cleanup.ghosttyLaunchStopped=not s.ghosttyTask or not s.ghosttyTask:isRunning()
+    s.cleanup.ghosttyNormal=not s.ghosttyLaunchSubmitted or
+        (s.cleanup.ghosttyExited and s.ghosttyExit==0 and not s.ghosttyLaunchForced
+         and s.cleanup.ghosttyLaunchStopped)
+    s.cleanup.ok=s.cleanup.ghosttyNormal and s.cleanup.candidateStopped and observerStopped and s.cleanup.bindWrapperRestored
         and s.cleanup.taskStopped and s.cleanup.normalExit and s.cleanup.callbackReceived
         and s.cleanup.claimsAbsent and s.cleanup.quitAcknowledged and not s.cleanup.forced
     if not s.cleanup.ok then s.cleanup.error=s.cleanup.error or 'cleanup_incomplete' end
@@ -233,19 +253,42 @@ local function cleanupTick()
         end)
         if not s.cleanup.candidateStopped then s.cleanup.error='candidate_stop_failed' end
     end
+    if s.ghosttyTask and not s.ghosttyApp then
+        local app=hs.application.get('com.mitchellh.ghostty')
+        if app and app:path()=='/Applications/Ghostty.app' then
+            s.ghosttyApp=app; s.ghosttyPid=app:pid(); s.ghosttyLaunchResolved=true
+        end
+    end
+    if s.ghosttyApp and not s.ghosttyQuitRequested then
+        s.ghosttyQuitRequested=true; s.ghosttyApp:kill()
+    end
+    s.ghosttyPending=nil
+    if s.ghosttyTask and s.ghosttyTask:isRunning() and now()-s.cleanupAt>=3 then
+        s.ghosttyLaunchForced=true; s.ghosttyTask:terminate()
+    end
     if s.pending or not s.ready then drain() end -- even when the task already exited
     if s.task and s.task:isRunning() and not s.pending and not s.quitAck and s.ready then publish('quit') end
     if (now()-s.cleanupAt>=3 or now()-s.started>=60) and s.task and s.task:isRunning() and not s.forced then
         s.forced=true; s.task:terminate()
     end
-    if not s.task or s.exitCode~=nil or now()-s.cleanupAt>=5 or now()-s.started>=60 then
+    local ghosttyExited=not s.ghosttyLaunchSubmitted or
+        (s.ghosttyLaunchResolved==true and s.ghosttyApp~=nil
+         and hs.application.applicationForPID(s.ghosttyPid)==nil)
+    if ((not s.task or s.exitCode~=nil) and ghosttyExited) or now()-s.cleanupAt>=5 or now()-s.started>=60 then
         if s.task and s.task:isRunning() and not s.forced then s.forced=true; s.task:terminate() end
         finalize()
     end
 end
-local bootstrap
+local bootstrap, baseline
 local function tick()
     if now()-s.started>=55 and s.phase~='cleanup' then failure('overall_timeout') end
+    if s.phase=='ghosttyBaseline' then
+        if hs.application.applicationForPID(s.ghosttySeedPid)==nil then
+            s.phase='ready'; s.readyDeadline=now()+3; baseline(s.cleanSeedTerminal); return
+        end
+        if now()>s.baselineDeadline then failure('ghostty_seed_exit_timeout') end
+        return
+    end
     if s.phase=='baseline' then
         local exited=true
         for _,seed in ipairs(s.seeds) do
@@ -264,6 +307,38 @@ local function tick()
     end
     if s.phase=='cleanup' then cleanupTick(); return end
     if s.exitCode~=nil then failure('unexpected_fixture_exit'); return end
+    if s.ghosttyPending then
+        local p=s.ghosttyPending
+        if p.kind=='create' then
+            local app=hs.application.get('com.mitchellh.ghostty')
+            if app then
+                assert(app:path()=='/Applications/Ghostty.app','ghostty_path_mismatch')
+                if not s.ghosttyApp then
+                    s.ghosttyApp=app; s.ghosttyPid=app:pid(); s.ghosttyLaunchResolved=true
+                end
+                assert(app==s.ghosttyApp and app:pid()==s.ghosttyPid,'ghostty_owner_changed')
+                local added,seen={},{}
+                for _,w in ipairs(app:allWindows()) do
+                    if w:isStandard() then
+                        local known=false
+                        for alias,original in pairs(s.windows) do
+                            if s.ownerPids[alias]==s.ghosttyPid and w==original then known=true; seen[alias]=true end
+                        end
+                        if not known then added[#added+1]=w end
+                    end
+                end
+                for alias in pairs(p.baseline) do assert(seen[alias],'ghostty_existing_resource_missing') end
+                assert(#added<=1,'ghostty_ambiguous_creation')
+                local focused=hs.window.focusedWindow()
+                local owner=focused and focused:application()
+                if #added==1 and focused==added[1] and owner==app and s.ghosttyExit==0 then
+                    if join(p.alias,added[1]:id(),s.ghosttyPid) then s.ghosttyPending=nil end
+                end
+            end
+            if s.ghosttyExit and s.ghosttyExit~=0 then failure('ghostty_launch_failed'); return end
+        elseif s.axes[p.alias]:isValid()==false then s.ghosttyPending=nil end
+        if s.ghosttyPending and now()>p.deadline then failure('ghostty_action_timeout'); return end
+    end
     if s.pending or not s.ready then drain() end
     if s.pending and now()>s.pending.deadline then failure('request_or_join_timeout'); return end
     if not s.ready and now()>s.readyDeadline then failure('ready_timeout'); return end
@@ -376,7 +451,7 @@ bootstrap=function()
         {'--run',s.run,'--control-dir',s.dir})
     assert(s.task and s.task:start(),'fixture_start_failed'); s.pid=s.task:pid()
 end
-local function baseline(clean)
+baseline=function(clean)
     s.operation='enumerate_baseline'
     s.baselineFacts={standard=0,terminalWindows=0,foreignStandard=0,quitRequested=false}
     local count=0
@@ -453,8 +528,8 @@ function M.start(o)
     local screens=hs.screen.allScreens(); assert(#screens==1,'sole_screen_required')
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
-        initialLayout=o.initialLayout or 'columns',originalPointer=copy(hs.mouse.absolutePosition()),
-        sequence=0,actionSequence=0,windows={},axes={},byId={},destroyed={},receipts={},chords={},
+        initialLayout=o.initialLayout or 'columns',ghosttyEnabled=o.ghostty==true,ownedDisposable=o.ownedDisposable==true,cleanSeedTerminal=o.cleanSeedTerminal==true,originalPointer=copy(hs.mouse.absolutePosition()),
+        sequence=0,actionSequence=0,windows={},axes={},byId={},ownerPids={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}
     local native,full=s.screen:frame(),s.screen:fullFrame()
     local top=math.max(native.y,full.y+32)
@@ -479,7 +554,13 @@ function M.start(o)
         s.mailbox=dofile(o.sourceRoot..'/functional-tests/fixture/mailbox.lua')
         s.operation='check_modules'
         for name in pairs(package.loaded) do assert(not name:match('^lib%.'),'candidate_modules_already_loaded') end
-        baseline(o.cleanSeedTerminal==true)
+        local ghostty=s.ghosttyEnabled and hs.application.get('com.mitchellh.ghostty')
+        if ghostty then
+            assert(ghostty:path()=='/Applications/Ghostty.app' and #ghostty:allWindows()==0,'ghostty_baseline_not_empty')
+            assert(o.ownedDisposable==true,'ghostty_baseline_requires_owned_guest')
+            s.ghosttySeedPid=ghostty:pid(); ghostty:kill()
+            s.phase='ghosttyBaseline'; s.baselineDeadline=now()+3
+        else baseline(o.cleanSeedTerminal==true) end
     end)
     hs.hotkey.bind=s.originalBind
     if not ok then
@@ -506,7 +587,49 @@ function M.start(o)
 end
 function M.command(op,alias)
     assert(s and s.running and s.phase=='active' and not s.error,'controller_not_active')
-    assert(not s.pending and not s.keyPending,'action_pending')
+    assert(not s.pending and not s.keyPending and not s.ghosttyPending,'action_pending')
+    if op=='createGhostty' then
+        assert(s.ghosttyEnabled and s.ownedDisposable and type(alias)=='string' and alias:match('^[A-C]$')
+            and not s.windows[alias],'ghostty_alias_rejected')
+        local baseline={}
+        for a in pairs(s.windows) do
+            assert(s.ownerPids[a]==s.ghosttyPid,'ghostty_requires_same_app_topology')
+            baseline[a]=true
+        end
+        if not s.ghosttyTask then
+            assert(alias=='A' and not hs.application.get('com.mitchellh.ghostty'),'ghostty_must_be_absent')
+            s.ghosttyPending={kind='create',alias=alias,baseline=baseline,deadline=now()+3,submitted_at=now()}
+            local owner=s
+            s.ghosttyTask=hs.task.new('/usr/bin/open',function(code) owner.ghosttyExit=code end,
+                {'-na','/Applications/Ghostty.app','--args','--window-save-state=never',
+                 '--initial-window=true','--command=/bin/zsh -f','--confirm-close-surface=false'})
+            assert(s.ghosttyTask,'ghostty_launch_constructor_failed')
+            s.ghosttyLaunchSubmitted=true
+            assert(s.ghosttyTask:start(),'ghostty_launch_start_failed')
+        else
+            local focused=hs.window.focusedWindow()
+            local app=focused and focused:application()
+            local preceding=alias=='B' and 'A' or alias=='C' and 'B'
+            assert(preceding and focused==s.windows[preceding] and app==s.ghosttyApp
+                and app:pid()==s.ghosttyPid and s.axes[preceding]:isValid()==true,'ghostty_new_requires_exact_focus')
+            s.ghosttyPending={kind='create',alias=alias,baseline=baseline,deadline=now()+3,submitted_at=now()}
+            hs.eventtap.event.newKeyEvent({'cmd'},'n',true):post()
+            hs.eventtap.event.newKeyEvent({'cmd'},'n',false):post()
+        end
+        return {accepted=true,submitted_at=now()}
+    end
+    if op=='closeGhostty' then
+        assert(alias=='C' and s.ghosttyApp and s.windows[alias],'ghostty_not_joined')
+        local focused=hs.window.focusedWindow()
+        local app=focused and focused:application()
+        assert(focused==s.windows.C and app==s.ghosttyApp and app:pid()==s.ghosttyPid
+            and s.axes.C:isValid()==true,'ghostty_close_requires_exact_focus')
+        s.ghosttyCloseAt=now()
+        s.ghosttyPending={kind='close',alias=alias,deadline=now()+3,submitted_at=s.ghosttyCloseAt}
+        hs.eventtap.event.newKeyEvent({'ctrl'},'d',true):post()
+        hs.eventtap.event.newKeyEvent({'ctrl'},'d',false):post()
+        return {accepted=true,submitted_at=s.ghosttyCloseAt}
+    end
     if op=='create' or op=='close' then
         assert(type(alias)=='string' and alias:match('^[A-E]$'),'unsupported_alias')
         if op=='create' then assert(not s.windows[alias],'alias_already_used')
@@ -533,7 +656,8 @@ function M.status()
         observed_at=now(),actionSequence=s.actionSequence,actionAccepted=s.actionAccepted,actionError=s.actionError,
         fixtureReady=s.ready==true,candidateReady=s.phase=='active',
         layout=observation and observation.diagnostics.layout,unknownMembers=observation and observation.unknownMembers,
-        lastAck=copy(s.lastAck),pending=s.pending~=nil or s.keyPending~=nil,
+        lastAck=copy(s.lastAck),pending=s.pending~=nil or s.keyPending~=nil or s.ghosttyPending~=nil,
+        ghosttyCloseAt=s.ghosttyCloseAt,
         workArea=copy(s.workArea),settings=copy(s.settings),cleanup=copy(s.cleanup),
         failedOperation=s.failedOperation,baseline=s.baselineFacts,
         ownedTaskRunning=s.task~=nil and s.task:isRunning(),completionCallbackReceived=s.exitCode~=nil}
