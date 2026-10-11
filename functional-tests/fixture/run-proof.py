@@ -26,7 +26,7 @@ def main():
     if not app.is_dir():
         sys.exit("Build fixture first: functional-tests/fixture/build.sh")
     shutil.copytree(app, snapshot / "Fixture.app")
-    for name in ("proof.lua", "main.swift", "Info.plist", "build.sh", "run-proof.py"):
+    for name in ("proof.lua", "mailbox.lua", "check-api.lua", "main.swift", "Info.plist", "build.sh", "run-proof.py"):
         shutil.copy2(fixture / name, snapshot / name)
     for name in ("hs", "ssh", "common.sh"):
         shutil.copy2(ROOT / "vm" / name, snapshot / ("vm-" + name))
@@ -48,6 +48,11 @@ def main():
         return completed.stdout
 
     try:
+        api_result = call("hs", f'return hs.json.encode(dofile({json.dumps(guest + "/snapshot/check-api.lua")}))')
+        api_result = json.loads(api_result.strip().splitlines()[-1])
+        if api_result.get("pass") is not True:
+            raise RuntimeError("real guest Hammerspoon API check failed; fixture not launched")
+        (result_dir / "api-result.json").write_text(json.dumps(api_result, indent=2) + "\n")
         call("ssh", f"mkdir -m 700 {control_parent}")
         code = (
             'assert(hs.accessibilityState(), "AX required"); '

@@ -1,4 +1,6 @@
 -- Guest-only, no-manager proof. Loading this file does not launch anything.
+local source = debug.getinfo(1, 'S').source:sub(2)
+local Mailbox = dofile(assert(source:match('^(.*/)')) .. 'mailbox.lua')
 local M, s = {}, nil
 local function now() return hs.timer.absoluteTime() / 1e9 end
 local function exists(path) return hs.fs.attributes(path) ~= nil end
@@ -55,10 +57,7 @@ local function send(operation, alias)
     assert(not s.pending and absentClaims(), 'mailbox_busy')
     assert(alias == nil or alias == 'A' or alias == 'B', 'unsupported_alias')
     local nextSequence = s.sequence + 1
-    local envelope = hs.json.encode({run=s.run, sequence=nextSequence, operation=operation})
-    -- hs.json.encode accepts tables only; aliases are a closed fixture alphabet.
-    envelope = envelope:sub(1, -2) .. ',"alias":' .. (alias and ('"' .. alias .. '"') or 'null') .. '}'
-    atomic(s.dir .. '/request.json', envelope, true)
+    Mailbox.publish(s.dir, s.run, nextSequence, operation, alias)
     s.sequence = nextSequence -- publication succeeded before sequence advances
     s.pending = {operation=operation, alias=alias, deadline=now()+3}
     record(operation, {alias=alias})
@@ -84,7 +83,8 @@ local function join(data)
     if not app then return nil end
     local matched
     for _, w in ipairs(app:allWindows()) do
-        if w:id() == data.windowNumber and w:application():pid() == s.pid then
+        local owner = w:application() -- documented nil on native error
+        if w:id() == data.windowNumber and owner and owner:pid() == s.pid then
             assert(not matched, 'ambiguous_join'); matched = w
         end
     end
@@ -99,7 +99,8 @@ local function join(data)
 end
 local function focused(w)
     local actual = hs.window.focusedWindow()
-    return actual ~= nil and actual == w and actual:application():pid() == s.pid
+    local owner = actual and actual:application()
+    return actual ~= nil and actual == w and owner ~= nil and owner:pid() == s.pid
 end
 local function frameProof(alias, w)
     local f = w:frame()
