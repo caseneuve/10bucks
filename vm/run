@@ -21,7 +21,7 @@ name="${1:-$TENBUCKS_VM}"
 case "$name" in *base*) echo "Refusing to boot a base image; clone it first." >&2; exit 2;; esac
 results="${VM_RESULTS_DIR:-$VM_ROOT/vm/results/$name}"
 mkdir -p "$results"
-args=("$TART_BIN" run "$name" "${headless[@]}"
+args=("$TART_BIN" run "$name" ${headless[@]+"${headless[@]}"}
   --no-audio --no-clipboard --no-usb-accessories
   --dir="10bucks:$VM_ROOT:ro" --dir="results:$results")
 if $detach; then
