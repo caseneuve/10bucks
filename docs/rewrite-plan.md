@@ -1,6 +1,18 @@
 # 10bucks Selective Rewrite Plan
 
-> **Status: approved implementation plan; production runtime work has not started.** This is the shortest path to a less sloppy, more reliable engine and cleaner architecture. It replaces legacy behavior directly: no compatibility layer, shadow runtime, or broad pre-implementation macOS certification.
+> **Status: approved selective-rewrite contracts with a historical planning baseline.** Runtime replacement work has since been implemented incrementally; this document is not a current completion report. This is the shortest path to a less sloppy, more reliable engine and cleaner architecture. It replaces legacy behavior directly: no compatibility layer, shadow runtime, or broad pre-implementation macOS certification.
+
+## Current delivery order — 2026-10-11
+
+The user-approved remaining order is in [`development-roadmap.md`](development-roadmap.md).
+It supersedes the historical feature sequencing and scheduling restrictions below:
+switching → creation → configured manage/exclude rules → chooser → restoration →
+fullscreen commands/effects → hardening. **Keyboard move-to-desktop without following
+and desktop deletion are deferred.** The former prohibition on starting POC-002
+was an earlier planning boundary, not a current prohibition on the newly approved
+switching step. Reuse recorded POC evidence; any new live scope still follows
+the operational authority and bounded evidence protocol. Behavior, replacement and
+performance contracts are unchanged.
 
 ## 1. Outcome and boundaries
 
@@ -92,6 +104,10 @@ A green checkpoint records the changed/deleted surface, invariant IDs, pure chec
 
 ## 6. Vertical implementation slices
 
+These are the historical slice boundaries and replacement obligations, not the
+current feature queue. Use `development-roadmap.md` for the remaining order;
+retain the single-path, deletion-of-replaced-code and evidence gates here.
+
 ### Slice 1 — Pure state, reducer, and transaction seam
 
 **Goal:** establish the engine without changing the active runtime.
@@ -131,9 +147,14 @@ A green checkpoint records the changed/deleted surface, invariant IDs, pure chec
 
 ### Slice 4 — Workspace rewrite
 
-**Precondition:** before implementing native Space operations, run one minimal POC for the unresolved switching/topology/deletion mechanism. **POC-002 must not start now.**
+**Current evidence gate:** reuse POC-002's recorded narrow switching observations.
+Run a minimal live POC only for an unresolved assumption needed by the current
+operation; native acceptance and performance gates remain required. Switching is
+now the approved next step. Creation follows; deletion and keyboard window movement
+are deferred.
 
-- Replace labels with native regular-Space positions, topology events, per-Space state, numbered focus, cyclic navigation, create, deletion safeguards, and external-change reconciliation.
+- Replace labels with native regular-Space positions, topology events, per-Space state, numbered focus, cyclic navigation, create, and external-change reconciliation.
+  Deletion safeguards remain future contracts, outside the current delivery queue.
 - Delete settings-backed labels, focus-or-create numbers, workspace modal, and obsolete tests.
 
 **Green checkpoint:** native topology acceptance and Space-specific benchmark pass; one runtime path remains.
@@ -169,7 +190,7 @@ A green checkpoint records the changed/deleted surface, invariant IDs, pure chec
 | Need | When | Scope |
 |---|---|---|
 | Window lifecycle | Superseded historical hypothesis; no broad pass | POC-001 informs the Target direct-AX removal policy; no broad recertification. |
-| Space topology/operations | Immediately before Slice 4 | Minimal operation/topology question only; POC-002 does not start now. |
+| Space topology/operations | At the relevant operation in the current roadmap | Reuse POC-002; minimal POC only for a new unresolved assumption. Movement/deletion deferred. |
 | Fullscreen | Immediately before Slice 5 | Transition/confirmation behavior needed by fullscreen effects. |
 | Bar | Immediately before Slice 6 | Overlay/handoff behavior needed by bar adapter. |
 | Settings/doctor | Slice 7 hardening | Detectability and documentation, not core-engine gating. |

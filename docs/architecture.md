@@ -340,11 +340,11 @@ Responsibilities:
 
 It does not own layout state, stable labels, or persisted ID-to-number maps. Position changes update shortcuts and bar labels without moving per-Space layout state or changing the identities in confirmed desktop history.
 
-The user-approved delivery order is switching, creation, then keyboard window movement; deletion is deferred. Keyboard movement stays on the source desktop and uses focused-destruction recovery there. Confirmed destination admission tiles the window without issuing destination focus. Do not implement this by temporarily activating the destination or silently postponing tiling until a visit; the native boundary needs narrow evidence first.
+The current user-approved delivery order is recorded in [`development-roadmap.md`](development-roadmap.md): switching, creation, then configured rules and the remaining user features. **Keyboard move-to-desktop without following and desktop deletion are deferred** (2026-10-11). The future movement contract remains specified: keyboard movement stays on the source desktop and uses focused-destruction recovery there; confirmed destination admission tiles the window without destination focus. When reactivated, do not implement movement by temporarily activating the destination or silently postponing tiling until a visit; the native boundary needs narrow evidence first.
 
-For deletion, a previous-window destination is eligible only when its actual target Space is confirmed and differs from the source; otherwise try the next fallback without issuing an effect. If an issued destination fails to leave the source, abort rather than cascading more potentially late effects. Every path still performs the fresh final source check.
+For **deferred future deletion**, a previous-window destination is eligible only when its actual target Space is confirmed and differs from the source; otherwise try the next fallback without issuing an effect. If an issued destination fails to leave the source, abort rather than cascading more potentially late effects. Every path still performs the fresh final source check.
 
-Immediately before the workspace rewrite, a minimal Space POC selects the switching implementation: native numbered shortcuts if reliable/fast, otherwise the best proven no-SIP path. Creation/deletion may use slower Mission Control Accessibility automation.
+At the workspace rewrite, reuse POC-002's recorded narrow switching mechanism evidence. Run a minimal Space POC only for an unresolved assumption needed by the selected adapter; native acceptance and unchanged performance gates still apply. Native numbered shortcuts remain a hypothesis for equivalence to filtered positional numbering, not a preferred implementation already selected. Creation may use slower Mission Control Accessibility automation; deferred deletion needs its own later native evidence.
 
 ## 10. Bar seam
 
@@ -399,7 +399,8 @@ Managed focus history is independent of layout order and owned once at the compo
 
 Bindings are a thin adapter over a command registry. The registry is useful now even though CLI control is deferred.
 
-MVP commands include:
+Target commands include the following; the deferred entries are future contracts,
+not part of the current implementation queue:
 
 - cycle layout
 - focus previous/next in stack
@@ -411,10 +412,10 @@ MVP commands include:
 - toggle native fullscreen for a managed target
 - focus numbered regular desktop 1–9
 - toggle previous confirmed regular desktop (`0`)
-- move focused managed regular window to an existing regular desktop without following
+- **Deferred:** move focused managed regular window to an existing regular desktop without following
 - cyclic previous/next regular desktop
 - create next regular desktop
-- delete empty regular desktop
+- **Deferred:** delete empty regular desktop
 - explicit reflow/synchronize
 
 Successful commands do not show alerts; the bar is feedback. Rejected/impossible commands may show one actionable error. Managed frame animations are removed.
