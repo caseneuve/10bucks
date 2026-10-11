@@ -1,10 +1,24 @@
 # Native functional acceptance scenarios
 
 First executable scenario: `scenarios/columns_close_recovery.py`.
-**Not yet runnable against the candidate:** the native fixture is implemented
-and its headed/headless no-manager proof passed; the acceptance guest/host driver
-is not implemented. Self-checks below test scenario logic only, not macOS or
-10bucks behavior. Production Lua is unchanged.
+The runner and native guest driver are implemented. First candidate run stopped
+at baseline startup **before scenario execution**; it is NOT accepted/green.
+The controller now reports safe operation labels/counts to diagnose that setup
+failure; a diagnostic rerun is pending. Fixture-only proof passed separately.
+Production Lua is unchanged.
+
+```sh
+./functional-tests/run --headed --demo columns-close-recovery
+```
+
+This command clones the stopped SIP-enabled base, opens the guest desktop, runs
+real candidate hotkeys and native frame/focus assertions, then stops the manager,
+fixture and VM. `--demo` adds two-second action pauses for visibility; it is not a
+latency benchmark. Without `--headed` the VM has no desktop window.
+Artifacts remain in ignored `vm/results/10bucks-run-ft-*/`, with separate guest
+trace and host summary, source hashes, environment and assertion samples.
+Do not interpret a setup failure as a candidate behavioral result. Scenario
+self-checks below validate the oracle only, not macOS/10bucks behavior.
 
 ## columns-close-recovery
 
@@ -69,7 +83,8 @@ Implement the `Driver` protocol in the scenario. It must:
   Preserve failures for inspection. Do not load on the host or delete unknown VMs.
 
 Native fixture eligibility and exact resource joins passed the no-manager proof.
-Candidate-driver integration and hotkey callback receipt still need proof. This scenario does not certify Ghostty silent
+Candidate-driver integration and hotkey callback receipt are implemented but
+still need live proof; the first candidate attempt did not reach them. This scenario does not certify Ghostty silent
 close behavior or third-party apps; add real-app regressions separately.
 
 ## Scenario self-checks
