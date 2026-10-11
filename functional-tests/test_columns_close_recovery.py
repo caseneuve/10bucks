@@ -89,6 +89,19 @@ class ScenarioChecks(unittest.TestCase):
                 self.assertGreater(len(driver.samples), 0)
                 self.assertLess(driver.time, 10)
 
+    def test_correct_split_with_focus_on_wrong_live_member_fails(self):
+        driver = ModelDriver()
+        original = driver.observe
+        def observation():
+            sample = original()
+            if driver.stage == 2:
+                return replace(sample, focused="A")  # candidate members/frames correct
+            return sample
+        driver.observe = observation
+        with self.assertRaisesRegex(AcceptanceFailure, "B right and focused"):
+            self.execute(driver)
+        self.assertNotIn(("close", "B"), driver.actions)
+
     def test_driver_failure_is_not_reclassified(self):
         driver = ModelDriver()
         def broken_observation():

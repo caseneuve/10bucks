@@ -1,8 +1,9 @@
 # Native functional acceptance scenarios
 
 First executable scenario: `scenarios/columns_close_recovery.py`.
-**Not yet runnable against the VM:** the native fixture and guest/host driver
-are not implemented. Self-checks below test scenario logic only, not macOS or
+**Not yet runnable against the candidate:** the native fixture is implemented
+and its headed/headless no-manager proof passed; the acceptance guest/host driver
+is not implemented. Self-checks below test scenario logic only, not macOS or
 10bucks behavior. Production Lua is unchanged.
 
 ## columns-close-recovery
@@ -47,7 +48,15 @@ Implement the `Driver` protocol in the scenario. It must:
   destruction or explicit retained-resource invalidity; absence from a window
   enumeration is NOT enough. Never export unrelated window metadata.
 - `frames` and `focused` come from native macOS observations, not candidate
-  desired/last-applied values. `managed` is a read-only candidate alias snapshot.
+  desired/last-applied values. For focus, read global `hs.window.focusedWindow()`
+  and compare to the retained exact owned resource; verify its owning process.
+  Never substitute `app:focusedWindow()`, frontmost app, title, z-order, fixture
+  acknowledgement, or candidate-selected ID for actual keyboard focus.
+  Require native focus **A → B → A**, alongside the correct frames at each step.
+  Candidate selection/desired target/pending status are separate diagnostics;
+  selection on B with actual focus on A is a failure, not a focus success.
+  The fixture must not explicitly focus A/B during candidate acceptance.
+  `managed` is a read-only candidate alias snapshot.
 - `commands_received` counts actual entry to candidate hotkey callbacks using
   removable test-only instrumentation. Sender completion/event-tap receipt alone
   is not candidate command delivery. Do not invoke reducer commands directly.
@@ -59,8 +68,8 @@ Implement the `Driver` protocol in the scenario. It must:
 - Always stop candidate/fixture, shut down guest and verify cleanup in `finally`.
   Preserve failures for inspection. Do not load on the host or delete unknown VMs.
 
-Native fixture eligibility, reliable alias/resource join, and callback receipt
-instrumentation still need proof. This scenario does not certify Ghostty silent
+Native fixture eligibility and exact resource joins passed the no-manager proof.
+Candidate-driver integration and hotkey callback receipt still need proof. This scenario does not certify Ghostty silent
 close behavior or third-party apps; add real-app regressions separately.
 
 ## Scenario self-checks
