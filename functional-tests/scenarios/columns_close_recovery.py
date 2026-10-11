@@ -3,7 +3,7 @@
 The runner supplies the guest driver described in functional-tests/README.md.
 This module is executable scenario logic, not a VM runner.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 import time
 from typing import Protocol
@@ -41,6 +41,7 @@ class Observation:
     managed: frozenset[str]
     # Cumulative acknowledgements of candidate hotkey callbacks, not sent keys.
     commands_received: dict[str, int]
+    diagnostics: dict = field(default_factory=dict)
 
 
 class Driver(Protocol):
@@ -77,18 +78,7 @@ def same_frame(actual: Frame | None, expected: Frame) -> bool:
     )
 
 
-def run(driver: Driver, *, clock=time.monotonic, sleep=time.sleep) -> None:
-    """Run assertions. Driver exceptions remain harness failures, not mismatches.
-
-    Runner MUST perform cleanup in finally, including when this function raises.
-    Deadlines/tolerance are fixed above; no automatic retries or weakened gates.
-    """
-    area = driver.preflight()
-    assert all(math.isfinite(v) for v in (area.x, area.y, area.w, area.h))
-    assert area.w > 0 and area.h > 0, "Invalid independent work area"
-    left = Frame(area.x, area.y, area.w / 2, area.h)
-    right = Frame(area.x + area.w / 2, area.y, area.w / 2, area.h)
-
+def sampling_gate(driver, *, scenario_id=SCENARIO_ID, clock=time.monotonic, sleep=time.sleep):
     last_sample_id = -1
     last_acquired = None
     last_delivered = None
@@ -103,7 +93,7 @@ def run(driver: Driver, *, clock=time.monotonic, sleep=time.sleep) -> None:
             driver.record(name, observation)
             now = clock()
             if now - previous_sample > MAX_SAMPLE_GAP_SECONDS:
-                raise RuntimeError(f"{SCENARIO_ID}: {name}: native sampling gap exceeded 150ms")
+                raise RuntimeError(f"{scenario_id}: {name}: native sampling gap exceeded 150ms")
             previous_sample = now
             if (observation.sample_id <= last_sample_id
                     or not math.isfinite(observation.sampled_at)
@@ -112,15 +102,15 @@ def run(driver: Driver, *, clock=time.monotonic, sleep=time.sleep) -> None:
                     or observation.observed_at - observation.sampled_at > MAX_SAMPLE_GAP_SECONDS
                     or (last_acquired is not None and observation.sampled_at <= last_acquired)
                     or (last_delivered is not None and observation.observed_at < last_delivered)):
-                raise RuntimeError(f"{SCENARIO_ID}: {name}: stale or replayed native sample")
+                raise RuntimeError(f"{scenario_id}: {name}: stale or replayed native sample")
             if (matching_since is not None and last_acquired is not None
                     and observation.sampled_at - last_acquired > MAX_SAMPLE_GAP_SECONDS):
-                raise RuntimeError(f"{SCENARIO_ID}: {name}: native acquisition gap exceeded 150ms")
+                raise RuntimeError(f"{scenario_id}: {name}: native acquisition gap exceeded 150ms")
             last_sample_id = observation.sample_id
             last_acquired = observation.sampled_at
             last_delivered = observation.observed_at
             if now > deadline:
-                raise AcceptanceFailure(f"{SCENARIO_ID}: {name} timed out; last={observation!r}")
+                raise AcceptanceFailure(f"{scenario_id}: {name} timed out; last={observation!r}")
             if predicate(observation):
                 if matching_since is None:
                     matching_since = observation.sampled_at
@@ -129,6 +119,23 @@ def run(driver: Driver, *, clock=time.monotonic, sleep=time.sleep) -> None:
             else:
                 matching_since = None
             sleep(SAMPLE_SECONDS)
+
+    return eventually
+
+
+def run(driver: Driver, *, clock=time.monotonic, sleep=time.sleep) -> None:
+    """Run assertions. Driver exceptions remain harness failures, not mismatches.
+
+    Runner MUST perform cleanup in finally, including when this function raises.
+    Deadlines/tolerance are fixed above; no automatic retries or weakened gates.
+    """
+    area = driver.preflight()
+    assert all(math.isfinite(v) for v in (area.x, area.y, area.w, area.h))
+    assert area.w > 0 and area.h > 0, "Invalid independent work area"
+    left = Frame(area.x, area.y, area.w / 2, area.h)
+    right = Frame(area.x + area.w / 2, area.y, area.w / 2, area.h)
+
+    eventually = sampling_gate(driver, clock=clock, sleep=sleep)
 
     def recovered(o):
         return (

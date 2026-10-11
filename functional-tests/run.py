@@ -17,13 +17,15 @@ BASE = "10bucks-functional-sip-base-20261011"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=["columns-close-recovery"])
+    parser.add_argument("scenario", choices=["columns-close-recovery", "stack-columns-membership"])
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--demo", action="store_true", help="2s pauses between actions; not a latency benchmark")
     parser.add_argument("--bar-capture", action="store_true", help="capture native bar outside/hover/return pixels for independent visual review")
     parser.add_argument("--keep-open", action="store_true", help="debug only: preserve live guest and controller after failure")
     parser.add_argument("--reuse-debug", metavar="VM", help="reuse running owned debug guest; reset HS modules, no reboot")
     args = parser.parse_args()
+    if args.demo and args.scenario=='stack-columns-membership':
+        parser.error('--demo cannot fit the combined scenario watchdog; run without --demo')
     execution_deadline = time.monotonic() + 95
     def remaining(cap):
         left = execution_deadline - time.monotonic()
@@ -53,11 +55,14 @@ def main():
     manifest = {str(p.relative_to(snapshot)): hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in sorted(snapshot.rglob("*")) if p.is_file()}
     (results / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    spec = importlib.util.spec_from_file_location("frozen_scenario", snapshot / "functional-tests/scenarios/columns_close_recovery.py")
+    sys.path.insert(0, str(snapshot / 'functional-tests'))
+    scenario_file=args.scenario.replace('-', '_') + '.py'
+    spec = importlib.util.spec_from_file_location("frozen_scenario", snapshot / "functional-tests/scenarios" / scenario_file)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    Frame, Observation, scenario = module.Frame, module.Observation, module.run
+    from scenarios.columns_close_recovery import Frame, Observation
+    scenario = module.run
     bar_spec = importlib.util.spec_from_file_location("frozen_bar_gate", snapshot / "functional-tests/bar_capture.py")
     bar_module = importlib.util.module_from_spec(bar_spec)
     bar_spec.loader.exec_module(bar_module)
@@ -112,8 +117,9 @@ def main():
             status = wait_status(lambda s: s.get("candidateReady") is True and s.get("fixtureReady") is True, 10)
             if status.get("unknownMembers", 0) != 0:
                 raise RuntimeError("unowned candidate membership")
-            if status.get("layout") != "columns":
-                raise RuntimeError("columns bootstrap not confirmed")
+            expected_layout='stack' if args.scenario=='stack-columns-membership' else 'columns'
+            if status.get("layout") != expected_layout:
+                raise RuntimeError(expected_layout + " bootstrap not confirmed")
             return Frame(**status["workArea"])
 
         def action(self, operation, alias=None):
@@ -150,8 +156,8 @@ def main():
                     if value.get("unknownMembers", 0):
                         raise RuntimeError("unowned candidate membership")
                     return Observation(value["sample_id"], value["sampled_at"], value["observed_at"],
-                        {k: Frame(**v) for k, v in value["frames"].items()}, value.get("focused"),
-                        frozenset(value["closed"]), frozenset(value["managed"]), value["commands_received"])
+                        {k: Frame(**v) for k, v in (value["frames"] or {}).items()}, value.get("focused"),
+                        frozenset(value["closed"]), frozenset(value["managed"]), value["commands_received"] or {},value["diagnostics"])
                 time.sleep(0.005)
             raise RuntimeError("fresh native sample unavailable")
 
@@ -220,7 +226,7 @@ def main():
         ssh(f"mkdir -m 700 {control}")
         hs('ft=dofile("' + guest_root + '/functional-tests/guest.lua"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
-           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
+           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario=="stack-columns-membership" else "columns"}",cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
         driver = Driver()
         scenario(driver)
         if args.bar_capture:

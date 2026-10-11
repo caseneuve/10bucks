@@ -137,6 +137,30 @@ The expanded scenario has not yet passed in a fresh clone.
 This scenario does not certify Ghostty silent close behavior or third-party apps;
 add real-app regressions separately.
 
+## stack-columns-membership
+
+```sh
+./functional-tests/run --headed --reuse-debug VM_NAME stack-columns-membership
+```
+
+Starts empty in **stack**. Creates A/B/C; tests three-member navigation; switches
+columns retaining B focus; creates D on the right; switches stack, creates E and
+closes background A; returns columns and checks retained assignments plus E
+integration; tests three-member column navigation; closes focused B, background E
+and focused D; switches stack with sole C. All 24 actions verify independent
+native frames/focus/closure and exact cached order/layout assignments. Inactive
+column selections/active side are checked before reactivation can mask corruption.
+Same fixed completion/sampling thresholds as the first scenario. `--demo` is
+rejected because its pauses cannot fit the unchanged guest watchdog.
+
+**Verified:** same-debug native session `d855e90e8e3e` passed 40 checkpoints;
+independent reviewer verified all 51 frozen hashes and underlying observations.
+The bounded readiness replacement recovered B/C/D/E from unknown ownership to
+positive admission on their second creation attempt. Old B failure remains
+preserved; its exact root cause is not asserted. Prior native regression
+`c64997e5d01e` also passed. Details: `docs/pocs/014-bounded-readiness-layout-order.md`.
+Not cold isolation, general app reliability or performance certification.
+
 ## Scenario self-checks
 
 ```sh

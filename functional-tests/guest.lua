@@ -80,6 +80,24 @@ local function candidateSnapshot()
             for _, stack in ipairs(layout.stacks or {}) do
                 diagnostics.selections[#diagnostics.selections+1]=s.byId[stack.selectedId] or 'unknown'
             end
+            local function aliases(ids)
+                local result={}; for _,id in ipairs(ids or {}) do result[#result+1]=s.byId[id] or 'unknown' end
+                return result
+            end
+            diagnostics.order=aliases(state.manager.spaces[c.spaceId].memberIds)
+            diagnostics.layouts={}
+            for name, saved in pairs(coord.layouts) do
+                local row={}
+                if name=='stack' then row.members=aliases(saved.members); row.selected=s.byId[saved.selectedId]
+                else
+                    row.groups={}; row.selected={}; row.active=saved.activeStack; row.ratio=saved.ratio
+                    for _,group in ipairs(saved.stacks) do
+                        row.groups[#row.groups+1]=aliases(group.members)
+                        row.selected[#row.selected+1]=s.byId[group.selectedId] or 'unknown'
+                    end
+                end
+                diagnostics.layouts[name]=row
+            end
         end
         local desired=state.manager.focus.desiredBySpace[c.spaceId]
         diagnostics.desired=desired and s.byId[desired.targetId]
@@ -106,6 +124,7 @@ local function join(alias,number)
         and ax:isAttributeSettable('AXPosition')==true
         and ax:isAttributeSettable('AXSize')==true,'fixture_not_standard')
     s.windows[alias]=matched; s.axes[alias]=ax; s.byId[number]=alias
+    for _, row in ipairs((s.debugById or {})[number] or {}) do row.alias=alias end
     if not s.observer then
         s.observer=hs.axuielement.observer.new(s.pid)
         s.observer:callback(function(_,element,notification)
@@ -259,7 +278,10 @@ local function tick()
             end
         elseif now()>p.deadline then failure('hotkey_receipt_timeout') end
     end
-    if s.ready and s.phase=='ready' then s.phase='columns'; key('cycleLayout') end
+    if s.ready and s.phase=='ready' then
+        if s.initialLayout=='stack' then s.phase='active'
+        else s.phase='columns'; key('cycleLayout') end
+    end
     sample()
 end
 bootstrap=function()
@@ -298,24 +320,47 @@ bootstrap=function()
     assert(ok,err)
     local host=s.candidate.host
     local ready=host._ready
-    host._ready=function(h,window,...)
+    s.debugById={}
+    local activeReady
+    host._ready=function(h,window,origin,...)
         s.nativeDebug.ready=s.nativeDebug.ready+1
         s.nativeDebug.readyAttempts=s.nativeDebug.readyAttempts or {}
         local id=window and window:id()
-        s.nativeDebug.readyAttempts[#s.nativeDebug.readyAttempts+1]={alias=s.byId[id] or 'unjoined',
-            owned=window and window:application() and window:application():pid()==s.pid or false}
-        return ready(h,window,...)
+        local row={alias=s.byId[id] or 'unjoined',origin=origin,at=now()}
+        s.nativeDebug.readyAttempts[#s.nativeDebug.readyAttempts+1]=row
+        if id then
+            s.debugById[id]=s.debugById[id] or {}
+            s.debugById[id][#s.debugById[id]+1]=row
+        end
+        local prior=activeReady; activeReady=row
+        local result=ready(h,window,origin,...)
+        activeReady=prior
+        return result
     end
     local owner=host._owner
-    host._owner=function(h,...)
-        local space,kind=owner(h,...)
+    host._owner=function(h,id,...)
+        local space,kind=owner(h,id,...)
         s.nativeDebug.ownerReads=(s.nativeDebug.ownerReads or 0)+1
-        s.nativeDebug.lastOwner={known=space~=nil,active=space==s.candidate.context.regularSpaceId,kind=kind}
+        local row={alias=s.byId[id] or 'unjoined',known=space~=nil,
+            active=space==s.candidate.context.regularSpaceId,kind=kind,at=now()}
+        s.nativeDebug.ownerAttempts=s.nativeDebug.ownerAttempts or {}
+        s.nativeDebug.ownerAttempts[#s.nativeDebug.ownerAttempts+1]=row
+        s.debugById[id]=s.debugById[id] or {}; table.insert(s.debugById[id],row)
+        if activeReady then activeReady.owner=row end
         return space,kind
+    end
+    for _, method in ipairs({'_acceptApp','_remember'}) do
+        local original=host[method]
+        host[method]=function(h,...)
+            local value=original(h,...)
+            if activeReady then activeReady[method]=value~=nil end
+            return value
+        end
     end
     local metadata=host._metadata
     host._metadata=function(h,...)
         local value=metadata(h,...)
+        if activeReady then activeReady.metadata=value~=nil end
         if not value then s.nativeDebug.metadataMissing=s.nativeDebug.metadataMissing+1
         else s.nativeDebug.lastMetadata={role=value.role,subrole=value.subrole,
             modal=value.modal,movable=value.movable,resizable=value.resizable,
@@ -408,7 +453,7 @@ function M.start(o)
     local screens=hs.screen.allScreens(); assert(#screens==1,'sole_screen_required')
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
-        originalPointer=copy(hs.mouse.absolutePosition()),
+        initialLayout=o.initialLayout or 'columns',originalPointer=copy(hs.mouse.absolutePosition()),
         sequence=0,actionSequence=0,windows={},axes={},byId={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}
     local native,full=s.screen:frame(),s.screen:fullFrame()
@@ -463,7 +508,7 @@ function M.command(op,alias)
     assert(s and s.running and s.phase=='active' and not s.error,'controller_not_active')
     assert(not s.pending and not s.keyPending,'action_pending')
     if op=='create' or op=='close' then
-        assert(alias=='A' or alias=='B','unsupported_alias')
+        assert(type(alias)=='string' and alias:match('^[A-E]$'),'unsupported_alias')
         if op=='create' then assert(not s.windows[alias],'alias_already_used')
         else assert(s.windows[alias],'alias_not_joined') end
         return publish(op,alias)

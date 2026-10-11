@@ -1,6 +1,7 @@
 -- Concrete direct-AX host. Creation callbacks can deliver hs.window wrappers
 -- or AX elements; conversion and native handles stay here. Focus signals trigger
 -- a current native focus read rather than treating their payload as global focus.
+local Rules = require("lib.rules")
 local Host = {}
 Host.__index = Host
 
@@ -35,7 +36,7 @@ end
 
 function Host.new(hs, context, instrumentation, handleRegistry)
   return setmetatable({ hs = hs, context = context, instrumentation = instrumentation, handleRegistry = handleRegistry,
-    generation = 0, serial = 0, started = false, owned = {}, appResources = {}, handles = {}, managedObservers = {}, frames = {} }, Host)
+    generation = 0, serial = 0, started = false, owned = {}, appResources = {}, handles = {}, managedObservers = {}, frames = {}, readiness = {} }, Host)
 end
 
 function Host:_record(kind)
@@ -161,22 +162,128 @@ function Host:_metadata(window, origin, spaceId, spaceType)
   }
 end
 
-function Host:_ready(window, origin, callback, membershipSet)
+function Host:_cancelReadiness(id)
+  local token = self.readiness[id]
+  if not token then return end
+  self.readiness[id] = nil
+  if token.timer then
+    local timer = token.timer; token.timer = nil
+    pcall(timer.stop, timer)
+  end
+end
+
+function Host:_readinessAuthority(token, expected)
+  local app, retained = self.appResources[token.pid], self.handles[token.id]
+  return self.started and self.readiness[token.id] == token
+    and self.generation == token.generation and self.context == token.context
+    and app == token.appRecord and app.active and app.app == token.app
+    and (not retained or (retained.active and retained.handle == token.window))
+    and (not expected or (retained == expected and retained.lease == token.publishLease))
+end
+
+function Host:_readinessCurrent(token, expected)
+  if not self:_readinessAuthority(token, expected) then return false end
+  -- All potentially reentrant native reads precede the final pure authority
+  -- check. Never use handles/app records captured before these reads.
+  local id = call(token.window, "id")
+  local app = call(token.window, "application")
+  local valid = moduleCall(token.element and token.element.isValid, token.element)
+  return id == token.id and app == token.app and valid ~= false
+    and self:_readinessAuthority(token, expected)
+end
+
+-- Candidate lifetime is independent of provisional focus leases. A failed
+-- focus probe may forget its handle without cancelling this creation token.
+function Host:_creationReady(window, origin, callback)
+  local id, app = call(window, "id"), call(window, "application")
+  if id == nil then return end
+  local old = self.readiness[id]
+  if old and old.window == window and old.app == app then
+    if origin == "created" then old.origin = "created" end
+    return
+  end
+  self:_cancelReadiness(id)
+  local record = self:_acceptApp(app)
+  if not record then return end
+  local token = { id = id, window = window, app = app, pid = record.pid, appRecord = record,
+    generation = self.generation, context = self.context, attempts = 0, origin = origin,
+    element = moduleCall(self.hs.axuielement.windowElement, window) }
+  self.readiness[id] = token
+  local attempt
+  local function guardedAttempt()
+    local ok, err = pcall(attempt)
+    if not ok then
+      if self.readiness[id] == token then self:_cancelReadiness(id) end
+      error(err, 0)
+    end
+  end
+  attempt = function()
+    if not self:_readinessCurrent(token) then
+      if self.readiness[id] == token then self:_cancelReadiness(id) end
+      return
+    end
+    token.attempts = token.attempts + 1
+    local outcome = self:_ready(window, token.origin, callback, nil, token)
+    if self.readiness[id] ~= token then return end
+    if not self:_readinessCurrent(token) then
+      if self.readiness[id] == token then self:_cancelReadiness(id) end
+      return
+    end
+    if outcome ~= "uncertain" or token.attempts >= 3 or not (self.hs.timer and self.hs.timer.doAfter) then
+      self:_cancelReadiness(id); return
+    end
+    local timer, attemptNumber = nil, token.attempts
+    timer = self.hs.timer.doAfter(0.1, function()
+      if self.readiness[id] ~= token or token.timer ~= timer or token.attempts ~= attemptNumber then return end
+      token.timer = nil
+      guardedAttempt()
+    end)
+    if not timer then error("creation readiness timer allocation failed", 0) end
+    if self.readiness[id] ~= token or not self:_readinessAuthority(token) then
+      pcall(timer.stop, timer)
+      if self.readiness[id] == token then self:_cancelReadiness(id) end
+      return
+    end
+    token.timer = timer
+  end
+  guardedAttempt()
+end
+
+function Host:_ready(window, origin, callback, membershipSet, token)
   local id = call(window, "id")
-  if id == nil or (membershipSet and not membershipSet[id]) then return end
+  if id == nil or (membershipSet and not membershipSet[id]) then return "rejected" end
+  if token and not self:_readinessCurrent(token) then return "rejected" end
   -- A complete discovery still enumerates a conflicting same-PID app, but it
   -- cannot reuse the retained app lifetime to admit that app's windows.
-  if not self:_acceptApp(call(window, "application")) then return end
+  if not self:_acceptApp(call(window, "application")) then return "rejected" end
   local spaceId, spaceType
   if membershipSet then spaceId, spaceType = self.context.regularSpaceId, "user"
   else spaceId, spaceType = self:_owner(id) end
-  if not spaceId then return end
+  if not spaceId then return "uncertain" end
+  if token and not self:_readinessCurrent(token) then return "rejected" end
   local metadata = self:_metadata(window, origin, spaceId, spaceType)
-  if metadata then
-    local record = self:_remember(window)
-    if not record then return end
-    callback({ kind = "ready", metadata = metadata, handle = window, resource = record.lease, appResource = record.appLease })
+  if not metadata then return "uncertain" end
+  if token and not self:_readinessCurrent(token) then return "rejected" end
+  local decision = Rules.ready(metadata)
+  if token and decision and decision.decision.action == "defer" then return "uncertain" end
+  local record = self:_remember(window)
+  if not record then return "rejected" end
+  if token then
+    token.publishLease = record.lease
+    if not self:_readinessCurrent(token, record) then return "rejected" end
+    -- No native operation between the pure authority check and publication.
+    self.readiness[id] = nil
+    local timer = token.timer; token.timer = nil
+    -- The queued timer is now inert; stop only after publication below.
+    token.completedTimer = timer
   end
+  local ok, accepted = pcall(callback, { kind = "ready", metadata = metadata, handle = window, resource = record.lease, appResource = record.appLease })
+  if token and token.completedTimer then
+    local timer = token.completedTimer; token.completedTimer = nil
+    pcall(timer.stop, timer)
+  end
+  if not ok then error(accepted, 0) end
+  return accepted == false and "rejected" or "ready"
 end
 
 function Host:subscribeWindow(window, callback)
@@ -205,6 +312,8 @@ function Host:subscribeWindow(window, callback)
     end
     local kinds = { AXUIElementDestroyed = "destroyed", AXWindowMiniaturized = "minimized", AXWindowDeminiaturized = "restored", AXTitleChanged = "titleChanged" }
     if event == "AXUIElementDestroyed" then
+      local token = self.readiness[id]
+      if token and token.window == window then self:_cancelReadiness(id) end
       -- The composition must reduce and route this authoritative fact before
       -- releaseWindow invalidates this lease and forgets its native handle.
       callback({ kind = "destroyed", id = id, resource = record.lease,
@@ -262,7 +371,7 @@ function Host:_attachApp(app, callback)
       or record.appAttachment ~= attachment then return end
     if event == "AXWindowCreated" then
       local window = asWindow(element)
-      if window then self:_ready(window, "created", callback) end
+      if window then self:_creationReady(window, "created", callback) end
     elseif event == "AXFocusedWindowChanged" then
       -- A missed close may no longer be the last presentation by the time
       -- focus signals arrive. Check only this event app's retained AX resources.
@@ -302,7 +411,7 @@ function Host:subscribeApplications(callback)
           local ok, windows = pcall(app.allWindows, app)
           if ok and type(windows) == "table" then
             for _, window in ipairs(windows) do
-              self:_ready(window, "targetedReadiness", self.windowCallback)
+              self:_creationReady(window, "targetedReadiness", self.windowCallback)
             end
           end
         end
@@ -327,6 +436,7 @@ function Host:subscribeApplications(callback)
       -- object to equal the retained live resource. Mismatch is uncertainty;
       -- a later independent discovery may attach only after this lifetime ends.
       if record and record.active and record.app == app then
+        for id, token in pairs(self.readiness) do if token.appRecord == record then self:_cancelReadiness(id) end end
         if self.presentationApp == app then self:_observePresentation(nil, nil, nil, nil) end
         callback({ kind = "terminated", pid = pid, resource = record.lease })
       end
@@ -435,6 +545,7 @@ function Host:probeReadiness(id, callback)
 end
 
 function Host:setContext(context)
+  for id in pairs(self.readiness) do self:_cancelReadiness(id) end
   if self.discoveryTimer then self.discoveryTimer:stop(); self.discoveryTimer = nil end
   self.context = context
 end
@@ -446,6 +557,7 @@ end
 function Host:releaseApplication(pid, lease)
   local record = self.appResources[pid]
   if not record or not record.active or record.lease ~= lease then return false end
+  for id, token in pairs(self.readiness) do if token.appRecord == record then self:_cancelReadiness(id) end end
   record.active = false
   if self.presentationApp == record.app then self:_observePresentation(nil, nil, nil, nil) end
   self:_forgetPid(pid, lease)
@@ -461,6 +573,7 @@ end
 function Host:stop()
   if not self.started then return self end
   self.started = false; self.generation = self.generation + 1
+  for id in pairs(self.readiness) do self:_cancelReadiness(id) end
   if self.discoveryTimer then self.discoveryTimer:stop(); self.discoveryTimer = nil end
   self:_observePresentation(nil, nil, nil, nil)
   for record in pairs(self.owned) do self:_detach(record) end

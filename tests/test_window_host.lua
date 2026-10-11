@@ -20,7 +20,244 @@ local function fake()
   f.hs = { processInfo = { processID = 1 }, window = { focusedWindow = function() f.focusedWindowQueries = f.focusedWindowQueries + 1; if f.focusedWindowError then error("focused-window read failed") end; return f.focusedWindow end }, axuielement = { windowElement = function() return element end }, spaces = { windowsForSpace = function() f.membershipQueries = f.membershipQueries + 1; return f.members end, windowSpaces = function() f.ownerQueries = f.ownerQueries + 1; return f.owners end, spaceType = function() return f.spaceType or "user" end }, application = { runningApplications = function() return { app } end, watcher = { new = function(callback) f.lifecycle = watcher(callback); return f.lifecycle end, terminated = 3, hidden = 4, unhidden = 5, launched = 2, activated = 5 } } }
   return f, app, element
 end
+local function readinessFixture()
+  local f, app, element = fake()
+  f.members, f.owners = {}, {}
+  local timers, events = {}, {}
+  f.hs.timer = { doAfter = function(delay, callback)
+    assert(delay == 0.1)
+    local timer = { callback = callback, stop = function(self) self.stopped = true end }
+    timers[#timers + 1] = timer; return timer
+  end }
+  local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+  host:subscribeApplications(function(event) events[#events + 1] = event end)
+  host:subscribeExistingWindows(function(event) events[#events + 1] = event; return true end)
+  local function create(window) f.appWatchers[1].callback(window or f.window, "AXWindowCreated") end
+  return f, host, timers, events, create, app, element
+end
+
 return {
+  ["DISC-002 LIFE-004: actual Host Windows subscription rejection settles creation"] = function()
+    local f = fake(); f.members, f.owners = {}, {}
+    local timers = {}
+    f.hs.timer = { doAfter = function(_, callback)
+      local timer = { callback = callback, stop = function() end }; timers[#timers + 1] = timer; return timer
+    end }
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+    local emitted = 0
+    local windows = Windows.new({ sink = function() emitted = emitted + 1; return true end, native = {
+      subscribeApplications = function(cb) return host:subscribeApplications(cb) end,
+      subscribeExistingWindows = function(cb) return host:subscribeExistingWindows(cb) end,
+      subscribeWindow = function(w, cb) return host:subscribeWindow(w, cb) end,
+      probeReadiness = function(id, cb) return host:probeReadiness(id, cb) end,
+      releaseWindow = function(id, lease) return host:releaseWindow(id, lease) end,
+      releaseApplication = function(pid, lease) return host:releaseApplication(pid, lease) end,
+      managedDecision = function() end,
+    } }):start()
+    f.appWatchers[1].callback(f.window, "AXWindowCreated")
+    f.window.newWatcher = function() return nil end
+    f.owners = { 9 }; timers[1].callback()
+    assert(emitted == 0 and not windows:handleForId(9) and not host.handles[9])
+    assert(not host.readiness[9] and #timers == 1)
+    timers[1].callback(); assert(#timers == 1)
+    windows:stop(); host:stop()
+  end,
+  ["DISC-002 LIFE-004: readiness exceptions clean token and preserve exact error"] = function()
+    for _, phase in ipairs({ "initial", "retry", "timer" }) do
+      local f, host, timers, events, create = readinessFixture()
+      local marker = {}
+      local original = host._ready
+      if phase == "retry" then create() end
+      if phase == "timer" then f.hs.timer.doAfter = function() error(marker) end
+      else host._ready = function() error(marker) end end
+      local ok, err = pcall(function() if phase == "retry" then timers[1].callback() else create() end end)
+      assert(not ok and err == marker)
+      assert(not host.readiness[9], "exception must not strand creation token")
+      host._ready = original; host:stop()
+    end
+  end,
+  ["DISC-002: stale first timer cannot consume pending second attempt"] = function()
+    local f, host, timers, events, create = readinessFixture()
+    create(); timers[1].callback()
+    assert(f.ownerQueries == 2 and #timers == 2)
+    timers[1].callback()
+    assert(f.ownerQueries == 2 and host.readiness[9], "replayed timer must not steal final attempt")
+    f.owners = { 9 }; timers[2].callback(); assert(#events == 1)
+    host:stop()
+  end,
+  ["DISC-002: launch origin upgrades on creation without budget reset"] = function()
+    local f, host, timers, events, create = readinessFixture()
+    f.lifecycle.callback(nil, f.hs.application.watcher.launched, f.window:application())
+    create(); assert(f.ownerQueries == 1 and #timers == 1)
+    f.owners = { 9 }; timers[1].callback()
+    assert(events[1].metadata.origin == "created", "AX creation must upgrade launch origin")
+    host:stop()
+  end,
+  ["LIFE-004: final validity reentry cannot publish stale handle app or generation"] = function()
+    for _, mode in ipairs({ "handle", "app", "restart" }) do
+      local f, host, timers, events, create, app, element = readinessFixture()
+      local remember = host._remember
+      local armed = false
+      host._remember = function(self, window)
+        local result = remember(self, window); armed = true; return result
+      end
+      element.isValid = function()
+        if armed then
+          armed = false
+          if mode == "handle" then host.handles[9] = { handle = {}, lease = 999, active = true }
+          elseif mode == "app" then host.appResources[7] = { app = {}, lease = 999, active = true }
+          else host:stop(); host:start() end
+        end
+        return true
+      end
+      f.owners = { 9 }; create()
+      assert(#events == 0, "final native reentry must invalidate publication")
+      host:stop()
+    end
+  end,
+  ["DISC-002: creation unknown exhaustion coalesces duplicates and never infers death"] = function()
+    local f, host, timers, events, create = readinessFixture()
+    create(); create()
+    f.lifecycle.callback(nil, f.hs.application.watcher.launched, f.window:application())
+    assert(f.ownerQueries == 1 and #timers == 1)
+    timers[1].callback(); timers[2].callback()
+    assert(f.ownerQueries == 3 and #timers == 2 and #events == 0 and not host.readiness[9])
+    timers[1].callback(); timers[2].callback(); assert(f.ownerQueries == 3)
+    host:stop()
+  end,
+  ["DISC-002: lifecycle and Rules unknown metadata recover by positive creation readiness"] = function()
+    for _, field in ipairs({ "minimized", "movable" }) do
+      local f, host, timers, events, create, app, element = readinessFixture()
+      f.owners = { 9 }
+      if field == "minimized" then f.window.isMinimized = function() return nil end
+      else element.isAttributeSettable = function() return nil end end
+      create(); assert(#events == 0 and #timers == 1)
+      f.window.isMinimized = function() return false end
+      element.isAttributeSettable = function() return true end
+      timers[1].callback()
+      assert(#events == 1 and events[1].kind == "ready" and f.ownerQueries == 2 and not host.readiness[9])
+      timers[1].callback(); assert(#events == 1 and f.ownerQueries == 2)
+      host:stop()
+    end
+  end,
+  ["DISC-002 FOCUS-004: focus and bootstrap never schedule creation readiness"] = function()
+    local f, host, timers = readinessFixture()
+    f.focusedWindow = f.window; host:observeFocus()
+    host:probeReadiness(9, function() end)
+    assert(#timers == 0)
+    host:stop()
+  end,
+  ["DISC-002: exclusion and rejected sink settle without retry"] = function()
+    for _, mode in ipairs({ "exclude", "sink" }) do
+      local f, host, timers, events, create, app, element = readinessFixture()
+      f.owners = { 9 }
+      if mode == "exclude" then element.attributeValue = function() return true end
+      else host.windowCallback = function() return false end end
+      host:_creationReady(f.window, "created", host.windowCallback)
+      assert(#timers == 0 and not host.readiness[9])
+      host:stop()
+    end
+  end,
+  ["LIFE-004 DISC-002: creation cancellation rejects queued context stop app termination and superseded resources"] = function()
+    for _, mode in ipairs({ "context", "stop", "releaseApp", "terminate", "supersede" }) do
+      local f, host, timers, events, create, app = readinessFixture()
+      create(); local old = timers[1]
+      if mode == "context" then host:setContext({ displayId = "d", regularSpaceId = 10 })
+      elseif mode == "stop" then host:stop()
+      elseif mode == "releaseApp" then host:releaseApplication(7, host.appResources[7].lease)
+      elseif mode == "terminate" then f.lifecycle.callback(nil, f.hs.application.watcher.terminated, app)
+      else
+        local other = {}; for k, v in pairs(f.window) do other[k] = v end
+        create(other)
+      end
+      local queries, count = f.ownerQueries, #events
+      f.owners = { 9 }; old.callback()
+      assert(f.ownerQueries == queries and #events == count and old.stopped)
+      if mode == "supersede" then
+        timers[2].callback(); assert(events[#events].handle ~= f.window)
+      end
+      host:stop()
+    end
+  end,
+  ["LIFE-004 DISC-002: explicit candidate invalidity cancels without snapshot death"] = function()
+    local f, host, timers, events, create, app, element = readinessFixture()
+    create(); element.isValid = function() return false end
+    f.owners = { 9 }; timers[1].callback()
+    assert(f.ownerQueries == 1 and #events == 0 and #timers == 1 and not host.readiness[9])
+    host:stop()
+  end,
+  ["LIFE-004 DISC-002: readiness settles before sink reentry and subscription rejection never retries"] = function()
+    local f, host, timers, events, create = readinessFixture()
+    create(); f.owners = { 9 }
+    host.windowCallback = function()
+      assert(not host.readiness[9], "publication must settle token before callback")
+      host:setContext({ displayId = "d", regularSpaceId = 10 })
+      return false
+    end
+    -- Pending token retains original callback; exercise direct success reentry
+    -- separately with the replacement callback and a fresh exact creation token.
+    host:setContext({ displayId = "d", regularSpaceId = 9 })
+    host:_creationReady(f.window, "created", host.windowCallback)
+    assert(#timers == 1 and not host.readiness[9])
+    local queries = f.ownerQueries; timers[1].callback(); assert(f.ownerQueries == queries)
+    host:stop()
+  end,
+  ["LIFE-004 DISC-002: reentrant query cancellation cannot publish or schedule"] = function()
+    local f, host, timers, events, create = readinessFixture()
+    f.hs.spaces.windowSpaces = function()
+      f.ownerQueries = f.ownerQueries + 1
+      host:setContext({ displayId = "d", regularSpaceId = 10 })
+      return { 9 }
+    end
+    create(); assert(#events == 0 and #timers == 0 and not host.readiness[9])
+    host:stop()
+  end,
+  ["DISC-002 FOCUS-004 LIFE-004: created unknown owner plus unknown focus probe recovers only by bounded positive readiness"] = function()
+    local f = fake()
+    f.members, f.owners = {}, {}
+    local timers, admitted, destroyed = {}, 0, 0
+    f.hs.timer = { doAfter = function(delay, callback)
+      assert(delay == 0.1, "creation readiness must use the existing 100ms timer seam")
+      local timer = { callback = callback, stop = function(self) self.stopped = true end }
+      timers[#timers + 1] = timer; return timer
+    end }
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+    local windows = Windows.new({ sink = function(event)
+      if event.type == "WindowReady" and event.decision.action == "manage" then admitted = admitted + 1 end
+      if event.type == "WindowDestroyed" then destroyed = destroyed + 1 end
+      return true
+    end, native = {
+      subscribeApplications = function(callback) return host:subscribeApplications(callback) end,
+      subscribeExistingWindows = function(callback) return host:subscribeExistingWindows(callback) end,
+      subscribeWindow = function(handle, callback) return host:subscribeWindow(handle, callback) end,
+      probeReadiness = function(id, callback) return host:probeReadiness(id, callback) end,
+      releaseWindow = function(id, lease) return host:releaseWindow(id, lease) end,
+      releaseApplication = function(pid, lease) return host:releaseApplication(pid, lease) end,
+      managedDecision = function() end,
+    } }):start()
+    -- Empty bootstrap is not death evidence. App observer is already attached.
+    local before = f.ownerQueries
+    f.appWatchers[1].callback(f.window, "AXWindowCreated")
+    f.focusedWindow = f.window; host:observeFocus()
+    assert(f.ownerQueries == before + 2, "creation and focus must independently read unknown ownership")
+    assert(admitted == 0 and not windows:handleForId(9), "focus cannot admit an unknown owner")
+    -- No further app/window/focus event: only the creation-scoped readiness timer.
+    assert(#timers == 1, "unknown creation must schedule bounded readiness rather than stay unmanaged")
+    timers[1].callback()
+    assert(admitted == 0 and destroyed == 0 and not windows:handleForId(9), "unknown retry is neither admission nor death")
+    assert(#timers == 2, "three attempts total: initial creation plus two 100ms retries")
+    f.owners = { 9 }
+    timers[2].callback()
+    assert(admitted == 1 and windows:handleForId(9) == f.window, "positive native ownership must admit without another event")
+    assert(f.ownerQueries == before + 4 and #timers == 2 and destroyed == 0)
+    -- Completed callbacks must be inert even if the timer queue redelivers.
+    local queries = f.ownerQueries
+    timers[2].callback()
+    assert(admitted == 1 and f.ownerQueries == queries, "completed attempt must lose currentness")
+    windows:stop(); host:stop()
+    timers[1].callback(); timers[2].callback()
+    assert(admitted == 1 and f.ownerQueries == queries, "stopped generation cannot retry")
+  end,
   ["WIN-005 FOCUS-005: direct retained focus rejects explicitly invalid resource before native request"] = function()
     local f, app, element = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
     host:subscribeExistingWindows(function() end); host:subscribeWindow(f.window, function() end)

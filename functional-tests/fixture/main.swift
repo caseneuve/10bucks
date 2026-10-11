@@ -90,7 +90,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
             sequence = value.intValue
             let alias = object["alias"] as? String
             guard (operation == "quit" && alias == nil) ||
-                  (["create", "focus", "close"].contains(operation) && ["A", "B"].contains(alias ?? "")) else {
+                  (["create", "focus", "close"].contains(operation) && ["A", "B", "C", "D", "E"].contains(alias ?? "")) else {
                 finish(operation: "invalid", alias: nil, accepted: false, error: "unsupported_operation_or_alias")
                 return
             }

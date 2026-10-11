@@ -27,7 +27,7 @@ local ok, failure = pcall(function()
     check(raw:match('"alias"%s*:%s*null') ~= nil)
     check(hs.json.decode(raw).sequence == 3)
     check(not pcall(hs.json.encode, 'A')) -- actual installed table-only contract
-    check(not pcall(Mailbox.publish, directory, 'api-check', 4, 'create', 'C'))
+    check(not pcall(Mailbox.publish, directory, 'api-check', 4, 'create', 'Z'))
     check(not pcall(Mailbox.publish, directory .. '/missing', 'api-check', 4, 'create', 'A'))
     check(hs.json.read(directory .. '/request.json').sequence == 3)
     -- Verify the real overloaded task constructor without starting a process.
