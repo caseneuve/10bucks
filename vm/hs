@@ -5,7 +5,7 @@ if [[ $# == 1 ]]; then code="$1"; else code="$(</dev/stdin)"; fi
 [[ -n "$code" ]] || { echo "Expected guest Lua code." >&2; exit 2; }
 printf -v quoted '%q' "$code"
 # The CLI can hang while Hammerspoon is starting, even with its IPC timeout.
-exec python3 - "$(dirname "$0")/ssh" "/Applications/Hammerspoon.app/Contents/Frameworks/hs/hs -t 5 -c $quoted" <<'PY'
+exec python3 - "$(dirname "$0")/ssh" "/Applications/Hammerspoon.app/Contents/Frameworks/hs/hs -a -t 5 -c $quoted" <<'PY'
 import subprocess
 import sys
 
