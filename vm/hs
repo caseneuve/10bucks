@@ -1,0 +1,17 @@
+#!/bin/bash
+set -euo pipefail
+[[ $# -le 1 ]] || { echo "Usage: vm/hs 'LUA' (or Lua on stdin)" >&2; exit 2; }
+if [[ $# == 1 ]]; then code="$1"; else code="$(</dev/stdin)"; fi
+[[ -n "$code" ]] || { echo "Expected guest Lua code." >&2; exit 2; }
+printf -v quoted '%q' "$code"
+# The CLI can hang while Hammerspoon is starting, even with its IPC timeout.
+exec python3 - "$(dirname "$0")/ssh" "/Applications/Hammerspoon.app/Contents/Frameworks/hs/hs -t 5 -c $quoted" <<'PY'
+import subprocess
+import sys
+
+try:
+    result = subprocess.run(sys.argv[1:], stdin=subprocess.DEVNULL, timeout=15)
+except subprocess.TimeoutExpired:
+    sys.exit('Guest Hammerspoon request timed out after 15s; check guest readiness.')
+sys.exit(result.returncode)
+PY

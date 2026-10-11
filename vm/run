@@ -1,0 +1,47 @@
+#!/bin/bash
+set -euo pipefail
+# shellcheck source=vm/common.sh
+source "$(dirname "$0")/common.sh"
+headless=()
+detach=false
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --headless) headless=(--no-graphics);;
+    --detach) detach=true;;
+    --help)
+      echo "Usage: vm/run [--headless] [--detach] [VM_NAME]"
+      echo "Runs Tart directly; no Terminal.app. --detach returns with a logged background VM."
+      exit 0;;
+    *) echo "Unknown option: $1" >&2; exit 2;;
+  esac
+  shift
+done
+[[ $# -le 1 ]] || { echo "Usage: vm/run [--headless] [--detach] [VM_NAME]" >&2; exit 2; }
+name="${1:-$TENBUCKS_VM}"
+case "$name" in *base*) echo "Refusing to boot a base image; clone it first." >&2; exit 2;; esac
+results="${VM_RESULTS_DIR:-$VM_ROOT/vm/results/$name}"
+mkdir -p "$results"
+args=("$TART_BIN" run "$name" "${headless[@]}"
+  --no-audio --no-clipboard --no-usb-accessories
+  --dir="10bucks:$VM_ROOT:ro" --dir="results:$results")
+if $detach; then
+  # A new session and redirected descriptors survive the caller exiting.
+  exec python3 - "$results" "${args[@]}" <<'PY'
+import pathlib
+import subprocess
+import sys
+import time
+
+results = pathlib.Path(sys.argv[1])
+with (results / 'tart.log').open('ab') as log:
+    child = subprocess.Popen(sys.argv[2:], stdin=subprocess.DEVNULL,
+                             stdout=log, stderr=log, start_new_session=True)
+time.sleep(1)
+if child.poll() is not None:
+    sys.exit(f'Tart exited during launch ({child.returncode}); see {results / "tart.log"}')
+(results / 'tart.pid').write_text(f'{child.pid}\n')
+print(f'Tart launched: PID {child.pid}; log: {results / "tart.log"}')
+print('Launch is not guest readiness; verify SSH and Hammerspoon before testing.')
+PY
+fi
+exec "${args[@]}"
