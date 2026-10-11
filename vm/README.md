@@ -114,7 +114,11 @@ native outcomes, candidate primitive traces, errors, and cleanup results. A VM
 can establish guest functional behavior. Supported-host latency and visual bar/
 Mission Control fidelity remain separately measured on the physical Mac.
 
-**Blocker for target acceptance:** cleanly shut down the SIP-enabled lab and
-create a new stopped reusable base from it, coordinated with its operator.
-Do not silently relabel the existing SIP-disabled functional base as supported.
-No acceptance runner/fixture or manager acceptance test is implemented yet.
+**SIP-enabled base created, 2026-10-11:** with operator approval, the lab was
+cleanly shut down and cloned into `10bucks-functional-sip-base-20261011`.
+The new base is stopped; the old images are retained. Its disposable clone
+`10bucks-run-fixture-proof-20261011` freshly reported SIP enabled, Accessibility
+access, an unlocked session, Secure Input off, and no manager loaded.
+The owned fixture and its no-manager proof controller now exist under
+`functional-tests/fixture/`; native proof is pending. The candidate acceptance
+runner/driver is not implemented yet. Do not relabel the older SIP-disabled base.
