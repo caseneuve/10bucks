@@ -1,11 +1,13 @@
 # Native functional acceptance scenarios
 
 First executable scenario: `scenarios/columns_close_recovery.py`.
-The runner and native guest driver are implemented. First candidate run stopped
-at baseline startup **before scenario execution**; it is NOT accepted/green.
-The controller now reports safe operation labels/counts to diagnose that setup
-failure; a diagnostic rerun is pending. Fixture-only proof passed separately.
-Production Lua is unchanged.
+The runner and native guest driver are implemented. The first native scenario
+passed in a fresh SIP-enabled clone on 2026-10-11: A full-width/focused → A left,
+B right/focused → close B → A full-width/focused → next/previous callbacks.
+Cleanup stopped candidate/fixture/VM and confirmed Tart exit. This accepts only
+this narrow fixture flow, not broad app reliability, bar pixels or performance.
+Earlier failed runs are retained; no deadlines were relaxed. Production Lua is
+unchanged.
 
 ```sh
 ./functional-tests/run --headed --demo columns-close-recovery
@@ -15,6 +17,21 @@ This command clones the stopped SIP-enabled base, opens the guest desktop, runs
 real candidate hotkeys and native frame/focus assertions, then stops the manager,
 fixture and VM. `--demo` adds two-second action pauses for visibility; it is not a
 latency benchmark. Without `--headed` the VM has no desktop window.
+For debugging, `--keep-open` retains the owned VM after failure (the controller
+still has its watchdog). Reuse it without another boot:
+
+```sh
+./functional-tests/run --headed --demo --reuse-debug VM_NAME columns-close-recovery
+```
+
+Reuse requires its recorded debug ownership and rejects an unresolved running
+fixture. Stop it through the retained controller and verify its task exited before
+reuse. The runner reloads guest Hammerspoon modules, snapshots new source into a separate
+session, and leaves the VM running. Reused runs are marked **not cold acceptance**.
+Do not edit a snapshot behind a running candidate. The fixture creates normal
+foreground key windows; creation focus is an outcome check, not proof of manager
+causation. Closing never explicitly focuses the survivor.
+
 Artifacts remain in ignored `vm/results/10bucks-run-ft-*/`, with separate guest
 trace and host summary, source hashes, environment and assertion samples.
 Do not interpret a setup failure as a candidate behavioral result. Scenario
@@ -69,7 +86,9 @@ Implement the `Driver` protocol in the scenario. It must:
   Require native focus **A → B → A**, alongside the correct frames at each step.
   Candidate selection/desired target/pending status are separate diagnostics;
   selection on B with actual focus on A is a failure, not a focus success.
-  The fixture must not explicitly focus A/B during candidate acceptance.
+  Fixture creation uses ordinary foreground/key-window behavior. Do not send a
+  corrective focus action after creation or close. Creation proves final native
+  focus, not manager causation; close recovery/navigation are independent checks.
   `managed` is a read-only candidate alias snapshot.
 - `commands_received` counts actual entry to candidate hotkey callbacks using
   removable test-only instrumentation. Sender completion/event-tap receipt alone
@@ -83,8 +102,9 @@ Implement the `Driver` protocol in the scenario. It must:
   Preserve failures for inspection. Do not load on the host or delete unknown VMs.
 
 Native fixture eligibility and exact resource joins passed the no-manager proof.
-Candidate-driver integration and hotkey callback receipt are implemented but
-still need live proof; the first candidate attempt did not reach them. This scenario does not certify Ghostty silent
+Candidate-driver integration and hotkey receipt passed the recorded fresh-clone
+sequence. Native focus/frame snapshots are independent of candidate diagnostics.
+Bar canvas request/show/handoff facts are diagnostic only: pixels are not asserted. This scenario does not certify Ghostty silent
 close behavior or third-party apps; add real-app regressions separately.
 
 ## Scenario self-checks

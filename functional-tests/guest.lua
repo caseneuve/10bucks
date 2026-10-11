@@ -19,7 +19,10 @@
 local M, s = {}, nil
 local function now() return hs.timer.absoluteTime()/1e9 end
 local function exists(p) return hs.fs.attributes(p) ~= nil end
-local function copy(v) return v and hs.fnutils.copy(v) or nil end
+local function copy(v)
+    if type(v)~='table' then return v end
+    local r={}; for k,value in pairs(v) do r[k]=copy(value) end; return r
+end
 local function atomic(path,value)
     local f=assert(io.open(path..'.tmp','w'))
     assert(f:write(hs.json.encode(value))); assert(f:close())
@@ -136,11 +139,14 @@ local function drain()
     if expected=='quit' then s.quitAck=true end
 end
 local function sample()
-    local sampledAt=now() -- acquisition starts before any focus/AX/native frame reads
+    local sampledAt=now()
+    local timings={} -- acquisition starts before any focus/AX/native frame reads
     local frames,closed={},{}
     local focused=hs.window.focusedWindow()
+    timings.focus=now()-sampledAt
     local focusedAlias
     for alias,w in pairs(s.windows) do
+        local aliasStarted=now()
         local ax=s.axes[alias]
         if s.destroyed[alias] or ax:isValid()==false then closed[#closed+1]=alias
         elseif ax:isValid()==true then
@@ -148,13 +154,21 @@ local function sample()
             local owner=focused and focused:application()
             if focused==w and owner and owner:pid()==s.pid then focusedAlias=alias end
         end
+        timings[alias]=now()-aliasStarted
     end
     table.sort(closed)
+    local snapshotStarted=now()
     local managed,unknown,diagnostics=candidateSnapshot()
+    timings.snapshot=now()-snapshotStarted
+    local bar=s.candidate and s.candidate.bar
+    local barFacts={requested=bar and bar.presentation and bar.presentation.visible or false,
+        showing=bar and bar.canvas and bar.canvas:isShowing() or false,
+        handoff=bar and bar.handoff or false,frame=bar and copy(bar.frame)}
     s.sampleId=s.sampleId+1
     s.latest={sample_id=s.sampleId,sampled_at=sampledAt,frames=frames,closed=closed,
         focused=focusedAlias,managed=managed,commands_received=copy(s.receipts),
-        unknownMembers=unknown,diagnostics=diagnostics}
+        unknownMembers=unknown,diagnostics=diagnostics,nativeDebug=copy(s.nativeDebug),
+        timings=timings,bar=barFacts}
     s.latest.observed_at=now() -- guest publication clock; host must not restamp
     atomic(s.outputDir..'/observation.json',s.latest)
     s.trace[#s.trace+1]=copy(s.latest)
@@ -210,7 +224,16 @@ local bootstrap
 local function tick()
     if now()-s.started>=55 and s.phase~='cleanup' then failure('overall_timeout') end
     if s.phase=='baseline' then
-        if not hs.application.applicationForPID(s.seedPid) and s.seedAX:isValid()==false then
+        local exited=true
+        for _,seed in ipairs(s.seeds) do
+            -- Baseline isolation requires the owning setup processes to exit.
+            -- AX invalidity is recorded separately, not an extra exit condition.
+            seed.processExited=hs.application.applicationForPID(seed.pid)==nil
+            seed.axInvalid=seed.ax:isValid()==false
+            if not seed.processExited then exited=false end
+        end
+        s.baselineFacts.processesExited=exited
+        if exited then
             s.settings.cleanedSeedTerminal=true
             bootstrap(); s.phase='ready'; s.readyDeadline=now()+3
         elseif now()>s.baselineDeadline then failure('seed_terminal_exit_timeout') end
@@ -238,6 +261,23 @@ end
 bootstrap=function()
     s.candidate=dofile(s.sourceRoot..'/10bucks.spoon/init.lua').new()
     s.candidate:configure({builtInDisplayUUID=s.screen:getUUID()})
+    local submit=s.candidate._submitEvent
+    s.nativeDebug={ready=0,normalizedReady=0,metadataMissing=0}
+    s.candidate._submitEvent=function(candidate,event,...)
+        if event.type=='WindowReady' then
+            s.nativeDebug.normalizedReady=s.nativeDebug.normalizedReady+1
+            s.nativeDebug.lastReady={action=event.decision and event.decision.action,
+                reason=event.decision and event.decision.reason,
+                activeSpace=event.spaceId==candidate.context.regularSpaceId,origin=event.metadata and event.metadata.origin,
+                fixture=event.application and event.application.bundleID=='dev.10bucks.functional-fixture',
+                role=event.metadata and event.metadata.role,subrole=event.metadata and event.metadata.subrole}
+            s.nativeDebug.readyEvents=s.nativeDebug.readyEvents or {}
+            s.nativeDebug.readyEvents[#s.nativeDebug.readyEvents+1]=s.nativeDebug.lastReady
+        end
+        local accepted=submit(candidate,event,...)
+        if event.type=='WindowReady' then s.nativeDebug.lastAccepted=accepted end
+        return accepted
+    end
     local names={}
     for name,b in pairs(s.candidate.config.hotkeys) do
         if b~=false then names[chord(b[1],b[2])]=name; s.chords[name]=copy(b) end
@@ -252,6 +292,21 @@ bootstrap=function()
     local ok,err=pcall(function() s.candidate:start() end)
     hs.hotkey.bind=s.originalBind
     assert(ok,err)
+    local host=s.candidate.host
+    local ready=host._ready
+    host._ready=function(h,...)
+        s.nativeDebug.ready=s.nativeDebug.ready+1
+        return ready(h,...)
+    end
+    local metadata=host._metadata
+    host._metadata=function(h,...)
+        local value=metadata(h,...)
+        if not value then s.nativeDebug.metadataMissing=s.nativeDebug.metadataMissing+1
+        else s.nativeDebug.lastMetadata={role=value.role,subrole=value.subrole,
+            modal=value.modal,movable=value.movable,resizable=value.resizable,
+            minimized=value.minimized,appHidden=value.appHidden,origin=value.origin} end
+        return value
+    end
     local _,unknown=candidateSnapshot()
     assert(s.candidate.context and s.candidate.context.regularSpaceId~=nil
         and not s.candidate.suspended,'regular_space_required')
@@ -264,31 +319,35 @@ end
 local function baseline(clean)
     s.operation='enumerate_baseline'
     s.baselineFacts={standard=0,terminalWindows=0,foreignStandard=0,quitRequested=false}
-    local terminal,seed,count=nil,nil,0
+    local count=0
+    s.seeds={}
+    local allowed={['com.apple.Terminal']=true,['com.apple.systempreferences']=true}
+    local apps={}
     for _,app in ipairs(hs.application.runningApplications()) do
+        local standard={}
         for _,w in ipairs(app:allWindows()) do
-            if w:isStandard() then
-                count=count+1
-                s.baselineFacts.standard=count
-                if app:bundleID()~='com.apple.Terminal' then
-                    s.baselineFacts.foreignStandard=s.baselineFacts.foreignStandard+1
-                end
-                assert(app:bundleID()=='com.apple.Terminal','foreign_standard_baseline')
-                terminal=app; seed=w
+            if w:isStandard() then standard[#standard+1]=w end
+        end
+        if #standard>0 then
+            count=count+#standard
+            s.baselineFacts.standard=count
+            if not allowed[app:bundleID()] then
+                s.baselineFacts.foreignStandard=s.baselineFacts.foreignStandard+#standard
+                error('foreign_standard_baseline')
             end
+            assert(#standard==1,'unexpected_seed_baseline')
+            if app:bundleID()=='com.apple.Terminal' then s.baselineFacts.terminalWindows=#standard end
+            local ax=hs.axuielement.windowElement(standard[1])
+            assert(ax:attributeValue('AXRole')=='AXWindow'
+                and ax:attributeValue('AXSubrole')=='AXStandardWindow','seed_not_standard')
+            s.seeds[#s.seeds+1]={pid=app:pid(),ax=ax}
+            -- Keep handles/IDs private; only primitive exit facts are exported.
+            apps[#apps+1]=app
         end
     end
-    if clean then
-        s.operation='validate_seed'
-        s.baselineFacts.terminalWindows=terminal and #terminal:allWindows() or 0
-        assert(count==1 and terminal and #terminal:allWindows()==1,'unexpected_seed_baseline')
-        s.operation='read_seed_ax'
-        s.seedPid=terminal:pid()
-        s.seedAX=hs.axuielement.windowElement(seed)
-        assert(s.seedAX:attributeValue('AXRole')=='AXWindow'
-            and s.seedAX:attributeValue('AXSubrole')=='AXStandardWindow','seed_not_standard')
+    if clean and count>0 then
         s.operation='request_seed_quit'
-        terminal:kill() -- documented graceful termination, no return value; explicit owned-clone opt-in
+        for _,app in ipairs(apps) do app:kill() end -- only identified owned-clone setup apps
         s.baselineFacts.quitRequested=true
         s.phase='baseline'; s.baselineDeadline=now()+3
     else

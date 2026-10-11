@@ -112,7 +112,9 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 window.isReleasedWhenClosed = false
                 window.delegate = self
                 windows[name] = window
-                window.orderFront(nil) // deliberately not makeKey/orderFrontRegardless/activate
+                // Normal foreground window creation, not post-observation focus repair.
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
                 numbers[name] = window.windowNumber
             } else {
                 guard let window = windows[name] else {

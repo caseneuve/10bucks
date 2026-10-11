@@ -54,8 +54,11 @@ Sequences start at 1 and must be exactly previous accepted-envelope sequence + 1
 Operations: `create`, `focus`, `close` with alias `A` or `B`; `quit` with JSON null
 alias. Only create once per alias per process; closed aliases cannot be reused.
 `focus` is solely for fixture control proof without the manager, **not** scenario
-focus repair. Create uses `orderFront(nil)` without activation/key-focus requests;
-the candidate must provide admission focus. Close uses `performClose(nil)` and
+focus repair. Create activates the fixture and uses `makeKeyAndOrderFront(nil)`,
+matching ordinary foreground new-window behavior. This is the action under test,
+not a corrective focus call after an assertion fails. Creation-focus assertions
+prove the final native outcome, not that the manager caused focus. Background
+non-key creation needs a separate scenario. Close uses `performClose(nil)` and
 never explicitly focuses the survivor. AppKit/native fallback behavior must be
 observed independently, not inferred from these choices. Closing releases the
 fixture's NSWindow reference while preserving primitive alias/window-number data.

@@ -20,6 +20,8 @@ def main():
     parser.add_argument("scenario", choices=["columns-close-recovery"])
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--demo", action="store_true", help="2s pauses between actions; not a latency benchmark")
+    parser.add_argument("--keep-open", action="store_true", help="debug only: preserve live guest and controller after failure")
+    parser.add_argument("--reuse-debug", metavar="VM", help="reuse running owned debug guest; reset HS modules, no reboot")
     args = parser.parse_args()
     execution_deadline = time.monotonic() + 95
     def remaining(cap):
@@ -29,8 +31,15 @@ def main():
         return min(cap, left)
     tart = os.environ.get("TART_BIN", str(Path.home() / ".tart/tool/tart.app/Contents/MacOS/tart"))
     nonce = uuid.uuid4().hex
-    vm = "10bucks-run-ft-" + nonce[:12]
+    vm = args.reuse_debug or ("10bucks-run-ft-" + nonce[:12])
+    if args.reuse_debug and not vm.startswith("10bucks-run-ft-"):
+        sys.exit("Only owned FT debug VMs may be reused")
     results = ROOT / "vm/results" / vm
+    if args.reuse_debug:
+        owner = json.loads((results / "debug-owner.json").read_text())
+        if owner["vm"] != vm:
+            sys.exit("debug ownership mismatch")
+        results = results / ("session-" + nonce[:12])
     snapshot = results / "source"
     results.mkdir(parents=True)
     fixture = ROOT / "functional-tests/fixture"
@@ -49,8 +58,10 @@ def main():
     spec.loader.exec_module(module)
     Frame, Observation, scenario = module.Frame, module.Observation, module.run
     env = dict(os.environ, TENBUCKS_VM=vm)
-    guest_root = "/Volumes/My Shared Files/10bucks"
     guest_results = "/Volumes/My Shared Files/results"
+    if args.reuse_debug:
+        guest_results += "/" + results.name
+    guest_root = guest_results + "/source" if args.reuse_debug else "/Volumes/My Shared Files/10bucks"
     process = None
     cloned = False
     error = None
@@ -146,19 +157,31 @@ def main():
                     "closed": sorted(observation.closed), "at": observation.sampled_at}) + "\n")
 
     try:
-        state = subprocess.run([tart, "get", BASE, "--format", "json"], capture_output=True,
-                               text=True, check=True, timeout=remaining(5))
-        if json.loads(state.stdout)["State"] != "stopped":
-            raise RuntimeError("base must be stopped")
-        subprocess.run([tart, "clone", BASE, vm], env=dict(env, TART_NO_AUTO_PRUNE="1"),
-                       check=True, timeout=remaining(30), capture_output=True)
-        cloned = True
-        with (results / "tart.log").open("wb") as log:
-            command = [tart, "run", vm, "--no-audio", "--no-clipboard", "--no-usb-accessories",
-                       f"--dir=10bucks:{snapshot}:ro", f"--dir=results:{results}"]
-            if not args.headed:
-                command.append("--no-graphics")
-            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+        if args.reuse_debug:
+            state = subprocess.run([tart, "get", vm, "--format", "json"], capture_output=True,
+                                   text=True, check=True, timeout=remaining(5))
+            if json.loads(state.stdout)["State"] != "running":
+                raise RuntimeError("debug guest is not running")
+            hs('assert(not ft or not ft.status().ownedTaskRunning,"fixture still running"); return hs.json.encode({ok=true})', 3)
+            try:
+                hs('hs.reload(); return hs.json.encode({ok=true})', 3)
+            except RuntimeError:
+                pass  # transport invalidation expected; readiness confirms new init
+        else:
+            state = subprocess.run([tart, "get", BASE, "--format", "json"], capture_output=True,
+                                   text=True, check=True, timeout=remaining(5))
+            if json.loads(state.stdout)["State"] != "stopped":
+                raise RuntimeError("base must be stopped")
+            subprocess.run([tart, "clone", BASE, vm], env=dict(env, TART_NO_AUTO_PRUNE="1"),
+                           check=True, timeout=remaining(30), capture_output=True)
+            cloned = True
+            with (results / "tart.log").open("wb") as log:
+                command = [tart, "run", vm, "--no-audio", "--no-clipboard", "--no-usb-accessories",
+                           f"--dir=10bucks:{snapshot}:ro", f"--dir=results:{results}"]
+                if not args.headed:
+                    command.append("--no-graphics")
+                process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                                           start_new_session=args.keep_open)
         # Readiness is bounded and separate from the scenario, no actions before ready.
         deadline = min(execution_deadline - 20, time.monotonic() + 60)
         while time.monotonic() < deadline:
@@ -189,7 +212,7 @@ def main():
         ssh(f"mkdir -m 700 {control}")
         hs('ft=dofile("' + guest_root + '/functional-tests/guest.lua"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
-           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",cleanSeedTerminal=true' + '}))')
+           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
         scenario(Driver())
         passed = True
     except BaseException as exc:
@@ -199,7 +222,13 @@ def main():
         execution_deadline = time.monotonic() + 20
         final = None
         # Guest controller owns candidate/fixture stop before VM shutdown.
-        if process is not None:
+        if (process is not None or args.reuse_debug) and not (args.keep_open and error):
+            if error:
+                try:
+                    diagnostic = hs('local out={}; for _,id in ipairs({"org.hammerspoon.Hammerspoon","com.apple.Terminal","com.apple.systempreferences"}) do local a=hs.application.get(id); local row={app=id,running=a~=nil,windows={}}; if a then for _,w in ipairs(hs.axuielement.applicationElement(a):attributeValue("AXWindows") or {}) do local item={role=w:attributeValue("AXRole"),subrole=w:attributeValue("AXSubrole"),buttons={}}; local function walk(e,d) if d>6 then return end; if e:attributeValue("AXRole")=="AXButton" then local t=e:attributeValue("AXTitle"); if t then item.buttons[#item.buttons+1]=t end end; for _,c in ipairs(e:attributeValue("AXChildren") or {}) do walk(c,d+1) end end; walk(w,0); row.windows[#row.windows+1]=item end end; out[#out+1]=row end; return hs.json.encode(out)', 3)
+                    (results / "failure-ui.json").write_text(json.dumps(diagnostic, indent=2))
+                except BaseException:
+                    cleanup["diagnosticCaptured"] = False
             try:
                 hs('if ft then return hs.json.encode(ft.stop()) end', 3)
                 deadline = min(execution_deadline - 7, time.monotonic() + 5)
@@ -214,13 +243,16 @@ def main():
                 cleanup["guest"] = final.get("cleanup", {})
             except BaseException:
                 cleanup["guestStopConfirmed"] = False
+            if args.reuse_debug:
+                cleanup["debugGuestRetained"] = True
             try:
-                ssh("sudo -n /sbin/shutdown -h now", 5)
+                if not args.reuse_debug:
+                    ssh("sudo -n /sbin/shutdown -h now", 5)
             except BaseException:
                 pass
             deadline = execution_deadline - 1
             cleanup["vmStopped"] = False
-            while time.monotonic() < deadline:
+            while not args.reuse_debug and time.monotonic() < deadline:
                 try:
                     r = subprocess.run([tart, "get", vm, "--format", "json"], capture_output=True,
                                        text=True, timeout=remaining(2), check=True)
@@ -231,13 +263,20 @@ def main():
                     pass
                 time.sleep(0.1)
             try:
-                process.wait(timeout=remaining(1))
-                cleanup["tartExited"] = True
+                if process is not None:
+                    process.wait(timeout=remaining(1))
+                    cleanup["tartExited"] = True
             except (subprocess.TimeoutExpired, RuntimeError):
-                cleanup["tartExited"] = process.poll() is not None
-        success = passed and error is None and not (final or {}).get("error") and cleanup.get("vmStopped") and cleanup.get("tartExited") and cleanup.get("guest", {}).get("ok") is True
+                cleanup["tartExited"] = process is not None and process.poll() is not None
+        if process is not None and args.keep_open and error:
+            cleanup["debugGuestRetained"] = True
+            print(f"Debug guest kept running: TENBUCKS_VM={vm} ./vm/hs 'return hs.json.encode(ft.status())'", flush=True)
+            (results / "debug-owner.json").write_text(json.dumps({"vm": vm, "tartPid": process.pid,
+                "run": nonce, "source": str(snapshot), "acceptance": False}, indent=2))
+        success = passed and error is None and not (final or {}).get("error") and (args.reuse_debug or (cleanup.get("vmStopped") and cleanup.get("tartExited"))) and cleanup.get("guest", {}).get("ok") is True
         summary = {"pass": bool(success), "scenarioPassed": passed, "error": error,
-                   "cleanup": cleanup, "vm": vm, "cloneCreated": cloned, "demo": args.demo}
+                   "cleanup": cleanup, "vm": vm, "cloneCreated": cloned, "demo": args.demo, "debugReuse": bool(args.reuse_debug),
+                   "acceptance": bool(success and not args.reuse_debug)}
         (results / "host-result.json").write_text(json.dumps(summary, indent=2) + "\n")
         print(f"{'PASS' if success else 'FAIL'}; artifacts: {results}", flush=True)
     return 0 if success else 1
