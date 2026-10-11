@@ -6,11 +6,11 @@ local function setup()
   local function watcher(callback)
     return { callback = callback, start = function() end, stop = function(self) self.stopped = true end }
   end
-  local app = { pid = function() return 41 end, name = function() return "Fixture" end, bundleID = function() return "fixture" end }
+  local app = { isHidden = function() return false end, pid = function() return 41 end, name = function() return "Fixture" end, bundleID = function() return "fixture" end }
   local windows = {}
   local function owner(id) return id == 1 and f.fullscreen and "full" or "regular" end
   for id = 1, 2 do
-    local window = { id = function() return id end, title = function() return "fixture" end,
+    local window = { isMinimized = function() return false end, id = function() return id end, title = function() return "fixture" end,
       application = function() return app end, role = function() return "AXWindow" end,
       subrole = function() return "AXStandardWindow" end,
       isFullScreen = function() return id == 1 and f.fullscreen end,
@@ -42,8 +42,10 @@ local function setup()
       attributeValue = function() return false end,
       isAttributeSettable = function(_, attribute) return not (window == windows[1] and f.fullscreen and attribute == "AXPosition") end,
     } end },
-    window = { focusedWindow = function() f.queries = f.queries + 1; return f.focused end },
-    application = { runningApplications = function() return { app } end,
+    window = { focusedWindow = function() f.queries = f.queries + 1; return f.focused end,
+      list = function() local rows = {}; for id in ipairs(windows) do if owner(id) == f.activeSpace then
+        rows[#rows + 1] = { kCGWindowNumber = id, kCGWindowOwnerPID = 41 } end end; return rows end },
+    application = { runningApplications = function() return { app } end, applicationForPID = function(pid) return pid == 41 and app or nil end,
       watcher = { new = function(callback) f.life = watcher(callback); return f.life end,
         launched = 2, terminated = 3, hidden = 4, unhidden = 5, activated = 6 } },
     canvas = { new = canvas }, mouse = { absolutePosition = function() return { x = 50, y = 50 } end }, host = { interfaceStyle = function() return nil end },

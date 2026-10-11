@@ -83,23 +83,117 @@ function Tenbucks:_publishBar()
     actual = self.actualPresentation, timestamp = hs.timer.secondsSinceEpoch(), dark = self.darkAppearance })))
 end
 
-function Tenbucks:_stopHost()
-  -- A retained Core may still receive an ordering-lagged observation. Its
-  -- reducer remains available, but its stopped host must not execute effects.
-  if self.core then self.core.observer = function() end end
+function Tenbucks:_stopObservers()
   if self.windows then self.windows:stop() end
   if self.host then self.host:stop() end
-  self.host, self.windows = nil, nil
+  self.host, self.windows, self.effectBatch = nil, nil, nil
 end
 
 function Tenbucks:_stopScope()
-  self:_stopHost()
+  self:_stopObservers()
   self.context, self.core, self.cores, self.suspended = nil, nil, nil, false
 end
 
 local function newCore(context)
   return Core.new({ displayId = context.displayId, regularSpaceId = context.regularSpaceId,
     workArea = context.workArea, layoutDependencies = layoutDependencies() })
+end
+
+function Tenbucks:_observeCoreIntents(core, intents, version)
+  if version > (self.canaryObservedVersion or 0) then
+    self.canaryObservedVersion = version
+    self:_record("reducerCommitVersions")
+  end
+  local entry = { core = core, intents = intents, version = version, contextEpoch = self.contextEpoch }
+  if self.effectBatch then self.effectBatch[#self.effectBatch + 1] = entry
+  else self:_flushCoreIntents({ entry }) end
+end
+
+function Tenbucks:_entryCanExecute(entry)
+  return entry.contextEpoch == self.contextEpoch and entry.core == self.core
+    and not self.suspended and self.host and self.windows
+end
+
+function Tenbucks:_scopedIntents(intents, core)
+  local scoped = {}
+  for _, intent in ipairs(intents) do
+    local desired = core and core:state().manager.focus.desiredBySpace[core.spaceId]
+    local current = intent.kind ~= "focus" or (desired and desired.pending
+      and desired.targetId == intent.windowId and desired.generation == intent.generation)
+    if current then
+    local copy = {}; for key, value in pairs(intent) do copy[key] = value end
+    if copy.kind == "frame" or copy.kind == "focus" then
+      local target = self.handleRegistry:target(copy.windowId)
+      if target and target.spaceId == copy.spaceId then copy.lease = target.lease end
+    end
+    scoped[#scoped + 1] = copy
+    end
+  end
+  return scoped
+end
+
+function Tenbucks:_flushCoreIntents(entries)
+  -- Core reducers, global focus confirmation, and route updates all commit
+  -- before the first native request. Stale/inactive batches own neither.
+  for _, entry in ipairs(entries) do
+    if self:_entryCanExecute(entry) then
+      for _, intent in ipairs(self:_scopedIntents(entry.intents, entry.core)) do
+        if intent.kind == "focus" then
+          local target = { windowId = intent.windowId, spaceId = intent.spaceId }
+          local pending = self.focusHistory:pending()
+          if self:_targetIsManaged(target) and (not pending or pending.windowId ~= target.windowId or pending.spaceId ~= target.spaceId) then
+            self.focusHistory:request(target)
+          end
+        end
+      end
+    end
+  end
+  for _, entry in ipairs(entries) do
+    if self:_entryCanExecute(entry) then
+      self:_publishBar()
+      self.host:execute(self.windows, self:_scopedIntents(entry.intents, entry.core), function(intent)
+        if not self:_entryCanExecute(entry) then return false end
+        if intent.kind == "focus" then
+          local desired = entry.core:state().manager.focus.desiredBySpace[entry.core.spaceId]
+          local pending = self.focusHistory:pending()
+          return desired.pending and desired.targetId == intent.windowId and desired.generation == intent.generation
+            and pending and pending.windowId == intent.windowId and pending.spaceId == intent.spaceId
+        end
+        return intent.kind ~= "frame" or entry.core:frameIsCurrent(intent)
+      end)
+    end
+  end
+end
+
+function Tenbucks:_withEffectBatch(work)
+  local parent, batch = self.effectBatch, {}
+  self.effectBatch = batch
+  local ok, first, second = pcall(work)
+  self.effectBatch = parent
+  if not ok then error(first, 0) end
+  if parent then
+    for _, entry in ipairs(batch) do parent[#parent + 1] = entry end
+  else
+    self:_flushCoreIntents(batch)
+  end
+  return first, second
+end
+
+function Tenbucks:_submitCore(core, event)
+  event.focusAuthority = core == self.core and not self.suspended
+  local accepted, failure = core:submit(event)
+  if not accepted then error(failure, 0) end
+end
+
+function Tenbucks:_coreForSpace(spaceId)
+  local core = self.cores and self.cores[spaceId]
+  if core then return core end
+  if not self.context or not spaceId then return nil end
+  local context = { displayId = self.context.displayId, regularSpaceId = spaceId, workArea = self.context.workArea }
+  core = newCore(context)
+  self.cores[spaceId] = core
+  core.observer = function(intents, version) self:_observeCoreIntents(core, intents, version) end
+  return core
 end
 
 function Tenbucks:_targetIsManaged(target)
@@ -113,22 +207,16 @@ end
 
 -- A managed focus callback can arrive before the host's Space watcher. Route
 -- it by retained membership rather than the host that happened to receive it.
-function Tenbucks:_coreForManagedWindow(windowId)
-  local target = self.handleRegistry:target(windowId)
+function Tenbucks:_coreForManagedWindow(windowId, lease)
+  local target = self.handleRegistry:target(windowId, lease)
   local core = target and self.cores and self.cores[target.spaceId]
   local window = core and core:state().manager.windows[windowId]
-  if window then return core, window end
+  if window then return core, window, target end
 end
 
 function Tenbucks:_afterCoreEvent(event, eventCore)
   if event.type == "WindowDestroyed" then
     self.focusHistory:remove(event.id)
-  elseif event.type == "ApplicationTerminated" then
-    self.focusHistory:removeApplication(event.pid)
-    local history = self.focusHistory:snapshot()
-    for _, target in ipairs(history) do if not self:_targetIsManaged(target) then self.focusHistory:remove(target.windowId) end end
-    local pending = self.focusHistory:pending()
-    if pending and not self:_targetIsManaged(pending) then self.focusHistory:cancel() end
   elseif event.type == "ActualFocusChanged" then
     local window = eventCore and eventCore:state().manager.windows[event.id]
     local unplaced = self.focusHistory:unplacedTarget(event.id)
@@ -139,52 +227,109 @@ function Tenbucks:_afterCoreEvent(event, eventCore)
 end
 
 function Tenbucks:_submitEvent(event, handle)
+  -- A stale lifecycle callback cannot route or mutate actual presentation by
+  -- an ID alone after its window resource lease ended. Current global focus is
+  -- a separate native read and remains presentation-authoritative.
+  if event.id and event.resource and event.type ~= "WindowReady" and event.type ~= "ActualFocusChanged"
+    and not self.handleRegistry:matches(event.id, event.resource) then return true end
   self.actualPresentation = Bar.reduceActual(self.actualPresentation, event)
-  if event.type == "ActualFocusChanged" and event.id == nil then
-    -- A successful native no-focus read clears the bar only; no Core reducer
-    -- accepts nil identity and no focus observation can admit a window.
+  if event.type == "ActualFocusChanged" and event.id == nil then self:_publishBar(); return true end
+  if event.type == "PresentationEnded" then self:_publishBar(); return true end
+  -- A title-only presentation observer has no managed window resource. It can
+  -- update BAR actual presentation but cannot alias an equal numeric ID into a
+  -- retained Core.
+  if event.type == "WindowTitleChanged" and event.presentationResource ~= nil and event.resource == nil then
     self:_publishBar(); return true
   end
-  if event.type == "WindowReady" and event.metadata.spaceType == "fullscreen" then
-    if event.decision.action ~= "manage" then return true end
-    local owner, window = self:_coreForManagedWindow(event.id)
-    if owner then
-      if not window.lifecycle.nativeFullscreen then
-        local ok, err = owner:submit({ type = "WindowEnteredNativeFullscreen", id = event.id })
-        if not ok then error(err, 0) end
+  if event.type == "ActualFocusChanged" and event.id ~= nil then
+    -- A focused conflicting wrapper may share a native ID with a retained
+    -- route. BAR may show the current native read, but managed selection/MRU
+    -- require that route's exact accepted resource.
+    local routed = self.handleRegistry:target(event.id)
+    if routed and routed.lease ~= event.resource then self:_publishBar(); return true end
+  end
+
+  if event.type == "ApplicationHidden" or event.type == "ApplicationUnhidden" or event.type == "ApplicationTerminated" then
+    self:_withEffectBatch(function()
+      local removed = {}
+      for _, core in pairs(self.cores or {}) do
+        if event.type == "ApplicationTerminated" then
+          for id, window in pairs(core:state().manager.windows) do if window.application.pid == event.pid then removed[#removed + 1] = id end end
+        end
+        self:_submitCore(core, event)
       end
-    else
-      self.focusHistory:registerUnplaced(event)
-      self.handleRegistry:remember(event.id, event.spaceId, handle, event.application.pid)
-    end
+      if event.type == "ApplicationTerminated" then
+        for _, id in ipairs(removed) do self.focusHistory:remove(id) end
+        self.focusHistory:removeApplication(event.pid)
+        self.handleRegistry:forgetPid(event.pid, event.resource)
+      end
+    end)
     self:_publishBar()
     return true
   end
-  local eventCore = self.core
-  if event.type == "ActualFocusChanged" then
-    local pending = self.focusHistory:pending()
-    eventCore = (pending and self.cores[pending.spaceId]) or self:_coreForManagedWindow(event.id) or eventCore
-  elseif event.id then
-    eventCore = self:_coreForManagedWindow(event.id) or eventCore
+
+  local readyAction = event.decision and event.decision.action or "manage"
+  local function readyRouteAllowed()
+    local prior = self.handleRegistry:target(event.id)
+    if prior and prior.lease ~= event.resource then return false end
+    return handle == nil or self.handleRegistry:canRemember(event.id, event.resource)
   end
-  if event.type == "WindowReady" and event.decision.action == "manage" then
-    assert(eventCore and eventCore.spaceId == event.spaceId, "regular readiness requires its confirmed Core")
-    -- Commit global relocation before Core admission can request native effects.
-    -- Readiness alone never inserts/reorders an MRU entry.
-    self.focusHistory:promote({ windowId = event.id, spaceId = event.spaceId })
-  end
-  if eventCore then
-    local accepted, failure = eventCore:submit(event)
-    if not accepted then error(failure, 0) end
-    if event.type == "WindowReady" and event.metadata.nativeFullscreen == false then
-      local window = eventCore:state().manager.windows[event.id]
-      if window and window.lifecycle.nativeFullscreen then
-        local ok, err = eventCore:submit({ type = "WindowExitedNativeFullscreen", id = event.id })
-        if not ok then error(err, 0) end
-      end
+  local function rememberReady()
+    if handle ~= nil and not self.handleRegistry:remember(event.id, event.spaceId, handle, event.application.pid, event.resource, event.appResource) then
+      error("current WindowReady route was refused after preflight", 0)
     end
   end
-  self:_afterCoreEvent(event, eventCore)
+  if event.type == "WindowReady" and event.metadata and event.metadata.spaceType == "fullscreen" then
+    if readyAction ~= "manage" then return true end
+    if not readyRouteAllowed() then return false end
+    local owner, window = self:_coreForManagedWindow(event.id, event.resource)
+    if owner then
+      if not window.lifecycle.nativeFullscreen then self:_submitCore(owner, { type = "WindowEnteredNativeFullscreen", id = event.id }) end
+    else
+      self.focusHistory:registerUnplaced(event)
+      rememberReady()
+    end
+    self:_publishBar(); return true
+  end
+
+  if event.type == "WindowReady" and readyAction == "manage" then
+    if not readyRouteAllowed() then return false end
+    self:_withEffectBatch(function()
+      local prior, _, target = self:_coreForManagedWindow(event.id, event.resource)
+      local destination = self:_coreForSpace(event.spaceId)
+      if prior and target.spaceId ~= event.spaceId then
+        self:_submitCore(prior, { type = "WindowRelocated", id = event.id })
+        self.focusHistory:relocate({ windowId = event.id, spaceId = event.spaceId })
+      elseif self.focusHistory:unplacedTarget(event.id) then
+        self.focusHistory:promote({ windowId = event.id, spaceId = event.spaceId })
+      end
+      self:_submitCore(destination, event)
+      local window = destination:state().manager.windows[event.id]
+      if window and window.lifecycle.nativeFullscreen and event.metadata and event.metadata.nativeFullscreen == false then
+        self:_submitCore(destination, { type = "WindowExitedNativeFullscreen", id = event.id })
+      end
+      rememberReady()
+    end)
+    self:_publishBar(); return true
+  end
+
+  local eventCore = nil
+  if event.type == "ActualFocusChanged" then
+    local pending = self.focusHistory:pending()
+    eventCore = (pending and self.cores[pending.spaceId]) or self:_coreForManagedWindow(event.id, event.resource) or self.core
+  elseif event.id then
+    eventCore = self:_coreForManagedWindow(event.id, event.resource)
+  end
+  if event.type == "WindowDestroyed" then
+    self:_withEffectBatch(function()
+      if eventCore then self:_submitCore(eventCore, event) end
+      self:_afterCoreEvent(event, eventCore)
+      self.handleRegistry:forget(event.id, nil, event.resource)
+    end)
+  else
+    if eventCore then self:_submitCore(eventCore, event) end
+    self:_afterCoreEvent(event, eventCore)
+  end
   self:_publishBar()
   return true
 end
@@ -192,8 +337,20 @@ end
 function Tenbucks:_focusManagedPrevious()
   local target = self.focusHistory:previous(function(candidate) return self:_targetIsManaged(candidate) end)
   if not target then return false, "no-previous-managed-window" end
-  self.focusHistory:request(target)
   local targetCore = self.cores[target.spaceId]
+  local window = targetCore and targetCore:state().manager.windows[target.windowId]
+  if window and (window.lifecycle.minimized or window.lifecycle.appHidden) then
+    return false, "previous-managed-window-unavailable"
+  end
+  -- A global target supersedes local requests in other scopes. Retire their
+  -- reducer authority, not just the old native effect, before requesting focus.
+  for _, core in pairs(self.cores or {}) do
+    if core ~= targetCore then
+      local accepted, failure = core:submit({ type = "FocusRequestCancelled", spaceId = core.spaceId })
+      if not accepted then return false, failure end
+    end
+  end
+  self.focusHistory:request(target)
   local handle = self.handleRegistry:resolve(target)
   if not handle then self.focusHistory:cancel(); return false, "previous-managed-window-unavailable" end
   if targetCore then
@@ -203,7 +360,10 @@ function Tenbucks:_focusManagedPrevious()
   end
   -- Use the same targeted post-effect confirmation path as Core focus intents;
   -- hs.window:focus() may not emit an unchanged-focus AX callback.
-  self.host:focus(handle) -- Hammerspoon hs.window:focus() performs the native Space transition.
+  local requested = self.host:focus(handle) -- Native focus may change Spaces.
+  if requested == false and not self:_targetIsManaged(target) then
+    self.focusHistory:cancel(); return false, "previous-managed-window-unavailable"
+  end
   return true
 end
 
@@ -214,16 +374,18 @@ function Tenbucks:_submitCommand(command)
 end
 
 function Tenbucks:_startHost(context)
-  -- Context is committed before bootstrap can publish focus/read-model facts.
+  -- Context and Core exist before bootstrap can synchronously publish facts.
   self.context = context
   local host, adapter
   local ok, err = pcall(function()
     host = Host.new(hs, context, self.instrumentation, self.handleRegistry):start()
     local native = {
       subscribeApplications = function(callback) return host:subscribeApplications(callback) end,
-      subscribeExistingWindows = function(callback) return host:subscribeExistingWindows(callback) end,
+      subscribeExistingWindows = function(callback, bootstrap) return host:subscribeExistingWindows(callback, bootstrap) end,
       subscribeWindow = function(handle, callback) return host:subscribeWindow(handle, callback) end,
       probeReadiness = function(id, callback) return host:probeReadiness(id, callback) end,
+      releaseWindow = function(id, lease) return host:releaseWindow(id, lease) end,
+      releaseApplication = function(pid, lease) return host:releaseApplication(pid, lease) end,
       managedDecision = function(id)
         local _, window = self:_coreForManagedWindow(id)
         if window then return { action = window.ruleAction } end
@@ -233,48 +395,22 @@ function Tenbucks:_startHost(context)
       recordEvent = function(eventType) if self.instrumentation then self.instrumentation:recordEvent(eventType) end end,
     }
     adapter = Windows.new({ native = native, sink = function(event)
-      self:_submitEvent(event, event.id and adapter:handleForId(event.id))
+      return self:_submitEvent(event, event.id and adapter:handleForId(event.id))
     end })
-    if self.core then
-      self.core.observer = function(intents, version)
-        if version > (self.canaryObservedVersion or 0) then
-          self.canaryObservedVersion = version
-          self:_record("reducerCommitVersions")
-        end
-        if not self.suspended then
-          -- All emitted focus requests share the global confirmation gate. A
-          -- newer local command must supersede an in-flight global previous.
-          for _, intent in ipairs(intents) do
-            if intent.kind == "focus" then
-              local target = { windowId = intent.windowId, spaceId = intent.spaceId }
-              local pending = self.focusHistory:pending()
-              if self:_targetIsManaged(target) and (not pending or pending.windowId ~= target.windowId
-                or pending.spaceId ~= target.spaceId) then self.focusHistory:request(target) end
-            end
-          end
-          -- Publish committed feedback before a native effect can block the
-          -- main thread; execution never owns presentation state.
-          self:_publishBar()
-          host:execute(adapter, intents)
-        end
-      end
-    end
-    adapter:start() -- bootstrap/re-synchronize only this confirmed original Space.
-    for _, record in ipairs(self.focusHistory:unplacedTargets()) do
-      local handle = self.handleRegistry:resolve(record.target)
-      if handle then
-        local attached = pcall(adapter.retainManaged, adapter, record.target.windowId, handle, record.pid)
-        if not attached then self:_record("unplacedObserverDeferrals") end
-      end
-    end
-    -- Bootstrap readiness may precede the only focus observation; sample the
-    -- current global native focus once without requesting focus.
-    host:observeFocus()
     self.host, self.windows = host, adapter
+    for _, core in pairs(self.cores or {}) do
+      local observedCore = core
+      observedCore.observer = function(intents, version) self:_observeCoreIntents(observedCore, intents, version) end
+    end
+    adapter:start() -- one runtime-lifetime observer set; initial full discovery.
+    -- Bootstrap readiness may precede the only focus observation; sample once
+    -- without requesting focus.
+    host:observeFocus()
   end)
   if not ok then
     if adapter then adapter:stop() end
     if host then host:stop() end
+    self.host, self.windows = nil, nil
     error(err, 0)
   end
 end
@@ -285,6 +421,7 @@ function Tenbucks:_beginContext(context)
     self.core = newCore(context)
     self.cores[context.regularSpaceId] = self.core
   end
+  self.contextEpoch = (self.contextEpoch or 0) + 1
   self.originContext, self.suspended = context, context.regularSpaceId == nil
   self:_startHost(context)
 end
@@ -293,29 +430,31 @@ end
 -- Space's retained pure Core. A newly observed Space gets one bootstrap; a
 -- returning Space reuses its existing order, selection, and layout state.
 function Tenbucks:_contextChanged(context)
+  self.contextEpoch = (self.contextEpoch or 0) + 1
   if not context.regularSpaceId then
     self.context, self.suspended = context, true
+    if self.host then self.host:setContext(context); self.host:observeFocus() end
     self:_publishBar()
-    self.host:observeFocus()
     return
   end
   if self.context and context.regularSpaceId == self.context.regularSpaceId and not self.suspended then
     self.context = context
+    if self.host then self.host:setContext(context) end
     self.core:setWorkArea(context.workArea)
     self.core:submit({ type = "Reflow" })
     self:_publishBar()
     return
   end
-  self:_stopHost()
-  self.core = self.cores[context.regularSpaceId]
-  if not self.core then
-    self.core = newCore(context)
-    self.cores[context.regularSpaceId] = self.core
-  end
+  self.context = context
+  self.core = self:_coreForSpace(context.regularSpaceId)
   self.suspended = false
-  -- A retained Core must receive geometry before bootstrap can derive frames.
+  -- Geometry commits before discovery can derive any active frames.
   self.core:setWorkArea(context.workArea)
-  self:_startHost(context)
+  self.host:setContext(context)
+  -- Retained handles plus relevant WindowServer owner hints replace global
+  -- application enumeration on ordinary activation. Unknown readiness defers.
+  self.windows:discover()
+  self.host:observeFocus()
   self.core:submit({ type = "Reflow" })
   self:_publishBar()
   local pending = self.focusHistory:pending()
@@ -349,8 +488,11 @@ function Tenbucks:start()
   end)
   if not ok then
     if contextSubscription then contextSubscription.detach() end
-    Bindings.delete(bindings); self:_stopScope(); if self.bar then self.bar:stop(); self.bar = nil end
-    self.originContext = nil; self.instrumentation = nil; error(err, 0)
+    -- Use the ordinary whole-scope stop path: bootstrap may already have
+    -- committed routes/history/presentation before a later binding failure.
+    Bindings.delete(bindings)
+    self:stop()
+    error(err, 0)
   end
   self.contextSubscription, self.hotkeyBindings, self.started = contextSubscription, bindings, true
   return self

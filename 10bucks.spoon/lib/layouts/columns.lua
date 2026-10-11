@@ -185,6 +185,20 @@ function Columns.initialState(memberIds, context)
     stacks[1] = { members = left, selectedId = left[#left] }
     stacks[2] = { members = { memberIds[count] }, selectedId = memberIds[count] }
   end
+  -- New groups inherit their most recent available managed focus, not z-order
+  -- or a reordering of admission membership. Existing layout states retain their
+  -- own selections on later activations.
+  local history = context and context.managedFocusHistory or {}
+  for _, stack in ipairs(stacks) do
+    for index = #history, 1, -1 do
+      local id = history[index]
+      if isAvailable(context.availableMembers, id) then
+        local found = false
+        for _, member in ipairs(stack.members) do if member == id then found = true; break end end
+        if found then stack.selectedId = id; break end
+      end
+    end
+  end
   local activeStack = #stacks > 0 and #stacks or nil
   if validId(context and context.focusedMemberId) then
     local focusedStack = stackIndexForMember({ stacks = stacks }, context.focusedMemberId)

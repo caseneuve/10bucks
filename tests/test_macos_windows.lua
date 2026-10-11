@@ -17,7 +17,8 @@ local function metadata(id, overrides)
 end
 
 local function fake()
-  local value = { events = {}, detached = 0, globalQueries = 0, timers = 0, probes = {}, applicationCallbacks = {}, existingCallbacks = {}, windowSubscriptions = 0 }
+  local value = { events = {}, detached = 0, globalQueries = 0, timers = 0, probes = {}, applicationCallbacks = {}, existingCallbacks = {}, windowSubscriptions = 0,
+    releasedWindows = {}, releasedApplications = {} }
   local function subscription()
     return { detach = function() value.detached = value.detached + 1 end }
   end
@@ -32,6 +33,8 @@ local function fake()
       return subscription()
     end,
     probeReadiness = function(id, callback) value.probes[id] = callback; return subscription() end,
+    releaseWindow = function(id, lease) value.releasedWindows[#value.releasedWindows + 1] = { id = id, lease = lease } end,
+    releaseApplication = function(pid, lease) value.releasedApplications[#value.releasedApplications + 1] = { pid = pid, lease = lease } end,
     globalWindowQuery = function() value.globalQueries = value.globalQueries + 1 end,
     timer = function() value.timers = value.timers + 1 end,
   }
@@ -58,13 +61,13 @@ return {
     local f = fake()
     adapter(f):start()
     local window, application = f.existingCallbacks[1], f.applicationCallbacks[1]
-    window({ kind = "ready", metadata = metadata() })
-    window({ kind = "minimized", id = "window-1" })
-    application({ kind = "hidden", pid = 41 })
-    window({ kind = "enteredNativeFullscreen", id = "window-1" })
-    application({ kind = "unhidden", pid = 41 })
-    window({ kind = "restored", id = "window-1" })
-    window({ kind = "exitedNativeFullscreen", id = "window-1" })
+    window({ kind = "ready", metadata = metadata(), handle = {}, resource = 1, appResource = 2 })
+    window({ kind = "minimized", id = "window-1", resource = 1 })
+    application({ kind = "hidden", pid = 41, resource = 2 })
+    window({ kind = "enteredNativeFullscreen", id = "window-1", resource = 1 })
+    application({ kind = "unhidden", pid = 41, resource = 2 })
+    window({ kind = "restored", id = "window-1", resource = 1 })
+    window({ kind = "exitedNativeFullscreen", id = "window-1", resource = 1 })
     local types = {}
     for _, event in ipairs(f.events) do table.insert(types, event.type) end
     equal(table.concat(types, ","), "WindowReady,WindowMinimized,ApplicationHidden,WindowEnteredNativeFullscreen,ApplicationUnhidden,WindowRestored,WindowExitedNativeFullscreen")
@@ -97,8 +100,8 @@ return {
     local f = fake()
     adapter(f):start()
     local window = f.existingCallbacks[1]
-    window({ kind = "ready", metadata = metadata("managed") })
-    window({ kind = "titleChanged", id = "managed", title = "Renamed" })
+    window({ kind = "ready", metadata = metadata("managed"), handle = {}, resource = 1, appResource = 2 })
+    window({ kind = "titleChanged", id = "managed", title = "Renamed", resource = 1 })
     local state = Model.new({ displayId = "built-in", activeRegularSpaceId = "space-1" })
     state = Model.reduce(state, f.events[1])
     local before, updated = state, Model.reduce(state, f.events[2])
@@ -170,5 +173,56 @@ return {
     instance:stop():stop()
     equal(f.detached, 3)
     assert(instance:handleForId("window-1") == nil)
+  end,
+  ["LIFE-004: failing readiness probe and per-window attach leave no retained adapter state"] = function()
+    local f, instance = fake(), nil
+    instance = adapter(f):start()
+    f.native.probeReadiness = function() error("probe construction failed") end
+    assert(not pcall(function() f.existingCallbacks[1]({ kind = "focus", id = "probe" }) end))
+    assert(instance.probing.probe == nil and instance:handleForId("probe") == nil)
+    f.native.probeReadiness = function(id, callback) f.probes[id] = callback; return { detach = function() f.detached = f.detached + 1 end } end
+    f.existingCallbacks[1]({ kind = "focus", id = "probe" })
+    assert(f.probes.probe and instance.probing.probe)
+    f.native.subscribeWindow = function() error("window watcher construction failed") end
+    f.existingCallbacks[1]({ kind = "ready", metadata = metadata("attach"), handle = {}, resource = 2, appResource = 3 })
+    assert(instance:handleForId("attach") == nil and #f.events == 2, "focus facts only; failed attach cannot admit")
+    instance:stop()
+  end,
+  ["LIFE-001 LIFE-004: repeated current readiness survives explicit false and thrown sink outcomes"] = function()
+    local f, reject = fake(), false
+    local instance = Windows.new({ native = f.native, sink = function(event)
+      f.events[#f.events + 1] = event
+      if reject == "throw" then error("post-commit effect failed") end
+      return reject and false or true
+    end }):start()
+    local window, handle = f.existingCallbacks[1], {}
+    window({ kind = "ready", metadata = metadata("managed"), handle = handle, resource = 10, appResource = 20 })
+    reject = true; window({ kind = "ready", metadata = metadata("managed"), handle = handle, resource = 10, appResource = 20 })
+    assert(instance:handleForId("managed") == handle and #f.releasedWindows == 0)
+    reject = "throw"; assert(not pcall(function()
+      window({ kind = "ready", metadata = metadata("managed"), handle = handle, resource = 10, appResource = 20 })
+    end))
+    assert(instance:handleForId("managed") == handle and #f.releasedWindows == 0)
+    instance:stop()
+  end,
+  ["LIFE-001 LIFE-004: stale leases do not route and protected destruction releases after sink failure"] = function()
+    local f = fake()
+    local instance = Windows.new({ native = f.native, sink = function(event)
+      f.events[#f.events + 1] = event
+      if event.type == "WindowDestroyed" then error("reducer failure") end
+    end }):start()
+    local window = f.existingCallbacks[1]
+    local handle = {}
+    window({ kind = "ready", metadata = metadata("managed"), handle = handle, resource = 10, appResource = 20 })
+    window({ kind = "ready", metadata = metadata("managed"), handle = {}, resource = 11, appResource = 20 })
+    window({ kind = "titleChanged", id = "managed", title = "stale", resource = 11 })
+    assert(#f.events == 1 and instance:handleForId("managed") == handle)
+    assert(#f.releasedWindows == 1 and f.releasedWindows[1].lease == 11, "unadmitted conflict releases only its provisional lease")
+    local ok = pcall(function() window({ kind = "destroyed", id = "managed", resource = 10 }) end)
+    assert(not ok and f.events[#f.events].type == "WindowDestroyed")
+    assert(instance:handleForId("managed") == nil and #f.releasedWindows == 2 and f.releasedWindows[2].lease == 10)
+    local app = f.applicationCallbacks[1]
+    app({ kind = "terminated", pid = 41, resource = 20 })
+    assert(#f.releasedApplications == 1 and f.releasedApplications[1].lease == 20)
   end,
 }

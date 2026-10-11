@@ -65,6 +65,7 @@ function Rules.ready(input, priorManagedDecision)
     id = true, application = true, title = true, displayId = true, spaceId = true,
     role = true, subrole = true, modal = true, movable = true, resizable = true,
     selfProcess = true, origin = true, spaceType = true, nativeFullscreen = true,
+    minimized = true, appHidden = true,
   }) then return nil, "readiness metadata contains unsupported facts" end
   if not validId(input.id) or not validId(input.displayId) or not validId(input.spaceId)
     or type(input.application) ~= "table" or getmetatable(input.application) ~= nil
@@ -84,7 +85,7 @@ function Rules.ready(input, priorManagedDecision)
   if input.nativeFullscreen ~= nil and type(input.nativeFullscreen) ~= "boolean" then
     return nil, "nativeFullscreen must be boolean or nil"
   end
-  for _, field in ipairs({ "modal", "movable", "resizable", "selfProcess" }) do
+  for _, field in ipairs({ "modal", "movable", "resizable", "selfProcess", "minimized", "appHidden" }) do
     if input[field] ~= nil and type(input[field]) ~= "boolean" then return nil, field .. " must be boolean or nil" end
   end
   for _, field in ipairs({ "role", "subrole" }) do
@@ -97,6 +98,7 @@ function Rules.ready(input, priorManagedDecision)
     modal = input.modal, movable = input.movable, resizable = input.resizable,
     selfProcess = input.selfProcess, origin = input.origin,
     spaceType = input.spaceType or "user", nativeFullscreen = input.nativeFullscreen or false,
+    minimized = input.minimized, appHidden = input.appHidden,
     createdAfterStart = input.origin == "created",
   }
   -- A committed manage decision is stable across independent lifecycle

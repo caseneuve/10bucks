@@ -59,6 +59,9 @@ function NativeBar:present(presentation)
   self.presentation = presentation; self:_ensure()
   if not sameFrame(self.frame, presentation.frame) then self.canvas:frame(presentation.frame); self.frame = { x = presentation.frame.x, y = presentation.frame.y, w = presentation.frame.w, h = presentation.frame.h } end
   if not sameElements(self.elements, presentation.elements) then self.canvas:replaceElements(presentation.elements); self.elements = presentation.elements end
+  -- Visibility is native adapter state, not the last requested show/hide.
+  -- Check only on event publication; never introduce a recovery poll.
+  if self.showing and self.canvas.isShowing and not self.canvas:isShowing() then self.showing = false end
   if not self.handoff and not self.showing then
     -- Read the pointer only when about to show: unchanged publications must not
     -- query it, and an already-inside pointer hands off without a show/hide flash.

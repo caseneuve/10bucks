@@ -14,9 +14,16 @@ local function dependencies()
   }
 end
 
-local function ready(id)
-  return { type = "WindowReady", id = id, title = id, displayId = "built-in", spaceId = "space-1",
+local function ready(id, created)
+  local event = { type = "WindowReady", id = id, title = id, displayId = "built-in", spaceId = "space-1",
     application = { pid = 1, name = "Example", bundleID = "example.app" } }
+  if not created then
+    event.metadata = { id = id, application = event.application, title = id, displayId = event.displayId,
+      spaceId = event.spaceId, origin = "bootstrap", createdAfterStart = false, role = "AXWindow",
+      subrole = "AXStandardWindow", modal = false, movable = true, resizable = true, selfProcess = false }
+    event.decision = { action = "manage" }
+  end
+  return event
 end
 
 local function harness()
@@ -83,7 +90,8 @@ local cases = {
        :send({ type = "CycleLayout" }):send({ type = "CycleLayout" })
       equal(h:columns().activeStack, 2); equal(h:columns().stacks[1].selectedId, "B")
       h:send({ type = "FocusLeftGroup" }); equal(h:focusIntent().windowId, "B")
-      h:send({ type = "ActualFocusChanged", id = "C" }):send({ type = "ActualFocusChanged", id = "popup" })
+      h:send({ type = "ActualFocusChanged", id = "B" }) -- confirm requested left focus
+       :send({ type = "ActualFocusChanged", id = "C" }):send({ type = "ActualFocusChanged", id = "popup" })
        :send({ type = "CycleLayout" }):send({ type = "CycleLayout" })
       equal(h:columns().activeStack, 2); equal(h:columns().stacks[1].selectedId, "B")
     end,
@@ -92,7 +100,7 @@ local cases = {
     name = "WIN-003 FOCUS-006: admission request survives delayed metadata and stale actual callback",
     run = function(h)
       h:send(ready("A")):send(ready("B")):send({ type = "CycleLayout" })
-       :send({ type = "ActualFocusChanged", id = "A" }):send(ready("C"))
+       :send({ type = "ActualFocusChanged", id = "A" }):send(ready("C", true))
       equal(h:desired().targetId, "C"); assert(h:desired().pending)
       h:send({ type = "WindowTitleChanged", id = "C", title = "ready later" })
       assert(h:focusIntent() == nil)
@@ -109,8 +117,11 @@ local cases = {
     run = function(h)
       h:send(ready("A")):send(ready("B")):send({ type = "CycleLayout" })
        :send({ type = "ActualFocusChanged", id = "A" }):send(ready("C")):send({ type = "ActualFocusChanged", id = "C" })
-       :send({ type = "ActualFocusChanged", id = "B" }):send({ type = "WindowDestroyed", id = "C" })
+       :send({ type = "WindowDestroyed", id = "C" })
+      -- Host normalizes invalid-resource removal before sampling fallback focus.
       equal(h:focusIntent().windowId, "A"); equal(h:columns().activeStack, 1)
+      h:send({ type = "ActualFocusChanged", id = "B" })
+      equal(h:desired().targetId, "A"); assert(h:desired().pending)
 
       local other = harness()
       other:send(ready("A")):send(ready("B")):send({ type = "CycleLayout" })

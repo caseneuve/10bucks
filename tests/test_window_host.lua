@@ -1,4 +1,10 @@
 local Host = require("lib.macos.window_host")
+local Registry = require("lib.macos.handle_registry")
+local Windows = require("lib.macos.windows")
+
+local function ownedCount(host)
+  local count = 0; for _ in pairs(host.owned) do count = count + 1 end; return count
+end
 
 local function fake()
   local f = { scans = 0, stops = 0, membershipQueries = 0, ownerQueries = 0, focusedWindowQueries = 0, focusRequests = 0, owners = { 9 }, members = { 9 } }
@@ -7,14 +13,122 @@ local function fake()
   -- but axuielement.windowElement(window) is a different userdata with no watcher.
   local element = { asHSWindow = function() return f.window end, attributeValue = function(_, key) return key == "AXModal" and false end, isAttributeSettable = function() return true end }
   local function windowWatcher(callback) f.windowWatcher = watcher(callback); return f.windowWatcher end
-  local app = { pid = function() return 7 end, name = function() return "App" end, bundleID = function() return "app" end, focusedWindow = function() return f.window end, allWindows = function() f.scans = f.scans + 1; return { f.window } end, newWatcher = function(_, callback) local w = watcher(callback); f.appWatchers[#f.appWatchers + 1] = w; return w end }
+  local app = { isHidden = function() return false end, pid = function() return 7 end, name = function() return "App" end, bundleID = function() return "app" end, focusedWindow = function() return f.window end, allWindows = function() f.scans = f.scans + 1; return { f.window } end, newWatcher = function(_, callback) local w = watcher(callback); f.appWatchers[#f.appWatchers + 1] = w; return w end }
   f.appWatchers = {}
   f.actual = { x = 0, y = 0, w = 10, h = 10 }
-  f.window = { id = function() return 9 end, title = function() return "Title" end, application = function() return app end, role = function() return "AXWindow" end, subrole = function() return "AXStandardWindow" end, isFullScreen = function() return f.fullscreen end, newWatcher = function(_, callback) return windowWatcher(callback) end, frame = function() return f.actual end, setFrame = function(_, frame, duration) f.duration = duration; f.writes = (f.writes or 0) + 1; f.actual = frame end, focus = function() f.focusRequests = f.focusRequests + 1 end }
-  f.hs = { processInfo = { processID = 1 }, window = { focusedWindow = function() f.focusedWindowQueries = f.focusedWindowQueries + 1; if f.focusedWindowError then error("focused-window read failed") end; return f.focusedWindow end }, axuielement = { windowElement = function(value) assert(value == f.window, "reverse conversion forbidden"); return element end }, spaces = { windowsForSpace = function() f.membershipQueries = f.membershipQueries + 1; return f.members end, windowSpaces = function(id) assert(id == 9); f.ownerQueries = f.ownerQueries + 1; return f.owners end, spaceType = function(id) assert(id == 9); return f.spaceType or "user" end }, application = { runningApplications = function() return { app } end, watcher = { new = function(callback) f.lifecycle = watcher(callback); return f.lifecycle end, terminated = 3, hidden = 4, unhidden = 5, launched = 2, activated = 5 } } }
+  f.window = { isMinimized = function() return false end, id = function() return 9 end, title = function() return "Title" end, application = function() return app end, role = function() return "AXWindow" end, subrole = function() return "AXStandardWindow" end, isFullScreen = function() return f.fullscreen end, newWatcher = function(_, callback) return windowWatcher(callback) end, frame = function() f.frameReads = (f.frameReads or 0) + 1; return f.actual end, setFrame = function(_, frame, duration) f.duration = duration; f.writes = (f.writes or 0) + 1; f.actual = frame end, focus = function() f.focusRequests = f.focusRequests + 1 end }
+  f.hs = { processInfo = { processID = 1 }, window = { focusedWindow = function() f.focusedWindowQueries = f.focusedWindowQueries + 1; if f.focusedWindowError then error("focused-window read failed") end; return f.focusedWindow end }, axuielement = { windowElement = function() return element end }, spaces = { windowsForSpace = function() f.membershipQueries = f.membershipQueries + 1; return f.members end, windowSpaces = function() f.ownerQueries = f.ownerQueries + 1; return f.owners end, spaceType = function() return f.spaceType or "user" end }, application = { runningApplications = function() return { app } end, watcher = { new = function(callback) f.lifecycle = watcher(callback); return f.lifecycle end, terminated = 3, hidden = 4, unhidden = 5, launched = 2, activated = 5 } } }
   return f, app, element
 end
 return {
+  ["WIN-005 FOCUS-005: direct retained focus rejects explicitly invalid resource before native request"] = function()
+    local f, app, element = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+    host:subscribeExistingWindows(function() end); host:subscribeWindow(f.window, function() end)
+    host.windowCallback = function(event) if event.kind == "destroyed" then host:releaseWindow(event.id, event.resource) end end
+    element.isValid = function() return false end
+    assert(host:focus(f.window) == false and f.focusRequests == 0 and not host.handles[9])
+    host:stop()
+  end,
+  ["DISC-002 STATE-008: unknown native lifecycle defers readiness without admitting available state"] = function()
+    local f, app = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+    local events = {}
+    f.window.isMinimized = function() return nil end
+    host:subscribeExistingWindows(function(e) events[#events + 1] = e end)
+    assert(#events == 0 and not host.handles[9])
+    f.window.isMinimized = function() return false end
+    app.isHidden = function() return nil end
+    host:_ready(f.window, "created", function(e) events[#events + 1] = e end)
+    assert(#events == 0 and not host.handles[9])
+    host:stop()
+  end,
+  ["WIN-005 LIFE-004: app focus event removes invalid retained member even after presentation moved elsewhere"] = function()
+    local f, app, element = fake()
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+    local events = {}
+    host:subscribeExistingWindows(function() end)
+    host:subscribeWindow(f.window, function() end)
+    host.windowCallback = function(event)
+      events[#events + 1] = event
+      if event.kind == "destroyed" then host:releaseWindow(event.id, event.resource) end
+    end
+    -- No prior presentation points to this member: a previous focus callback
+    -- already selected a different app, but this app now signals a close/focus.
+    element.isValid = function() return false end
+    f.appWatchers[1].callback(nil, "AXFocusedWindowChanged")
+    assert(events[1].kind == "destroyed" and not host.handles[9])
+    host:stop()
+  end,
+  ["WIN-005 FOCUS-004: focus boundary removes only explicitly invalid exact prior managed resource before fallback focus"] = function()
+    local f, app, element = fake()
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+    local events = {}
+    host:subscribeExistingWindows(function() end)
+    host:subscribeWindow(f.window, function() end)
+    host.windowCallback = function(event)
+      events[#events + 1] = event
+      if event.kind == "destroyed" then host:releaseWindow(event.id, event.resource) end
+    end
+    f.focusedWindow = f.window; host:observeFocus()
+    for _, shape in ipairs({ "valid", "uncertain", "error" }) do
+      element.isValid = function()
+        if shape == "error" then error("AX unavailable") end
+        if shape == "valid" then return true end
+        return nil
+      end
+      local before = #events; host:observeFocus()
+      assert(#events == before + 1 and events[#events].kind == "focus" and host.handles[9])
+    end
+    element.isValid = function() return false end
+    f.focusedWindow = nil
+    local before = #events; host:observeFocus()
+    assert(events[before + 1].kind == "destroyed" and events[before + 2].kind == "focus")
+    assert(not host.handles[9])
+    host:stop()
+  end,
+  ["PERF-001 DISC-001: activation hint readiness retries are bounded and stale after context change or stop"] = function()
+    local f, app = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+    local timers, hints = {}, 0
+    f.hs.timer = { doAfter = function(_, callback)
+      local timer = { callback = callback, stop = function(self) self.stopped = true end }
+      timers[#timers + 1] = timer; return timer
+    end }
+    f.hs.window.list = function() hints = hints + 1; return {} end
+    f.hs.application.applicationForPID = function() return app end
+    host:subscribeExistingWindows(function() end, false)
+    assert(#timers == 1)
+    timers[1].callback(); timers[2].callback()
+    assert(#timers == 2 and hints == 3 and not host.discoveryTimer)
+    host:subscribeExistingWindows(function() end, false)
+    local old = timers[3]; host:setContext({ regularSpaceId = 10 })
+    local before = hints; old.callback(); assert(hints == before and old.stopped)
+    host:subscribeExistingWindows(function() end, false)
+    old = timers[4]; host:stop(); before = hints; old.callback()
+    assert(hints == before and old.stopped)
+  end,
+  ["PERF-002 DISC-001: activation scans only hinted unknown owners and never all running applications"] = function()
+    local f, app = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+    local events = {}
+    host:subscribeExistingWindows(function(e) events[#events + 1] = e end, true)
+    local scans = f.scans
+    f.hs.application.runningApplications = function() error("global activation enumeration") end
+    f.hs.window.list = function() error("known-only activation must not query owner hints") end
+    host:subscribeExistingWindows(function(e) events[#events + 1] = e end, false)
+    assert(f.scans == scans)
+    local second = {}; for key, value in pairs(f.window) do second[key] = value end
+    second.id = function() return 10 end
+    f.members = { 9, 10, 11 }
+    local unrelated = { allWindows = function() error("unrelated app scan") end }
+    f.hs.application.applicationForPID = function(pid) return pid == 7 and app or unrelated end
+    f.hs.window.list = function() return { { kCGWindowNumber = 10, kCGWindowOwnerPID = 7 },
+      { kCGWindowNumber = 11, kCGWindowOwnerPID = 7 }, { kCGWindowNumber = 999, kCGWindowOwnerPID = 999 } } end
+    app.allWindows = function() f.scans = f.scans + 1; return { f.window, second } end
+    host:subscribeExistingWindows(function(e) events[#events + 1] = e end, false)
+    assert(f.scans == scans + 1 and host.handles[10] and not host.handles[11])
+    -- Snapshot absence and missing hints cannot release current resources.
+    f.members = {}; host:subscribeExistingWindows(function() end, false)
+    assert(host.handles[9] and host.handles[10])
+    host:stop()
+  end,
   ["BAR-004 FOCUS-003: focused unmanaged title observation never admits and is released on focus clear"] = function()
     local f = fake(); local title = "Popup"; local unmanagedWatcher
     local unmanaged = { id = function() return 10 end, title = function() return title end,
@@ -24,8 +138,11 @@ return {
     local host = Host.new(f.hs, { displayId = "d", regularSpaceId = "regular" }):start(); local events, terminated = {}, nil
     host.windowCallback = function(event) events[#events + 1] = event end
     host:subscribeApplications(function(event) terminated = event end)
+    -- Runtime start always attaches application resources through the normal
+    -- full discovery path before a later termination is authoritative.
+    host:subscribeExistingWindows(function(event) events[#events + 1] = event end)
     f.focusedWindow = unmanaged; assert(host:observeFocus())
-    assert(#events == 1 and events[1].id == 10)
+    assert(events[#events].id == 10)
     title = "Renamed"; unmanagedWatcher.callback(nil, "AXTitleChanged")
     assert(events[#events].kind == "titleChanged" and events[#events].title == "Renamed")
     local secondWatcher; local second = { id = function() return 11 end, title = function() return "Other popup" end,
@@ -39,6 +156,8 @@ return {
     assert(terminated.kind == "terminated" and unmanagedWatcher.stopped)
     f.focusedWindow = nil; assert(host:observeFocus())
     assert(events[#events].kind == "focus" and events[#events].id == nil)
+    local count = #events; unmanagedWatcher.callback(nil, "AXTitleChanged")
+    assert(#events == count, "detached presentation callback is stale")
     host:stop()
   end,
   ["BAR-004: failed optional unmanaged title observer preserves actual focus"] = function()
@@ -108,9 +227,9 @@ return {
     host:subscribeExistingWindows(function(e) events[#events + 1] = e end)
     assert(f.membershipQueries == 1 and f.scans == 1 and events[1].metadata.origin == "bootstrap")
     f.members = {}; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2 and f.ownerQueries == 1)
-    f.owners = { 99 }; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2)
-    f.owners = { 9, 10 }; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2)
-    f.owners = { 9 }; f.spaceType = "fullscreen"; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2)
+    f.owners = { 99 }; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 3 and events[3].metadata.spaceId == 99)
+    f.owners = { 9, 10 }; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 3)
+    f.owners = { 9 }; f.spaceType = "fullscreen"; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 3)
   end,
   ["nil/error app watcher and failed bootstrap defer only that app while peers still boot"] = function()
     local f, primary = fake()
@@ -151,13 +270,129 @@ return {
       local f, start = failing(kind); assert(not pcall(start)); assert(f.stops == 1, kind .. " watcher leaked after failed start")
     end
   end,
-  ["host frame effects compare targeted actual frames and permit drift correction"] = function()
+  ["LIFE-001 LIFE-004: Host-to-Windows non-admission and unknown probe release only provisional records"] = function()
+    local f, _, element = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
+    element.attributeValue = function(_, key) return key == "AXModal" and true or false end
+    local windows = Windows.new({ sink = function(event) events[#events + 1] = event; return true end, native = {
+      subscribeApplications = function(callback) return host:subscribeApplications(callback) end,
+      subscribeExistingWindows = function(callback) return host:subscribeExistingWindows(callback) end,
+      subscribeWindow = function(handle, callback) return host:subscribeWindow(handle, callback) end,
+      probeReadiness = function(id, callback) return host:probeReadiness(id, callback) end,
+      releaseWindow = function(id, lease) return host:releaseWindow(id, lease) end,
+      releaseApplication = function(pid, lease) return host:releaseApplication(pid, lease) end,
+      managedDecision = function() end,
+    } }):start()
+    assert(events[1].decision.action == "exclude" and not host.handles[9] and not windows:handleForId(9))
+    element.attributeValue = function(_, key) return key == "AXModal" and false end
+    host:_ready(f.window, "created", host.windowCallback)
+    local admitted = host.handles[9]
+    assert(admitted and windows:handleForId(9) == f.window)
+    f.windowWatcher.callback(nil, "AXUIElementDestroyed")
+    assert(not host.handles[9] and not windows:handleForId(9), "managed destruction remains authoritative")
+
+    element.isAttributeSettable = function(_, key) if key == "AXPosition" then return nil end; return true end
+    host:_ready(f.window, "created", host.windowCallback)
+    assert(events[#events].decision.action == "defer" and not host.handles[9])
+    element.isAttributeSettable = function() return true end
+    local original = f.window.newWatcher; f.window.newWatcher = function() return nil end
+    host:_ready(f.window, "created", host.windowCallback)
+    assert(not host.handles[9] and not windows:handleForId(9), "failed attach discards its exact provisional record")
+    f.window.newWatcher = original; host:_ready(f.window, "created", host.windowCallback)
+    assert(host.handles[9] and windows:handleForId(9) == f.window, "same ID may retry after provisional cleanup")
+    f.windowWatcher.callback(nil, "AXUIElementDestroyed")
+    f.owners, f.focusedWindow = {}, f.window; assert(host:observeFocus())
+    assert(not host.handles[9] and not windows:handleForId(9), "unknown uncached focus probe releases only its provisional record")
+    windows:stop(); host:stop()
+  end,
+  ["LIFE-001 LIFE-004: failed app/window attachments reject old callbacks and active ownership returns to baseline"] = function()
+    local f, app = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
+    host:_acceptApp(app)
+    local baseline = ownedCount(host)
+    local oldAppCallback, originalAppWatcher = nil, app.newWatcher
+    app.newWatcher = function(_, callback)
+      oldAppCallback = callback
+      return { start = function() error("failed app attach") end, stop = function() f.stops = f.stops + 1 end }
+    end
+    assert(not pcall(function() host:_attachApp(app, function(event) events[#events + 1] = event end) end))
+    app.newWatcher = originalAppWatcher
+    host:_attachApp(app, function(event) events[#events + 1] = event end)
+    local before = #events; oldAppCallback(f.window, "AXWindowCreated")
+    assert(#events == before, "failed app attachment callback must lose currentness on retry")
+    f.appWatchers[#f.appWatchers].callback(f.window, "AXWindowCreated")
+    assert(#events == before + 1, "current app attachment remains accepted")
+
+    local oldWindowCallback, originalWindowWatcher = nil, f.window.newWatcher
+    local windowBaseline = ownedCount(host)
+    f.window.newWatcher = function(_, callback)
+      oldWindowCallback = callback
+      return { start = function() error("failed window attach") end, stop = function() f.stops = f.stops + 1 end }
+    end
+    assert(not pcall(function() host:subscribeWindow(f.window, function(event) events[#events + 1] = event end) end))
+    f.window.newWatcher = originalWindowWatcher
+    local subscription = host:subscribeWindow(f.window, function(event) events[#events + 1] = event end)
+    before = #events; oldWindowCallback(nil, "AXTitleChanged")
+    assert(#events == before, "failed window attachment callback must lose currentness on retry")
+    f.windowWatcher.callback(nil, "AXTitleChanged")
+    assert(#events == before + 1)
+    subscription.detach(); assert(ownedCount(host) == windowBaseline, "detached current watcher must leave active ownership")
+    for _ = 1, 3 do
+      local churn = host:subscribeWindow(f.window, function() end)
+      assert(churn); churn.detach()
+    end
+    assert(ownedCount(host) == windowBaseline, "closed/failed watcher churn cannot retain stopped ownership")
+    host:stop(); assert(ownedCount(host) == 0)
+  end,
+  ["LIFE-001 BAR-004: deferred focused presentation is source-aware and management replaces its title-only watcher"] = function()
+    local f, app = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
+    host.windowCallback = function(event) events[#events + 1] = event end
+    host:subscribeApplications(function(event) events[#events + 1] = event end)
+    host:subscribeExistingWindows(function(event) events[#events + 1] = event end)
+    host:subscribeWindow(f.window, function(event) events[#events + 1] = event end)
+    local deferredTitleWatcher, clone = nil, { pid = app.pid, name = app.name, bundleID = app.bundleID, newWatcher = app.newWatcher }
+    local deferred = { id = function() return 10 end, title = function() return "Deferred" end, application = function() return clone end,
+      isFullScreen = function() return false end, newWatcher = function(_, callback)
+        deferredTitleWatcher = { callback = callback, start = function() end, stop = function(self) self.stopped = true end }; return deferredTitleWatcher end }
+    f.focusedWindow = deferred; assert(host:observeFocus() and host.presentationWindow == deferred)
+    f.lifecycle.callback(nil, 3, app)
+    assert(not deferredTitleWatcher.stopped, "termination of accepted app A cannot stop deferred same-PID source B")
+    local sameIdWatcher
+    local sameId = { id = f.window.id, title = function() return "Same ID conflict" end, application = function() return clone end,
+      isFullScreen = function() return false end, newWatcher = function(_, callback)
+        sameIdWatcher = { callback = callback, start = function() end, stop = function(self) self.stopped = true end }; return sameIdWatcher end }
+    f.focusedWindow = sameId; assert(host:observeFocus() and host.presentationWindow == sameId and deferredTitleWatcher.stopped)
+    sameIdWatcher.callback(nil, "AXTitleChanged"); assert(events[#events].presentationResource == host.presentationLease)
+
+    local titleWatchers = {}
+    local managed = { id = function() return 11 end, title = function() return "Promote" end, application = function() return app end,
+      isFullScreen = function() return false end, newWatcher = function(_, callback)
+        local watcher = { callback = callback, start = function() end, stop = function(self) self.stopped = true end }
+        titleWatchers[#titleWatchers + 1] = watcher; return watcher end }
+    f.focusedWindow = managed; assert(host:observeFocus() and #titleWatchers == 1)
+    host:subscribeWindow(managed, function(event) events[#events + 1] = event end)
+    assert(titleWatchers[1].stopped and #titleWatchers == 2, "managed watcher replaces title-only observer")
+    local before = #events; titleWatchers[1].callback(nil, "AXTitleChanged")
+    assert(#events == before, "stopped title-only attachment callback is no longer current")
+    host:stop()
+  end,
+  ["PERF-003 WIN-007: synchronization reads actual frames and corrects drift without redundant writes"] = function()
     local f = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
     local adapter = { handleForId = function() return f.window end }
-    host:execute(adapter, { { kind = "frame", windowId = 9, frame = { x = 0, y = 0, w = 10, h = 10 } } }); assert(not f.writes)
+    local intent = { kind = "frame", windowId = 9, frame = { x = 0, y = 0, w = 10, h = 10 } }
+    host:execute(adapter, { intent }); assert(f.frameReads == 1 and not f.writes)
     f.actual = { x = 3, y = 0, w = 10, h = 10 }
-    host:execute(adapter, { { kind = "frame", windowId = 9, frame = { x = 0, y = 0, w = 10, h = 10 } } }); assert(f.writes == 1)
-    host:execute(adapter, { { kind = "frame", windowId = 9, frame = { x = 0, y = 0, w = 10, h = 10 } } }); assert(f.writes == 1)
+    host:execute(adapter, { intent }); assert(f.frameReads == 2 and f.writes == 1)
+    host:execute(adapter, { intent }); assert(f.frameReads == 3 and f.writes == 1)
+    host:stop()
+  end,
+  ["LIFE-001: effect execution resolves the matching current window lease"] = function()
+    local f = fake(); local registry = Registry.new(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }, nil, registry):start()
+    registry:remember(9, 9, f.window, 7, 30, 40)
+    local adapter = { handleForId = function() error("unscoped adapter lookup must not run") end }
+    host:execute(adapter, { { kind = "frame", windowId = 9, spaceId = 9, lease = 31, frame = { x = 1, y = 0, w = 10, h = 10 } } })
+    assert(not f.writes)
+    host:execute(adapter, { { kind = "frame", windowId = 9, spaceId = 9, lease = 30, frame = { x = 1, y = 0, w = 10, h = 10 } } })
+    assert(f.writes == 1)
+    host:stop()
   end,
   ["POC-009 host focus confirms only a matching targeted read without an AX callback"] = function()
     local f = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
@@ -184,7 +419,10 @@ return {
     host:probeReadiness(9, function(metadata) assert(metadata and metadata.origin == "targetedReadiness") end); local scans = f.scans
     host:probeReadiness(99, function(metadata) assert(metadata == nil) end); assert(f.scans == scans)
     f.windowWatcher.callback(nil, "AXWindowMiniaturized"); f.fullscreen = true; f.windowWatcher.callback(nil, "AXWindowResized"); f.windowWatcher.callback(nil, "AXUIElementDestroyed")
-    assert(events[#events].kind == "destroyed"); host:probeReadiness(9, function(metadata) assert(metadata == nil) end)
+    local destroyed = events[#events]
+    assert(destroyed.kind == "destroyed" and host.handles[9], "routing owns the record until it commits")
+    host:releaseWindow(9, destroyed.resource)
+    host:probeReadiness(9, function(metadata) assert(metadata == nil) end)
     local lifecycleCount, scansBeforeLaunch = #events, f.scans
     f.focusedWindow, f.fullscreen = f.window, false
     f.lifecycle.callback(nil, 5, app)
@@ -196,7 +434,56 @@ return {
     assert(f.scans == scansBeforeLaunch + 1, "launch must perform exactly one app-local readiness scan")
     f.appWatchers[#f.appWatchers].callback(f.window, "AXWindowCreated"); assert(events[#events].kind == "ready")
     local old = f.appWatchers[#f.appWatchers].callback
-    f.lifecycle.callback(nil, 3, app); subscription.detach(); host:stop():stop(); assert(f.stops == 5)
+    f.lifecycle.callback(nil, 3, app); subscription.detach(); host:stop():stop(); assert(f.stops >= 4)
     host:start(); old(element, "AXWindowCreated"); assert(events[#events].kind == "terminated")
+  end,
+  ["LIFE-001 LIFE-004: optional app watcher failure retains app lease and termination releases later subscriptions"] = function()
+    local f, app = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
+    local original = app.newWatcher; app.newWatcher = function() return nil end
+    host:subscribeApplications(function(event) events[#events + 1] = event end)
+    host:subscribeExistingWindows(function(event) events[#events + 1] = event end)
+    local ready = events[1]
+    assert(ready.resource and ready.appResource and host.handles[9].appLease == ready.appResource)
+    app.newWatcher = original
+    host:_attachApp(app, function(event) events[#events + 1] = event end)
+    host:subscribeWindow(f.window, function(event) events[#events + 1] = event end)
+    f.lifecycle.callback(nil, 3, app)
+    local terminated = events[#events]
+    host:releaseApplication(7, terminated.resource)
+    assert(f.appWatchers[1].stopped and f.windowWatcher.stopped and not host.handles[9] and not host.appResources[7])
+    host:stop()
+  end,
+  ["LIFE-001 LIFE-004: current records reject stale callbacks and defer same-PID app conflicts"] = function()
+    local f, app = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
+    host:subscribeApplications(function(event) events[#events + 1] = event end)
+    host:subscribeExistingWindows(function(event) events[#events + 1] = event end)
+    local firstReady, originalWatcher = events[1], f.appWatchers[1]
+    host:subscribeWindow(f.window, function(event) events[#events + 1] = event end)
+    local currentWindowWatcher = f.windowWatcher.callback
+    local clone = { isHidden = app.isHidden, pid = app.pid, name = app.name, bundleID = app.bundleID, allWindows = app.allWindows,
+      newWatcher = app.newWatcher }
+    local scans, watchers = f.scans, #f.appWatchers
+    f.lifecycle.callback(nil, 2, clone)
+    assert(f.scans == scans and #f.appWatchers == watchers and host.appResources[7].app == app)
+    f.lifecycle.callback(nil, 4, clone)
+    assert(#events == 1, "mismatched lifecycle payload is not authoritative")
+    local cloneWindow = { isMinimized = f.window.isMinimized, id = function() return 10 end, title = function() return "Candidate" end,
+      application = function() return clone end, role = f.window.role, subrole = f.window.subrole,
+      isFullScreen = function() return false end, newWatcher = f.window.newWatcher }
+    clone.allWindows = function() f.scans = f.scans + 1; return { cloneWindow } end
+    f.members = { 9, 10 }; f.hs.application.runningApplications = function() return { clone } end
+    host:subscribeExistingWindows(function(event) events[#events + 1] = event end)
+    assert(#events == 1 and not host.handles[10], "complete conflict scan must defer its unequal app window")
+    f.lifecycle.callback(nil, 3, app)
+    local terminated = events[#events]
+    assert(terminated.kind == "terminated" and terminated.resource == host.appResources[7].lease)
+    host:releaseApplication(7, terminated.resource)
+    currentWindowWatcher(nil, "AXTitleChanged")
+    originalWatcher.callback(f.window, "AXWindowCreated")
+    assert(#events == 2, "released app/window callbacks are stale")
+    f.hs.application.runningApplications = function() return { clone } end
+    host:subscribeExistingWindows(function(event) events[#events + 1] = event end)
+    assert(#f.appWatchers == watchers + 1 and events[#events].kind == "ready" and events[#events].resource ~= firstReady.resource)
+    host:stop()
   end,
 }

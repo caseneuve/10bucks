@@ -14,18 +14,30 @@ function Bar.reduceActual(actual, event)
     if event.id == nil then return {} end
     return { id = event.id, title = type(event.title) == "string" and event.title or nil,
       applicationName = type(event.applicationName) == "string" and event.applicationName or nil,
-      applicationPid = event.applicationPid, nativeFullscreen = event.nativeFullscreen == true }
+      applicationPid = event.applicationPid, windowResource = event.resource,
+      appResource = event.appResource, presentationResource = event.presentationResource,
+      nativeFullscreen = event.nativeFullscreen == true }
   end
-  if event.type == "WindowTitleChanged" and actual.id == event.id then
+  local matchingWindow = event.presentationResource == nil and event.resource == actual.windowResource
+  local matchingPresentation = event.presentationResource ~= nil and event.presentationResource == actual.presentationResource
+  if event.type == "WindowTitleChanged" and actual.id == event.id and (matchingWindow or matchingPresentation) then
     return { id = actual.id, title = event.title, applicationName = actual.applicationName,
-      applicationPid = actual.applicationPid, nativeFullscreen = actual.nativeFullscreen == true }
+      applicationPid = actual.applicationPid, windowResource = actual.windowResource,
+      appResource = actual.appResource, presentationResource = actual.presentationResource,
+      nativeFullscreen = actual.nativeFullscreen == true }
   end
-  if event.id == actual.id and (event.type == "WindowEnteredNativeFullscreen" or event.type == "WindowExitedNativeFullscreen") then
+  if event.id == actual.id and (matchingWindow or matchingPresentation)
+    and (event.type == "WindowEnteredNativeFullscreen" or event.type == "WindowExitedNativeFullscreen") then
     return { id = actual.id, title = actual.title, applicationName = actual.applicationName,
-      applicationPid = actual.applicationPid, nativeFullscreen = event.type == "WindowEnteredNativeFullscreen" }
+      applicationPid = actual.applicationPid, windowResource = actual.windowResource,
+      appResource = actual.appResource, presentationResource = actual.presentationResource,
+      nativeFullscreen = event.type == "WindowEnteredNativeFullscreen" }
   end
-  if event.type == "WindowDestroyed" and actual.id == event.id then return {} end
-  if event.type == "ApplicationTerminated" and actual.applicationPid == event.pid then return {} end
+  if event.type == "WindowDestroyed" and actual.id == event.id and (matchingWindow or matchingPresentation) then return {} end
+  if event.type == "PresentationEnded" and actual.id == event.id
+    and event.presentationResource == actual.presentationResource then return {} end
+  if event.type == "ApplicationTerminated" and actual.applicationPid == event.pid
+    and event.resource == actual.appResource then return {} end
   return actual
 end
 

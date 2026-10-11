@@ -153,11 +153,15 @@ function FocusHistory.reduce(state, event)
     return nextState
   end
 
-  if event.type == "Promote" then
+  if event.type == "Promote" or event.type == "Relocate" then
     local promoted = target(event.target)
-    if not state.unplaced[promoted.windowId] then return state end
+    if event.type == "Promote" and not state.unplaced[promoted.windowId] then return state end
+    local known = state.unplaced[promoted.windowId]
+    local inHistory = false
+    for _, entry in ipairs(state.entries) do if entry.windowId == promoted.windowId then inHistory = true end end
+    if event.type == "Relocate" and not known and not inHistory and not (state.pending and state.pending.windowId == promoted.windowId) then return state end
     local nextState = copy(state)
-    nextState.unplaced[promoted.windowId] = nil
+    if event.type == "Promote" then nextState.unplaced[promoted.windowId] = nil end
     for _, entry in ipairs(nextState.entries) do
       if entry.windowId == promoted.windowId then entry.spaceId = promoted.spaceId end
     end
@@ -250,6 +254,10 @@ end
 
 function FocusHistory:promote(promoted)
   self:_submit({ type = "Promote", target = target(promoted) })
+end
+
+function FocusHistory:relocate(targetValue)
+  self:_submit({ type = "Relocate", target = target(targetValue) })
 end
 
 -- Commit a new global request before its native focus effect is issued.

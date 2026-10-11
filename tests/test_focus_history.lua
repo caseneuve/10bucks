@@ -107,4 +107,13 @@ return {
     history:remove("A")
     assert(history:previous(function() return true end) == nil)
   end,
+  ["LIFE-002 FOCUS-005: regular relocation rebinds MRU and pending target without reordering"] = function()
+    local history = FocusHistory.new()
+    history:observe({ windowId = "A", spaceId = "one" })
+    history:observe({ windowId = "B", spaceId = "one" })
+    history:request({ windowId = "A", spaceId = "one" })
+    history:relocate({ windowId = "A", spaceId = "two" })
+    assert(ids(history) == "A,B" and history:snapshot()[1].spaceId == "two")
+    assert(history:pending().windowId == "A" and history:pending().spaceId == "two")
+  end,
 }

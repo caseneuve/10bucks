@@ -19,6 +19,14 @@ local function copy(value, seen)
   return result
 end
 
+local function sameData(left, right)
+  if type(left) ~= type(right) then return false end
+  if type(left) ~= "table" then return left == right end
+  for key, value in pairs(left) do if not sameData(value, right[key]) then return false end end
+  for key in pairs(right) do if left[key] == nil then return false end end
+  return true
+end
+
 local function validId(value)
   return (type(value) == "string" and value ~= "") or (type(value) == "number" and value == value)
 end
@@ -57,6 +65,7 @@ local function context(manager, displayId, spaceId)
     -- Layout activation follows actual managed focus, or the last available
     -- managed focus when a popup/unmanaged window currently owns macOS focus.
     focusedMemberId = focused,
+    managedFocusHistory = manager.focus.managedHistory,
   }
 end
 
@@ -67,7 +76,13 @@ end
 
 local function selectedId(coordinator, available)
   local state = coordinator.layouts[coordinator.activeLayoutId]
-  if state.selectedId ~= nil then return state.selectedId end
+  if state.selectedId ~= nil then
+    if not available or available[state.selectedId] then return state.selectedId end
+    for index = #(state.members or {}), 1, -1 do
+      if available[state.members[index]] then return state.members[index] end
+    end
+    return nil
+  end
   if state.activeStack then
     local stack = state.stacks[state.activeStack]
     if not available or available[stack.selectedId] then return stack.selectedId end
@@ -139,20 +154,33 @@ end
 local function reduceComposite(current, transaction, displayId, spaceId, dependencies)
   if type(transaction) ~= "table" or type(transaction.type) ~= "string" then error("core input must be a normalized event or command", 2) end
   local before, manager = current.manager, current.manager
+  -- Composition supplies this primitive authority fact for lifecycle routing to
+  -- inactive retained scopes. State/layout still reduce there, but admission or
+  -- recovery must not strand a pending native focus request.
+  local focusAuthority = transaction.focusAuthority ~= false
   local isCommand = transaction.type == "Command"
   if not isCommand then manager = Model.reduce(manager, transaction) end
   local coordinator = current.coordinators[spaceId]
   local oldIds, newIds = members(before, spaceId), members(manager, spaceId)
 
   local removedSelected, recoveryGroup = false, nil
+  -- Capture recovery authority from the complete pre-removal layout before
+  -- any multi-member pruning can erase a later selected source.
+  for _, id in ipairs(oldIds) do
+    local group = groupForMember(coordinator, id)
+    if not contains(newIds, id) and isGroupSelection(coordinator, id, group)
+      and (not selectedGroup(coordinator) or group == selectedGroup(coordinator)) then
+      removedSelected, recoveryGroup = true, group
+    end
+  end
   for _, id in ipairs(oldIds) do
     if not contains(newIds, id) then
       local sourceGroup = groupForMember(coordinator, id)
       local wasSelected = isGroupSelection(coordinator, id, sourceGroup)
+      local needsRecovery = wasSelected and (not selectedGroup(coordinator) or sourceGroup == selectedGroup(coordinator))
       coordinator = Coordinator.reduce(coordinator,
-        { type = "Remove", memberId = id, recoverSource = wasSelected }, newIds,
+        { type = "Remove", memberId = id, recoverSource = needsRecovery }, newIds,
         context(manager, displayId, spaceId), dependencies)
-      if wasSelected then removedSelected, recoveryGroup = true, sourceGroup end
     end
   end
   for _, id in ipairs(newIds) do
@@ -179,12 +207,14 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
     coordinator = Coordinator.reduce(coordinator, { type = "RecoverSource", sourceGroup = recoveryGroup }, newIds,
       context(manager, displayId, spaceId), dependencies)
   end
-  local commandChanged = false
+  local commandChanged, commandAccepted = false, false
   if isCommand then
     local beforeCommand = coordinator
     if transaction.name == "FocusTarget" then
       local window = manager.windows[transaction.windowId]
-      if window and window.placementSpaceId == spaceId and availability(manager)[transaction.windowId] then
+      commandAccepted = window ~= nil and window.placementSpaceId == spaceId
+        and (availability(manager)[transaction.windowId] == true or fullscreenFocusable(window))
+      if commandAccepted and availability(manager)[transaction.windowId] then
         coordinator = Coordinator.reduce(coordinator,
           { type = "ManagedFocusObserved", memberId = transaction.windowId }, newIds,
           context(manager, displayId, spaceId), dependencies)
@@ -192,7 +222,9 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
     else
       local event = { type = transaction.name }
       for key, value in pairs(transaction) do if key ~= "type" and key ~= "name" then event[key] = value end end
-      coordinator = Coordinator.reduce(coordinator, event, newIds, context(manager, displayId, spaceId), dependencies)
+      local capability
+      coordinator, capability = Coordinator.reduce(coordinator, event, newIds, context(manager, displayId, spaceId), dependencies)
+      commandAccepted = capability.handled == true
     end
     commandChanged = coordinator ~= beforeCommand
   end
@@ -202,11 +234,18 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
   local bootstrapAdmission = admitted and transaction.type == "WindowReady"
     and transaction.metadata and transaction.metadata.origin == "bootstrap"
   local directional = transaction.name == "FocusLeftGroup" or transaction.name == "FocusRightGroup"
-  local commandFocus = isCommand and focusCommands[transaction.name] and (not directional or commandChanged)
-  if target and ((admitted and not bootstrapAdmission) or removedSelected or commandFocus) then
+  local commandFocus = isCommand and commandAccepted and focusCommands[transaction.name] and (not directional or commandChanged)
+  if focusAuthority and target and (available[target] or fullscreenFocusable(manager.windows[target])) and ((admitted and not bootstrapAdmission) or removedSelected or commandFocus) then
     manager = setDesired(manager, spaceId, target, true, selectedGroup(coordinator))
-  elseif isCommand and (transaction.name == "CycleLayout" or transaction.name == "ActivateLayout") and target then
-    manager = setDesired(manager, spaceId, target, false, selectedGroup(coordinator))
+  elseif focusAuthority and isCommand and commandAccepted
+    and (transaction.name == "CycleLayout" or transaction.name == "ActivateLayout") and target then
+    local desired = manager.focus.desiredBySpace[spaceId]
+    if desired.pending then
+      manager = copy(manager)
+      manager.focus.desiredBySpace[spaceId].sourceGroup = selectedGroup(coordinator)
+    else
+      manager = setDesired(manager, spaceId, target, false, selectedGroup(coordinator))
+    end
   end
   -- Admission/removal are propagated explicitly above, focus observations use
   -- ManagedFocusObserved, and layout activation synchronizes internally. Do not
@@ -237,13 +276,7 @@ function Core.new(options)
       local coordinator = committed.coordinators[core.spaceId]
       local intents = {}
       local available = availability(committed.manager)
-      local projected = Coordinator.project(coordinator, available, core.workArea,
-        context(committed.manager, core.displayId, core.spaceId), core.dependencies)
-      local emitted = {}
-      for _, frame in ipairs(projected) do
-        if not emitted[frame.windowId] then emitted[frame.windowId] = true; intents[#intents + 1] = { kind = "frame", windowId = frame.windowId,
-          displayId = frame.displayId, spaceId = frame.spaceId, frame = copy(frame.frame), duration = 0 } end
-      end
+      local commandAccepted = false
       if input.type == "Command" then
         local event = { type = input.name }
         for key, value in pairs(input) do if key ~= "type" and key ~= "name" then event[key] = value end end
@@ -257,9 +290,40 @@ function Core.new(options)
           _, capability = Coordinator.reduce(coordinator, event, members(committed.manager, core.spaceId),
             context(committed.manager, core.displayId, core.spaceId), core.dependencies)
         end
+        commandAccepted = capability.handled == true
         if not capability.handled then intents[#intents + 1] = { kind = "result", accepted = false, reason = capability.reason } end
       end
       local desired = committed.manager.focus.desiredBySpace[core.spaceId]
+      local actualId = committed.manager.focus.actualWindow.id
+      -- Presentation and duplicate readiness do not synchronize geometry. Real
+      -- layout/availability changes and explicit commands remain drift-correction
+      -- boundaries (WIN-007). A stale focus callback cannot add such a boundary.
+      local lifecycleChanged = false
+      for id, window in pairs(committed.manager.windows) do
+        local before = previous.manager.windows[id]
+        if before and not sameData(window.lifecycle, before.lifecycle) then lifecycleChanged = true; break end
+      end
+      local synchronize = commandAccepted or lifecycleChanged
+        or not sameData(coordinator, previous.coordinators[core.spaceId])
+        or not sameData(members(committed.manager, core.spaceId), members(previous.manager, core.spaceId))
+        or not sameData(available, availability(previous.manager))
+        or (actualId ~= previous.manager.focus.actualWindow.id and available[actualId] == true
+          and not desired.pending)
+      if synchronize then
+        local projected = Coordinator.project(coordinator, available, core.workArea,
+          context(committed.manager, core.displayId, core.spaceId), core.dependencies)
+        core.currentFrames = {}
+        local emitted = {}
+        for _, frame in ipairs(projected) do
+          core.currentFrames[frame.windowId] = copy(frame.frame)
+          if not emitted[frame.windowId] then
+            emitted[frame.windowId] = true
+            intents[#intents + 1] = { kind = "frame", windowId = frame.windowId,
+              displayId = frame.displayId, spaceId = frame.spaceId, frame = copy(frame.frame),
+              duration = 0 }
+          end
+        end
+      end
       -- Only this transaction's newly committed request may produce an effect.
       -- Background lifecycle facts must not replay an older pending request
       -- over a newer global fullscreen target.
@@ -273,9 +337,19 @@ function Core.new(options)
       end
       return intents
     end,
-    observeIntents = function(intents, version) core.observer(copy(intents), version) end,
+    observeIntents = function(intents, version)
+      core.pendingIntents = core.pendingIntents or {}
+      core.pendingIntents[#core.pendingIntents + 1] = { intents = copy(intents), version = version }
+    end,
   })
   return core
+end
+
+function Core:frameIsCurrent(intent)
+  -- Projection is derived once per synchronization transaction, not once per
+  -- native window effect. This cache owns no membership/selection decisions.
+  local frame = self.currentFrames and self.currentFrames[intent.windowId]
+  return frame ~= nil and sameData(frame, intent.frame)
 end
 
 function Core:submit(input)
@@ -289,6 +363,12 @@ function Core:submit(input)
   end
   local ok, err = self.runtime:submit(translated)
   self.lastResult = ok and { accepted = true } or { accepted = false, reason = err }
+  -- Execute observers after the reducer queue drains. Native callbacks can now
+  -- submit/commit newer events before the old intent list resumes.
+  if not self.runtime.draining then
+    local pending = self.pendingIntents or {}; self.pendingIntents = {}
+    for _, entry in ipairs(pending) do self.observer(entry.intents, entry.version) end
+  end
   return ok, err
 end
 
@@ -298,6 +378,7 @@ function Core:setWorkArea(nextWorkArea)
   local current = self.workArea
   if current.x == nextWorkArea.x and current.y == nextWorkArea.y and current.w == nextWorkArea.w and current.h == nextWorkArea.h then return end
   self.workArea = copy(nextWorkArea)
+  self.currentFrames = nil
 end
 function Core:state() return self.runtime:state() end
 function Core:version() return self.runtime:version() end

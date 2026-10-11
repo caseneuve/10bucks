@@ -247,7 +247,8 @@ local function normalizeReady(state, event)
       role = metadata.role, subrole = metadata.subrole, modal = metadata.modal,
       movable = metadata.movable, resizable = metadata.resizable, selfProcess = metadata.selfProcess,
     } or nil,
-    lifecycle = { minimized = false, appHidden = false, nativeFullscreen = false },
+    lifecycle = { minimized = metadata and metadata.minimized == true or false,
+      appHidden = metadata and metadata.appHidden == true or false, nativeFullscreen = false },
     observations = {},
   }
 end
@@ -283,8 +284,8 @@ function Model.reduce(state, event)
       window.observations.visible = event.visible
       changed = true
     end
-  elseif event.type == "WindowDestroyed" then
-    if not validId(event.id) then error("WindowDestroyed requires an id", 2) end
+  elseif event.type == "WindowDestroyed" or event.type == "WindowRelocated" then
+    if not validId(event.id) then error(event.type .. " requires an id", 2) end
     changed = removeWindow(nextState, event.id)
   elseif event.type == "ApplicationTerminated" then
     if not validId(event.pid) then error("ApplicationTerminated requires a pid", 2) end
@@ -319,6 +320,9 @@ function Model.reduce(state, event)
       window.title = event.title
       changed = true
     end
+  elseif event.type == "FocusRequestCancelled" then
+    local desired = nextState.focus.desiredBySpace[event.spaceId]
+    if desired and desired.pending then desired.pending = false; changed = true end
   elseif event.type == "ActualFocusChanged" then
     if not validId(event.id) then error("ActualFocusChanged requires an id", 2) end
     nextState.focus.actualWindow = { id = event.id, title = event.title, applicationName = event.applicationName }

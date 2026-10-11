@@ -7,7 +7,8 @@ local function fake()
   local canvas = { level = function(self) return self end, behavior = function(self) return self end, clickActivating = function(self) return self end,
     canvasMouseEvents = function(self) f.mouseEvents = true; return self end, mouseCallback = function(self, cb) f.mouse = cb; return self end,
     frame = function(self) f.frames = f.frames + 1; return self end, replaceElements = function(self) f.replaces = f.replaces + 1; return self end,
-    show = function(self) f.shows = f.shows + 1; return self end, hide = function(self) f.hides = f.hides + 1; return self end,
+    isShowing = function() return f.showing == true end,
+    show = function(self) f.shows = f.shows + 1; f.showing = true; return self end, hide = function(self) f.hides = f.hides + 1; f.showing = false; return self end,
     delete = function() f.deleted = f.deleted + 1 end }
   f.canvas, f.now, f.pointer = canvas, 1, { x = 40, y = 40 }
   return f, { canvas = { new = function() return canvas end }, mouse = { absolutePosition = function() f.pointerReads = (f.pointerReads or 0) + 1; return f.pointer end },
@@ -15,6 +16,16 @@ local function fake()
     distributednotifications = { new = function(callback) f.appearance = { callback = callback, start = function() end, stop = function() f.appearanceStopped = true end }; return f.appearance end } }
 end
 return {
+  ["BAR-001 BAR-006: event publication restores an externally hidden canvas without rerendering unchanged content"] = function()
+    local f, hs = fake(); local owner = NativeBar.new(hs, function() end):start()
+    local presentation = { displayId = "built-in", frame = { x = 0, y = 0, w = 100, h = 32 }, visible = true, elements = {} }
+    owner:present(presentation); assert(f.shows == 1)
+    f.showing = false -- Native visibility changed independently of cached intent.
+    owner:present(presentation)
+    assert(f.shows == 2 and f.replaces == 1)
+    owner:present(presentation); assert(f.shows == 2)
+    owner:stop()
+  end,
   ["BAR-003 BAR-004 BAR-005: semantic view formats actual unmanaged/no-focus presentation and coordinator status"] = function()
     local context = { displayId = "built-in", barFrame = { x = 0, y = 0, w = 400, h = 32 }, regularSpaceId = "b", regularPositions = { "a", "b" } }
     local view = Bar.view({ context = context, layout = "columns", status = { position = 2, count = 3 }, actual = { id = "popup", title = "Popup" }, timestamp = 0.25 })
@@ -30,6 +41,17 @@ return {
     assert(Bar.view({ context = context, actual = exited, timestamp = 0 }).visible)
     local noFocus = Bar.reduceActual(view.actual, { type = "ActualFocusChanged" })
     assert(Bar.format(Bar.view({ context = context, actual = noFocus, timestamp = 0 })).elements[4].text:find("No focused window", 1, true))
+  end,
+  ["BAR-004 LIFE-001: stale window, presentation, and app resources cannot replace actual presentation"] = function()
+    local actual = Bar.reduceActual({}, { type = "ActualFocusChanged", id = 9, title = "Current", applicationPid = 7,
+      resource = 10, appResource = 20, presentationResource = 30 })
+    assert(Bar.reduceActual(actual, { type = "WindowTitleChanged", id = 9, title = "stale", resource = 11 }).title == "Current")
+    assert(Bar.reduceActual(actual, { type = "WindowTitleChanged", id = 9, title = "missing token" }).title == "Current")
+    assert(Bar.reduceActual(actual, { type = "WindowTitleChanged", id = 9, title = "stale popup", presentationResource = 31 }).title == "Current")
+    assert(Bar.reduceActual(actual, { type = "ApplicationTerminated", pid = 7 }).id == 9)
+    assert(Bar.reduceActual(actual, { type = "ApplicationTerminated", pid = 7, resource = 21 }).id == 9)
+    assert(Bar.reduceActual(actual, { type = "WindowTitleChanged", id = 9, title = "fresh popup", presentationResource = 30 }).title == "fresh popup")
+    assert(Bar.reduceActual(actual, { type = "ApplicationTerminated", pid = 7, resource = 20 }).id == nil)
   end,
   ["BAR-002: handoff callback waits grace and stop clears its temporary tracker"] = function()
     local f, hs = fake(); local owner = NativeBar.new(hs, function() end):start()

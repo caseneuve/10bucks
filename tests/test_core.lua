@@ -50,6 +50,181 @@ local function frames(intents)
 end
 
 return {
+  ["STATE-008 FOCUS-006: unavailable created member cannot strand desired focus while restore preserves independent hide"] = function()
+    local core = new(function() end)
+    core:submit(bootstrapReady("one")); core:submit({ type = "ActualFocusChanged", id = "one" })
+    local event = bootstrapReady("two", 2)
+    event.metadata.origin = "created"; event.metadata.createdAfterStart = true
+    event.metadata.minimized, event.metadata.appHidden = true, true
+    assert(core:submit(event))
+    local state = core:state(); local desired = state.manager.focus.desiredBySpace["space-1"]
+    assert(desired.targetId ~= "two" and not Model.isAvailable(state.manager.windows.two))
+    core:submit({ type = "ActualFocusChanged", id = "one" })
+    assert(not core:state().manager.focus.desiredBySpace["space-1"].pending)
+    core:submit({ type = "WindowRestored", id = "two" })
+    assert(not Model.isAvailable(core:state().manager.windows.two))
+    core:submit({ type = "ApplicationUnhidden", pid = 2 })
+    assert(Model.isAvailable(core:state().manager.windows.two))
+    equal(#core:state().manager.spaces["space-1"].memberIds, 2)
+  end,
+  ["FOCUS-004 WIN-005: app termination captures focused source before removing every affected member"] = function()
+    local observed
+    local core = new(function(intents) observed = intents end)
+    core:submit(bootstrapReady("one", 1)); core:submit(bootstrapReady("two", 1)); core:submit(bootstrapReady("three", 2))
+    core:submit({ type = "ActualFocusChanged", id = "two" }); core:submit({ type = "CycleLayout" })
+    core:submit({ type = "ApplicationTerminated", pid = 1 })
+    local state = core:state(); equal(#state.manager.spaces["space-1"].memberIds, 1)
+    equal(state.manager.focus.desiredBySpace["space-1"].targetId, "three")
+    local requested
+    for _, intent in ipairs(observed) do if intent.kind == "focus" then requested = intent.windowId end end
+    equal(requested, "three")
+  end,
+  ["STATE-001 WIN-002 WIN-005 FOCUS-006: combined focus-layout-delete orderings preserve membership and pending authority after every transition"] = function()
+    for _, initial in ipairs({ "stack", "columns" }) do
+      for _, late in ipairs({ "one", "two", "popup" }) do
+        local core = new(function() end)
+        local function send(event, expectedMembers)
+          assert(core:submit(event))
+          local state = core:state()
+          assert(Model.validate(state.manager))
+          equal(#state.manager.spaces["space-1"].memberIds, expectedMembers)
+          local memberIds = state.manager.spaces["space-1"].memberIds
+          if expectedMembers > 0 then equal(memberIds[1], "one") end
+          if expectedMembers > 1 then equal(memberIds[2], "two") end
+          return state
+        end
+        send(bootstrapReady("one"), 1); send(bootstrapReady("two"), 2)
+        send({ type = "ActualFocusChanged", id = "two" }, 2)
+        if initial == "columns" then send({ type = "CycleLayout" }, 2) end
+        send({ type = "FocusPrevious" }, 2)
+        local pending = core:state().manager.focus.desiredBySpace["space-1"]
+        send({ type = "CycleLayout" }, 2)
+        send({ type = "ActualFocusChanged", id = late }, 2)
+        local desired = core:state().manager.focus.desiredBySpace["space-1"]
+        if late ~= pending.targetId then
+          assert(desired.pending and desired.targetId == pending.targetId and desired.generation == pending.generation)
+        end
+        send({ type = "ActualFocusChanged", id = pending.targetId }, 2)
+        send(ready("three"), 3)
+        send({ type = "WindowTitleChanged", id = "one", title = "updated" }, 3)
+        send({ type = "WindowDestroyed", id = "three" }, 2)
+        local state = send({ type = "ActualFocusChanged", id = late }, 2)
+        assert(not state.manager.windows.three)
+        for _, id in ipairs(state.manager.focus.managedHistory) do assert(id ~= "three") end
+        send({ type = "CycleLayout" }, 2)
+      end
+    end
+  end,
+  ["FOCUS-004 WIN-002: deleting a background column selection preserves active group and emits no recovery focus"] = function()
+    local observed
+    local core = new(function(intents) observed = intents end)
+    core:submit(bootstrapReady("one")); core:submit(bootstrapReady("two"))
+    core:submit({ type = "CycleLayout" }); core:submit({ type = "ActualFocusChanged", id = "two" })
+    core:submit({ type = "WindowDestroyed", id = "one" })
+    local state = core:state()
+    equal(state.coordinators["space-1"].layouts.columns.stacks[1].selectedId, "two")
+    for _, intent in ipairs(observed) do assert(intent.kind ~= "focus", "background deletion must not request focus") end
+  end,
+  ["FOCUS-006 LAY-003: layout cycling preserves pending desired focus against late actual observations"] = function()
+    local core = new(function() end)
+    core:submit(bootstrapReady("one")); core:submit(bootstrapReady("two"))
+    core:submit({ type = "ActualFocusChanged", id = "two" })
+    core:submit({ type = "FocusPrevious" })
+    local desired = core:state().manager.focus.desiredBySpace["space-1"]
+    assert(desired.pending and desired.targetId == "one")
+    core:submit({ type = "CycleLayout" })
+    local switched = core:state().manager.focus.desiredBySpace["space-1"]
+    assert(switched.pending and switched.targetId == "one" and switched.generation == desired.generation)
+    core:submit({ type = "ActualFocusChanged", id = "two" })
+    local state = core:state(); local layout = state.coordinators["space-1"].layouts.columns
+    equal(layout.stacks[layout.activeStack].selectedId, "one")
+    core:submit({ type = "ActualFocusChanged", id = "one" })
+    assert(not core:state().manager.focus.desiredBySpace["space-1"].pending)
+  end,
+  ["FOCUS-003 CMD-001: rejected unknown focus target cannot invalidate or replace a pending request"] = function()
+    local core = new(function() end)
+    core:submit(bootstrapReady("one")); core:submit(bootstrapReady("two"))
+    core:submit({ type = "ActualFocusChanged", id = "two" }); core:submit({ type = "FocusPrevious" })
+    assert(core:submit({ type = "FocusTarget", windowId = "unknown" }))
+    local desired = core:state().manager.focus.desiredBySpace["space-1"]
+    assert(desired.pending and desired.targetId == "one")
+  end,
+  ["LAY-003 COL-007: first columns activation retains last focused member in each newly formed group"] = function()
+    local core = new(function() end)
+    core:submit(bootstrapReady("one")); core:submit(bootstrapReady("two"))
+    core:submit({ type = "ActualFocusChanged", id = "one" })
+    core:submit(ready("three")); core:submit({ type = "ActualFocusChanged", id = "three" })
+    core:submit({ type = "CycleLayout" })
+    local layout = core:state().coordinators["space-1"].layouts.columns
+    equal(layout.stacks[1].selectedId, "one"); equal(layout.stacks[2].selectedId, "three")
+    core:submit({ type = "FocusLeftGroup" })
+    equal(core:state().manager.focus.desiredBySpace["space-1"].targetId, "one")
+    equal(layout.stacks[1].members[1], "one"); equal(layout.stacks[1].members[2], "two")
+  end,
+  ["LAY-003 COL-001: stack admissions activate columns with two occupied groups and close recovery"] = function()
+    local observed
+    local core = new(function(intents) observed = intents end)
+    core:submit(bootstrapReady("one")); core:submit(bootstrapReady("two"))
+    core:submit({ type = "ActualFocusChanged", id = "two" })
+    core:submit(ready("three")); core:submit({ type = "ActualFocusChanged", id = "three" })
+    assert(core:submit({ type = "CycleLayout" }))
+    local layout = core:state().coordinators["space-1"].layouts.columns
+    equal(#layout.stacks, 2); equal(#layout.stacks[1].members, 2); equal(#layout.stacks[2].members, 1)
+    equal(#frames(observed), 3)
+    assert(core:submit({ type = "WindowDestroyed", id = "three" }))
+    layout = core:state().coordinators["space-1"].layouts.columns
+    equal(#layout.stacks, 2); equal(#layout.stacks[1].members, 1); equal(#layout.stacks[2].members, 1)
+    equal(core:state().manager.focus.desiredBySpace["space-1"].targetId, "two")
+  end,
+  ["PERF-002 WIN-007: title and duplicate readiness emit no frames while reflow and managed focus synchronize"] = function()
+    local observed
+    local core = new(function(intents) observed = intents end)
+    assert(core:submit(bootstrapReady("one")))
+    assert(core:submit({ type = "ActualFocusChanged", id = "one" }))
+    assert(core:submit({ type = "WindowTitleChanged", id = "one", title = "renamed" }))
+    equal(#frames(observed), 0)
+    equal(core:state().manager.windows.one.title, "renamed")
+    assert(core:submit(bootstrapReady("one")))
+    equal(#frames(observed), 0)
+    assert(core:submit({ type = "ActualFocusChanged", id = "one" }))
+    equal(#frames(observed), 0)
+    assert(core:submit({ type = "Reflow" }))
+    equal(#frames(observed), 1)
+    assert(core:submit(bootstrapReady("two")))
+    assert(core:submit({ type = "ActualFocusChanged", id = "two" }))
+    equal(#frames(observed), 2)
+  end,
+  ["PERF-002 FOCUS-006: stale focus and unsupported command do not trigger geometry synchronization"] = function()
+    local observed
+    local core = new(function(intents) observed = intents end)
+    assert(core:submit(bootstrapReady("one")))
+    assert(core:submit(bootstrapReady("two")))
+    assert(core:submit({ type = "ActualFocusChanged", id = "two" }))
+    assert(core:submit({ type = "FocusPrevious" }))
+    assert(core:submit({ type = "ActualFocusChanged", id = "two" }))
+    equal(#frames(observed), 0)
+    assert(core:state().manager.focus.desiredBySpace["space-1"].pending)
+    assert(core:submit({ type = "MoveFocusedToOther" }))
+    equal(#frames(observed), 0)
+    assert(core:submit({ type = "WindowVisibilityObserved", id = "one", visible = false }))
+    equal(#frames(observed), 0)
+  end,
+  ["WIN-007 STATE-008: overlapping restore and unhide synchronize even while the restored member remains unavailable"] = function()
+    local observed
+    local core = new(function(intents) observed = intents end)
+    core:submit(bootstrapReady("one", 1)); core:submit(bootstrapReady("two", 2))
+    core:submit({ type = "WindowMinimized", id = "one" })
+    core:submit({ type = "ApplicationHidden", pid = 1 })
+    assert(core:submit({ type = "WindowRestored", id = "one" }))
+    equal(#frames(observed), 1); equal(frames(observed)[1].windowId, "two")
+    assert(not Model.isAvailable(core:state().manager.windows.one))
+    assert(core:submit({ type = "WindowRestored", id = "one" }))
+    equal(#frames(observed), 0)
+    core:submit({ type = "WindowMinimized", id = "one" })
+    assert(core:submit({ type = "ApplicationUnhidden", pid = 1 }))
+    equal(#frames(observed), 1); equal(frames(observed)[1].windowId, "two")
+    assert(not Model.isAvailable(core:state().manager.windows.one))
+  end,
   ["FOCUS-004 FOCUS-006: background lifecycle events never replay an older pending focus request"] = function()
     local observed = {}
     local core = new(function(intents) observed[#observed + 1] = intents end)
@@ -161,6 +336,7 @@ return {
   ["FOCUS-001 LAY-003: layout cycling retains last managed focus across unmanaged actual focus"] = function()
     local core = new(function() end)
     core:submit(ready("one")); core:submit(ready("two")); core:submit(ready("three"))
+    core:submit({ type = "ActualFocusChanged", id = "three" }) -- confirm setup before mouse focus
     core:submit({ type = "CycleLayout" })
     core:submit({ type = "ActualFocusChanged", id = "one" })
     core:submit({ type = "ActualFocusChanged", id = "popup" })
@@ -175,6 +351,7 @@ return {
     local observed = {}
     local core = new(function(intents) observed[#observed + 1] = intents end)
     core:submit(ready("a")); core:submit(ready("b"))
+    core:submit({ type = "ActualFocusChanged", id = "b" })
     core:submit({ type = "CycleLayout" })
     core:submit({ type = "ActualFocusChanged", id = "a" })
     core:submit(ready("c2"))
@@ -253,5 +430,14 @@ return {
     assert(initial.windows.one == initialBefore.windows.one)
     local state = core:state(); state.manager.windows.one.title = "corrupt"
     equal(core:state().manager.windows.one.title, "one")
+  end,
+  ["LIFE-002 FOCUS-004: inactive lifecycle reduction preserves selection without creating recovery focus"] = function()
+    local observed = {}
+    local core = new(function(intents) observed[#observed + 1] = intents end)
+    core:submit(ready("one")); core:submit(ready("two")); core:submit({ type = "ActualFocusChanged", id = "two" })
+    core:submit({ type = "WindowDestroyed", id = "two", focusAuthority = false })
+    local desired = core:state().manager.focus.desiredBySpace["space-1"]
+    assert(core:state().manager.windows.one and not core:state().manager.windows.two and not desired.pending)
+    for _, intent in ipairs(observed[#observed]) do assert(intent.kind ~= "focus") end
   end,
 }
