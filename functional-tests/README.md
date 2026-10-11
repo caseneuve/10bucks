@@ -182,6 +182,27 @@ observation-boundary decision remains blocked pending exact host signal evidence
 See `docs/pocs/015-ghostty-close-and-host-boundary.md` for preserved failures,
 separate same-scope readiness correction and next native decision.
 
+## Exact three-case Ghostty suite
+
+```sh
+./functional-tests/run --headed --reuse-debug VM_NAME ghostty-close-recovery
+./functional-tests/run --headed --reuse-debug VM_NAME ghostty-column-normalization
+./functional-tests/run --headed --reuse-debug VM_NAME ghostty-layout-retention
+```
+
+Normalization starts in stack: createABC → kB/kA → columnsAB|C → lC →
+CtrlD C → A|B/nativeB. Retention starts columnsA|BC, switches to stack,
+navigates three members, returns columns and repeats; physical groups/order never
+change. No swap/move/reflow or post-close repair. All are same-process Ghostty,
+with fixed native geometry/focus and separate exact cached-order assertions.
+Independent review confirms all three native runs (56 frozen hashes each), normal
+cleanup and unchanged checkpoint gates. They do not establish a host fix.
+
+Host silent-close recovery remains blocked: no alternate closeevent observed and
+synchronous focused AX safety-query POC failed fixed tail-cost/gap gates. No polling
+workaround added. Evidence/next architectural hypothesis:
+`docs/pocs/016-three-ghostty-cases-safety-cost.md`.
+
 ## Scenario self-checks
 
 ```sh

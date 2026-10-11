@@ -17,7 +17,7 @@ BASE = "10bucks-functional-sip-base-20261011"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=["columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery"])
+    parser.add_argument("scenario", choices=["columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention"])
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--demo", action="store_true", help="2s pauses between actions; not a latency benchmark")
     parser.add_argument("--bar-capture", action="store_true", help="capture native bar outside/hover/return pixels for independent visual review")
@@ -117,7 +117,7 @@ def main():
             status = wait_status(lambda s: s.get("candidateReady") is True and s.get("fixtureReady") is True, 10)
             if status.get("unknownMembers", 0) != 0:
                 raise RuntimeError("unowned candidate membership")
-            expected_layout='stack' if args.scenario=='stack-columns-membership' else 'columns'
+            expected_layout='stack' if args.scenario in ('stack-columns-membership','ghostty-column-normalization') else 'columns'
             if status.get("layout") != expected_layout:
                 raise RuntimeError(expected_layout + " bootstrap not confirmed")
             return Frame(**status["workArea"])
@@ -227,7 +227,7 @@ def main():
         preflight["settings"] = {"mruSpaces": 0, "hideMenuBar": 1}
         if not preflight["onConsole"] or preflight["loginwindow"] or not preflight["osVersion"].startswith("26.") or preflight["hsVersion"] != "1.1.1" or not preflight["ax"] or preflight["locked"] or preflight["secureInput"] or preflight["screens"] != 1 or not preflight["separateSpaces"] or preflight["managerLoaded"]:
             raise RuntimeError("guest environment preflight failed")
-        if args.scenario=='ghostty-close-recovery':
+        if args.scenario.startswith('ghostty-'):
             identity=hs('local p="/Applications/Ghostty.app/Contents/Info.plist"; local v=hs.plist.read(p); return hs.json.encode({bundle=v.CFBundleIdentifier,version=v.CFBundleShortVersionString})')
             if identity['bundle']!='com.mitchellh.ghostty' or identity['version']!='1.3.1':
                 raise RuntimeError('unexpected owned Ghostty version/identity')
@@ -245,7 +245,7 @@ def main():
         ssh(f"mkdir -m 700 {control}")
         hs('ft=dofile("' + guest_root + '/functional-tests/guest.lua"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
-           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario=="stack-columns-membership" else "columns"}",ghostty={str(args.scenario=="ghostty-close-recovery").lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
+           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization") else "columns"}",ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
         driver = Driver()
         scenario(driver)
         if args.bar_capture:
