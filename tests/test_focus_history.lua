@@ -18,6 +18,50 @@ local function fullscreenReady(id, pid, spaceId)
 end
 
 return {
+  ["SPACE-006 FS-003: retired scopes retain live primitive metadata history order and uncertainty until readiness"] = function()
+    local history = FocusHistory.new()
+    history:observe({ windowId = "A", spaceId = "gone" })
+    history:observe({ windowId = "B", spaceId = "live" })
+    history:request({ windowId = "A", spaceId = "gone" })
+    local window = { id = "A", application = { pid = 44, bundleID = "example" }, title = "A",
+      placementSpaceId = "gone", actualSpaceId = "gone", lifecycle = { nativeFullscreen = false } }
+    history:invalidateSpace("gone", { window })
+    assert(history:pending() == nil and ids(history) == "A,B")
+    local record = assert(history:unplacedTarget("A"))
+    assert(record.uncertain and record.pid == 44 and record.target.spaceId == "gone")
+    assert(record.window.title == "A" and record.window.placementSpaceId == nil and window.placementSpaceId == "gone")
+    record.window.title = "corrupt"; assert(history:unplacedTarget("A").window.title == "A")
+    assert(#history:unplacedTargets() == 0)
+    local calls = 0
+    assert(history:previous(function() calls = calls + 1; return true end) == nil)
+    assert(calls == 1 and ids(history) == "A,B")
+    history:observe({ windowId = "A", spaceId = "elsewhere" }); assert(ids(history) == "A,B")
+    history:promote({ windowId = "A", spaceId = "new" })
+    assert(not history:unplacedTarget("A") and ids(history) == "A,B" and history:snapshot()[1].spaceId == "new")
+    assert(history:previous(function() return true end).spaceId == "new")
+  end,
+  ["FS-003 SPACE-006: removed saved regular placement retains confirmed fullscreen descriptor"] = function()
+    local h = FocusHistory.new(); h:registerUnplaced(fullscreenReady("F", 44, "full"))
+    h:observe({ windowId = "F", spaceId = "full" })
+    h:invalidateSpace("gone", { { id = "F", application = { pid = 44 }, placementSpaceId = "gone",
+      actualSpaceId = "full", lifecycle = { nativeFullscreen = true } } })
+    local record = h:unplacedTarget("F")
+    assert(record.target.spaceId == "full" and not record.uncertain and record.window.placementSpaceId == nil)
+    assert(#h:unplacedTargets() == 1 and h:snapshot()[1].spaceId == "full")
+  end,
+  ["SPACE-006 WIN-005: orphan relocation fullscreen readiness destruction and app termination keep lifetime semantics"] = function()
+    local function orphan()
+      local h = FocusHistory.new(); h:observe({ windowId = "A", spaceId = "gone" })
+      h:invalidateSpace("gone", { { id = "A", application = { pid = 44 }, placementSpaceId = "gone" } })
+      return h
+    end
+    local h = orphan(); h:relocate({ windowId = "A", spaceId = "new" })
+    assert(not h:unplacedTarget("A") and h:snapshot()[1].spaceId == "new")
+    h = orphan(); h:registerUnplaced(fullscreenReady("A", 44, "full"))
+    assert(not h:unplacedTarget("A").uncertain and #h:unplacedTargets() == 1 and h:snapshot()[1].spaceId == "full")
+    h:remove("A"); assert(not h:unplacedTarget("A") and ids(h) == "")
+    h = orphan(); h:removeApplication(44); assert(not h:unplacedTarget("A") and ids(h) == "")
+  end,
   ["FOCUS-001 FOCUS-005: confirmed managed observations form unique global MRU and toggle naturally"] = function()
     local history = FocusHistory.new()
     history:observe({ windowId = "A", spaceId = "one" })

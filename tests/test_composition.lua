@@ -24,7 +24,7 @@ local function fakeHs(options)
       show = function(self) self.shown = true; return self end, hide = function(self) self.shown = false; return self end, delete = function(self) self.deleted = true end }
     f.canvas = object; return object
   end
-  local screen = { getUUID = function() return "built-in" end, frame = function() return f.geometry or { x = 0, y = 0, w = 100, h = 80 } end,
+  local screen = { id = function() return 1 end, getUUID = function() return "built-in" end, frame = function() return f.geometry or { x = 0, y = 0, w = 100, h = 80 } end,
     fullFrame = function() return f.geometry or { x = 0, y = 0, w = 100, h = 80 } end }
   -- Evidence-derived boundary: AX conversion provides metadata/asHSWindow only;
   -- the per-window watcher is constructed by hs.window:newWatcher(handler).
@@ -38,14 +38,35 @@ local function fakeHs(options)
     isFullScreen = function() return f.fullscreen end, newWatcher = function(_, cb) f.windowWatcher = watcher(cb, "window"); return f.windowWatcher end, frame = function() f.frameReads = (f.frameReads or 0) + 1; return f.actual end,
     setFrame = function(_, frame, duration) assert(duration == 0); f.frames = f.frames + 1; f.actual = frame end,
     focus = function() f.focuses = f.focuses + 1; f.presentationAtFocus = f.canvas and f.canvas.elements and f.canvas.elements[4].text end }
+  local dock = { pid = function() return 81 end, bundleID = function() return 'com.apple.dock' end,
+    allWindows = function() return {} end }
+  local dockElement = { attributeValue = function(_, attribute)
+    if attribute == 'AXChildren' then return f.mc and { f.mc } or {} end
+  end }
+  f.dock, f.dockElement = dock, dockElement
   local bindCount = 0
   _G.hs = { processInfo = { processID = 1 }, screen = { allScreens = function() return { screen } end },
     spaces = { activeSpaceOnScreen = function() return f.activeSpace or "space" end, spaceType = function() return "user" end,
-      data_managedDisplaySpaces = function() local active = f.activeSpace or "space"; return { { ["Display Identifier"] = "built-in", ["Current Space"] = { ManagedSpaceID = active }, Spaces = { { ManagedSpaceID = "space", type = 0 }, { ManagedSpaceID = "next-space", type = 0 } } } } end,
+      data_managedDisplaySpaces = function() local active = f.activeSpace or "space"; return { { ["Display Identifier"] = "built-in", ["Current Space"] = { ManagedSpaceID = active }, Spaces = f.topology or { { ManagedSpaceID = "space", type = 0 }, { ManagedSpaceID = "next-space", type = 0 } } } } end,
       windowsForSpace = function() return f.members end, windowSpaces = function() return f.owners end,
       watcher = { new = contextWatcher } },
-    axuielement = { windowElement = function(x) assert(x == f.window); return element end },
-    application = { applicationForPID = function(pid) return pid == 8 and app or (f.apps and f.apps[pid]) end, runningApplications = function() return { app } end, watcher = { new = function(cb) f.life = watcher(cb, "life"); return f.life end, terminated = 3, hidden = 4, unhidden = 5, launched = 2 } },
+    axuielement = { applicationElement = function(x) assert(x == dock); return dockElement end,
+      observer = { notifications = { AXUIElementDestroyed = 'AXUIElementDestroyed' }, new = function(pid)
+        assert(pid == 81)
+        local object = { callback = function(self, callback) self.notification = callback; return self end,
+          addWatcher = function(_, target, notification)
+            assert(target == dockElement and notification == 'AXUIElementDestroyed'); return true
+          end,
+          start = function(self) self.running = true; return self end,
+          stop = function(self) self.running = false; self.stopped = true end }
+        f.dockObserver = object; return object
+      end }, windowElement = function(x) assert(x == f.window); return element end },
+    application = { applicationsForBundleID = function(bundle) assert(bundle == 'com.apple.dock'); return { dock } end,
+      applicationForPID = function(pid) return pid == 8 and app or (f.apps and f.apps[pid]) end, runningApplications = function() return { app } end, watcher = { new = function(cb)
+      local object = watcher(cb, 'life')
+      if not f.life or f.life.stopped then f.life = object else f.dockLife = object end
+      return object
+    end, terminated = 3, hidden = 4, unhidden = 5, launched = 2 } },
     window = { list = function() return f.ownerRows or {} end, focusedWindow = function() f.focusedWindowQueries = f.focusedWindowQueries + 1; if f.focusedWindowError then error("focused-window read failed") end; return f.focusedWindow end },
     canvas = { new = canvas }, mouse = { absolutePosition = function() return { x = 50, y = 50 } end },
     timer = { secondsSinceEpoch = function() return 1 end, doAfter = function(_, _) return timer() end, doEvery = function(_, _) return timer() end },
@@ -84,7 +105,424 @@ local function loadConfiguredFile(f, config)
   return ten
 end
 
+-- Test-only native boundary: actual Context/Spaces/Runtime composition, no adapter injection.
+local function workspaceSetup()
+  local f = fakeHs()
+  f.topology = { { ManagedSpaceID = 'space', type = 0 }, { ManagedSpaceID = 'next-space', type = 0 },
+    { ManagedSpaceID = 'third-space', type = 0 } }
+  f.clock, f.timers, f.presses, f.opens = 0, {}, {}, 0
+  hs.timer.absoluteTime = function() return f.clock * 1e9 end
+  hs.timer.doAfter = function(delay, callback)
+    local timer = { delay = delay, callback = callback, due = f.clock + delay,
+      stop = function(self) self.stopped = true end }
+    f.timers[#f.timers + 1] = timer; return timer
+  end
+  local function node(identifier, children, displayId)
+    return { attributeValue = function(_, name)
+      if name == 'AXIdentifier' then return identifier end
+      if name == 'AXChildren' then return children end
+      if name == 'AXDisplayID' then return displayId end
+    end }
+  end
+  hs.spaces.openMissionControl = function()
+    f.opens = f.opens + 1
+    if f.onOpen then f.onOpen() end
+    local buttons = {}
+    for _, item in ipairs(f.topology) do
+      local id = item.ManagedSpaceID
+      local button = node('button', {})
+      button.performAction = function(self, action)
+        assert(action == 'AXPress')
+        local state = f.ten.workspace:state()
+        assert(state.switch.inFlight.phase == 'pressed', 'press must follow committed phase')
+        f.presses[#f.presses + 1] = id
+        if f.onPress then f.onPress(id) end
+        return self -- real AXPress success shape, not boolean-only mock
+      end
+      buttons[#buttons + 1] = button
+    end
+    f.mc = node('mc', { node('mc.display', { node('mc.spaces', { node('mc.spaces.list', buttons) }) }, 1) })
+  end
+  function f:fire(delay)
+    for _, timer in ipairs(self.timers) do
+      if timer.delay == delay and not timer.stopped and not timer.fired then
+        self.clock = math.max(self.clock, timer.due); timer.fired = true; timer.callback(); return timer
+      end
+    end
+    error('expected live timer ' .. tostring(delay))
+  end
+  function f:activate(id)
+    self.activeSpace, self.members, self.focusedWindow, self.mc = id, id == 'space' and { 9 } or {}, nil, nil
+    self.contextWatcher.callback()
+  end
+  function f:confirm(id)
+    self:fire(.3)
+    assert(self.presses[#self.presses] == id, 'wrong native AX index')
+    -- Model actual Mission Control destruction, not only a Space watcher. The
+    -- adapter's dismissal barrier must receive its independent Dock boundary.
+    self.mc = nil
+    self.dockObserver.notification(nil, nil, 'AXUIElementDestroyed')
+    self:activate(id)
+  end
+  local ten = load(f):start(); f.ten = ten
+  return f, ten
+end
+
 return {
+  ["STATE-002 CMD-005: frame callback desktop command waits for completed outer Core flush"] = function()
+    local f, ten = workspaceSetup()
+    local inside, submitted, completed, opened = false, false, false, false
+    local original = f.window.setFrame
+    f.window.setFrame = function(window, frame, duration)
+      original(window, frame, duration)
+      if submitted then return end
+      submitted, inside = true, true
+      assert(ten.effectBatch, 'outer frame flush must retain delivery boundary')
+      assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 }))
+      assert(f.opens == 0, 'Mission Control opened inside unfinished frame callback')
+      assert(ten.workspace:state().switch.inFlight.destinationId == 'next-space', 'workspace decision must commit during reentry')
+      inside, completed = false, true
+    end
+    f.onOpen = function()
+      assert(not inside and completed, 'workspace effect preceded frame callback completion')
+      assert(ten.effectBatch, 'workspace flush must keep reentrant delivery boundary')
+      opened = true
+    end
+    f.actual = { x = 7, y = 0, w = 1, h = 1 }
+    assert(ten:_submitCommand({ type = 'Reflow' }))
+    assert(submitted and completed and opened and f.opens == 1 and ten.effectBatch == nil)
+    f:confirm('next-space'); ten:stop()
+  end,
+  ["STATE-002 CMD-005 FOCUS-006: native focus callback desktop command waits for completed outer Core flush"] = function()
+    local f, ten = workspaceSetup(); focus(ten, 9)
+    local inside, submitted, completed, opened = false, false, false, false
+    f.window.focus = function()
+      f.focuses = f.focuses + 1
+      assert(not submitted, 'cancelled native focus must not be reissued')
+      submitted, inside = true, true
+      assert(ten.effectBatch, 'native focus flush lost delivery boundary')
+      assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 }))
+      assert(f.opens == 0, 'Mission Control opened inside unfinished native focus callback')
+      inside, completed = false, true
+    end
+    f.onOpen = function() assert(not inside and completed); opened = true end
+    assert(ten:_submitCommand({ type = 'FocusNext' }))
+    assert(submitted and completed and opened and f.opens == 1 and f.focuses == 1 and ten.effectBatch == nil)
+    assert(not ten.focusHistory:pending() and not ten.core:state().manager.focus.desiredBySpace.space.pending)
+    f:confirm('next-space'); ten:stop()
+  end,
+  ["STATE-002 CMD-005: throwing Core flush releases guard and discards queued effects before fresh command"] = function()
+    local f, ten = workspaceSetup()
+    local original = f.window.setFrame
+    local attempts = 0
+    f.window.setFrame = function()
+      attempts = attempts + 1
+      assert(ten.effectBatch, 'throwing flush must initially own guard')
+      assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 }))
+      assert(f.opens == 0, 'reentrant workspace effect escaped unfinished frame flush')
+      error('forced native frame flush failure')
+    end
+    f.actual = { x = 7, y = 0, w = 1, h = 1 }
+    local ok, err = pcall(function() ten:_submitCommand({ type = 'Reflow' }) end)
+    assert(not ok and tostring(err):find('forced native frame flush failure', 1, true))
+    assert(attempts == 1 and ten.effectBatch == nil and f.opens == 0, 'failed flush leaked guard or queued effect')
+    local failed = ten.workspace:state().switch
+    assert(not failed.inFlight and not failed.desiredSpaceId and not ten.spaces.operation,
+      'discarded unissued workspace effect must retire reducer barrier and desired target')
+    f.window.setFrame = original
+    local before = f.frames
+    assert(ten:_submitCommand({ type = 'Reflow' }))
+    assert(f.frames == before + 1 and f.actual.w == 100 and ten.effectBatch == nil)
+    assert(f.opens == 0, 'fresh command replayed discarded workspace effect')
+    assert(ten:_submitCommand({ type = 'CycleLayout' }))
+    assert(ten.core:state().coordinators.space.activeLayoutId == 'columns' and ten.effectBatch == nil)
+    assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = 3 }))
+    local fresh = ten.workspace:state().switch.inFlight
+    assert(f.opens == 1 and fresh and fresh.destinationId == 'third-space' and fresh.generation == 2,
+      'fresh desktop command stranded behind discarded reducer barrier')
+    f:confirm('third-space')
+    assert(#f.presses == 1 and not ten.workspace:state().switch.inFlight)
+    ten:stop()
+  end,
+  ["STATE-002 CMD-005 SPACE-005: throwing Core flush preserves issued native switch ownership"] = function()
+    for _, phase in ipairs({ 'requested', 'pressed' }) do
+      local f, ten = workspaceSetup()
+      assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 }))
+      local native = ten.spaces.operation
+      if phase == 'pressed' then f:fire(.3) end
+      local before = ten.workspace:state().switch.inFlight
+      assert(native and before.phase == phase)
+      local original = f.window.setFrame
+      f.window.setFrame = function() error('issued-operation frame flush failure') end
+      f.actual = { x = 7, y = 0, w = 1, h = 1 }
+      local ok, err = pcall(function() ten:_submitCommand({ type = 'Reflow' }) end)
+      assert(not ok and tostring(err):find('issued-operation frame flush failure', 1, true))
+      local after = ten.workspace:state().switch.inFlight
+      assert(ten.effectBatch == nil and ten.spaces.operation == native,
+        'unrelated flush failure discarded issued native operation')
+      assert(after and after.generation == before.generation and after.sourceId == before.sourceId
+        and after.sourceType == before.sourceType and after.destinationId == before.destinationId and after.phase == phase)
+      assert(ten.workspace:state().switch.desiredSpaceId == 'next-space')
+      for _, timer in ipairs(native.timers) do assert(not timer.stopped, 'issued operation callback retired prematurely') end
+      f.window.setFrame = original
+      assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = 3 }))
+      assert(f.opens == 1 and ten.spaces.operation == native, 'new command overlapped issued switch')
+      if phase == 'requested' then f:confirm('next-space')
+      else
+        f.mc = nil; f.dockObserver.notification(nil, nil, 'AXUIElementDestroyed'); f:activate('next-space')
+      end
+      f:confirm('third-space')
+      assert(#f.presses == 2 and not ten.workspace:state().switch.inFlight and not ten.spaces.operation)
+      ten:stop()
+    end
+  end,
+  ["FS-003 FOCUS-005 WIN-006: fullscreen exit to another regular scope clears unplaced record while source survives"] = function()
+    local f, ten = workspaceSetup(); focus(ten, 9)
+    local source, lease = ten.core, ten.handleRegistry:target(9).lease
+    f.topology = { { ManagedSpaceID = 'space', type = 0 }, { ManagedSpaceID = 'full', type = 4 },
+      { ManagedSpaceID = 'next-space', type = 0 }, { ManagedSpaceID = 'third-space', type = 0 } }
+    hs.spaces.spaceType = function(id) return id == 'full' and 'fullscreen' or 'user' end
+    -- A second retained managed lifetime makes preservation of history order observable.
+    ten:_submitEvent({ type = 'WindowReady', id = 10, displayId = 'built-in', spaceId = 'third-space',
+      application = { pid = 8 }, resource = 100, appResource = ten.host.appResources[8].lease },
+      { id = function() return 10 end, frame = function() return f.actual end, setFrame = function() end, focus = function() end })
+    focus(ten, 10); focus(ten, 9)
+    f.fullscreen, f.owners = true, { 'full' }
+    ten.host:_ready(f.window, 'targetedReadiness', ten.host.windowCallback)
+    f:activate('full'); f.focusedWindow = f.window; ten.host:observeFocus()
+    local before = ten.focusHistory:snapshot()
+    assert(#before == 2 and before[1].windowId == 10 and before[2].windowId == 9 and before[2].spaceId == 'full')
+    assert(ten.focusHistory:unplacedTarget(9) and ten:_targetIsManaged({ windowId = 9, spaceId = 'full' }))
+    f.fullscreen, f.owners = false, { 'next-space' }; f:activate('next-space')
+    ten.host:_ready(f.window, 'targetedReadiness', ten.host.windowCallback)
+    assert(ten.cores.space == source and not source:state().manager.windows[9], 'cross-scope exit must retire old membership, not source Core')
+    assert(not ten.focusHistory:unplacedTarget(9), 'successful regular relocation retained stale fullscreen record')
+    assert(#ten.focusHistory:unplacedTargets() == 0)
+    local window = ten.core:state().manager.windows[9]
+    assert(window and window.placementSpaceId == 'next-space' and not window.lifecycle.nativeFullscreen)
+    local after = ten.focusHistory:snapshot()
+    assert(#after == #before)
+    for index, entry in ipairs(before) do assert(after[index].windowId == entry.windowId, 'exit reordered managed history') end
+    assert(after[1].spaceId == before[1].spaceId and after[2].spaceId == 'next-space')
+    assert(ten.handleRegistry:target(9).lease == lease and ten.handleRegistry:target(9).spaceId == 'next-space')
+    assert(ten:_targetIsManaged({ windowId = 9, spaceId = 'next-space' }) and not ten:_targetIsManaged({ windowId = 9, spaceId = 'full' }))
+    f.windowWatcher.callback(nil, 'AXUIElementDestroyed')
+    assert(not ten.handleRegistry:target(9) and not ten.focusHistory:unplacedTarget(9) and not ten.core:state().manager.windows[9])
+    assert(#ten.focusHistory:snapshot() == 1 and ten.focusHistory:snapshot()[1].windowId == 10)
+    ten:stop()
+  end,
+  ["FS-003 FS-005 SPACE-006 FOCUS-005 WIN-005: independently confirmed fullscreen survives source removal then promotes or dies"] = function()
+    for _, outcome in ipairs({ 'exit', 'destroy' }) do
+      local f, ten = workspaceSetup(); focus(ten, 9)
+      local source, lease = ten.core, ten.handleRegistry:target(9).lease
+      f.topology = { { ManagedSpaceID = 'space', type = 0 }, { ManagedSpaceID = 'full', type = 4 },
+        { ManagedSpaceID = 'next-space', type = 0 }, { ManagedSpaceID = 'third-space', type = 0 } }
+      f.fullscreen, f.owners = true, { 'full' }
+      hs.spaces.spaceType = function(id) return id == 'full' and 'fullscreen' or 'user' end
+      -- Real Host readiness joins native owner/fullscreen metadata to the retained resource.
+      ten.host:_ready(f.window, 'targetedReadiness', ten.host.windowCallback)
+      local full = ten.focusHistory:unplacedTarget(9)
+      assert(full and full.target.spaceId == 'full' and not full.uncertain)
+      assert(source:state().manager.windows[9].lifecycle.nativeFullscreen)
+      assert(source:state().manager.windows[9].placementSpaceId == 'space', 'fullscreen readiness must retain saved slot')
+      assert(ten.handleRegistry:target(9).lease == lease and ten.handleRegistry:target(9).spaceId == 'full',
+        'independent fullscreen readiness must route retained native lease to confirmed fullscreen owner')
+      -- Confirm actual native focus on F before source retirement; descriptor stays F.
+      f:activate('full'); f.focusedWindow = f.window; ten.host:observeFocus()
+      assert(ten:_targetIsManaged({ windowId = 9, spaceId = 'full' }), 'confirmed fullscreen focus must remain managed')
+      assert(ten.handleRegistry:target(9).lease == lease and ten.handleRegistry:target(9).spaceId == 'full')
+      local history = ten.focusHistory:snapshot()
+      assert(#history == 1 and history[1].spaceId == 'full')
+      f.topology = { { ManagedSpaceID = 'full', type = 4 }, { ManagedSpaceID = 'next-space', type = 0 },
+        { ManagedSpaceID = 'third-space', type = 0 } }
+      f.dockObserver.notification(nil, nil, 'AXUIElementDestroyed')
+      full = ten.focusHistory:unplacedTarget(9)
+      assert(not ten.cores.space and full and full.target.spaceId == 'full' and not full.uncertain)
+      assert(full.window and full.window.placementSpaceId == nil, 'removed source must invalidate saved placement')
+      assert(ten.handleRegistry:target(9).lease == lease and ten.host.handles[9] and ten.windows:handleForId(9) == f.window)
+      assert(ten:_targetIsManaged({ windowId = 9, spaceId = 'full' }))
+      history = ten.focusHistory:snapshot()
+      assert(#history == 1 and history[1].windowId == 9 and history[1].spaceId == 'full', 'removal corrupted confirmed fullscreen history')
+      if outcome == 'exit' then
+        f.fullscreen, f.owners = false, { 'next-space' }; f:activate('next-space')
+        ten.host:_ready(f.window, 'targetedReadiness', ten.host.windowCallback)
+        assert(not ten.focusHistory:unplacedTarget(9) and not ten.cores.space)
+        local window = ten.core:state().manager.windows[9]
+        assert(window and window.placementSpaceId == 'next-space' and not window.lifecycle.nativeFullscreen)
+        assert(ten.handleRegistry:target(9).lease == lease and ten.handleRegistry:target(9).spaceId == 'next-space')
+        assert(ten:_targetIsManaged({ windowId = 9, spaceId = 'next-space' }))
+        history = ten.focusHistory:snapshot()
+        assert(#history == 1 and history[1].spaceId == 'next-space', 'promotion inserted or reordered history')
+      end
+      f.windowWatcher.callback(nil, 'AXUIElementDestroyed')
+      assert(not ten.focusHistory:unplacedTarget(9) and not ten.handleRegistry:target(9) and #ten.focusHistory:snapshot() == 0)
+      assert(not ten.cores.space and (not ten.core or not ten.core:state().manager.windows[9]))
+      ten:stop()
+    end
+  end,
+  ["SPACE-001 SPACE-004 SPACE-005 STATE-002: composed numbered and queued navigation serialize real adapter callbacks"] = function()
+    for _, case in ipairs({ { delta = 1, final = 'third-space' }, { delta = -1, final = 'space' },
+      { delta = 1, absolute = 1, final = 'space' } }) do
+      local f, ten = workspaceSetup(); local first, host, windows = ten.core, ten.host, ten.windows
+      local scans = f.scans
+      assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 }))
+      assert(ten.workspace:state().activeRegularSpaceId == 'space' and f.opens == 1 and #f.presses == 0)
+      assert(ten:_submitCommand({ type = 'FocusRelativeRegular', delta = case.delta }))
+      if case.absolute then assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = case.absolute })) end
+      assert(f.opens == 1, 'queued target must not overlap native leg')
+      f:confirm('next-space')
+      assert(ten.workspace:state().previousRegularSpaceId == 'space')
+      f:confirm(case.final)
+      assert(ten.workspace:state().activeRegularSpaceId == case.final and not ten.workspace:state().switch.inFlight)
+      assert(#f.presses == 2 and ten.cores.space == first and ten.host == host and ten.windows == windows and f.scans == scans)
+      local opens = f.opens
+      assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = 9 }))
+      assert(f.opens == opens and #ten.workspace:state().regularSpaceIds == 3, 'missing desktop must not create')
+      ten:stop(); assert(f.dockObserver.stopped and f.dockLife.stopped)
+    end
+  end,
+  ["SPACE-005 LAY-001 LAY-003 COL-008 WIN-002: composed previous repeats before confirmation and retains inactive Core layouts"] = function()
+    local f, ten = workspaceSetup(); focus(ten, 9)
+    ten:_submitCommand({ type = 'CycleLayout' })
+    ten:_submitCommand({ type = 'ResizeRatioDelta', delta = .05 })
+    local first = ten.core
+    local saved = first:state().coordinators.space
+    assert(saved.layouts.columns.ratio == .55)
+    ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 }); f:confirm('next-space')
+    local second = ten.core
+    assert(first:state().coordinators.space.layouts.columns.ratio == .55 and ten.cores.space == first)
+    ten:_submitCommand({ type = 'FocusPreviousRegular' }); ten:_submitCommand({ type = 'FocusPreviousRegular' })
+    assert(ten.workspace:state().switch.desiredSpaceId == 'space' and f.opens == 2)
+    f:confirm('space')
+    assert(ten.core == first and ten.cores['next-space'] == second)
+    local restored = first:state().coordinators.space
+    assert(restored.activeLayoutId == saved.activeLayoutId and restored.layouts.columns.ratio == .55
+      and restored.layouts.columns.stacks[1].members[1] == 9 and restored.layouts.stack.members[1] == 9)
+    ten:_submitCommand({ type = 'FocusPreviousRegular' }); f:confirm('next-space')
+    assert(#f.presses == 3 and ten.workspace:state().previousRegularSpaceId == 'space')
+    ten:stop()
+  end,
+  ["SPACE-006 SPACE-009 FS-003 WIN-005: Dock removal retires saved placement, rejects late readiness, preserves native lease until death"] = function()
+    for _, fullscreen in ipairs({ false, true }) do
+      local f, ten = workspaceSetup(); focus(ten, 9)
+      local first, route = ten.core, ten.handleRegistry:target(9)
+      if fullscreen then
+        f.fullscreen = true
+        ten:_submitEvent({ type = 'WindowEnteredNativeFullscreen', id = 9, resource = route.lease })
+        assert(first:state().manager.windows[9].lifecycle.nativeFullscreen)
+      end
+      f:activate('next-space')
+      f.topology = { { ManagedSpaceID = 'next-space', type = 0 }, { ManagedSpaceID = 'third-space', type = 0 } }
+      f.dockObserver.notification(nil, nil, 'AXUIElementDestroyed')
+      local orphan = ten.focusHistory:unplacedTarget(9)
+      assert(not ten.cores.space and orphan and orphan.uncertain and orphan.window.placementSpaceId == nil)
+      assert(ten.handleRegistry:target(9).lease == route.lease and ten.host.handles[9], 'scope removal is not window death')
+      local ready = { type = 'WindowReady', id = 9, title = 'late', displayId = 'built-in', spaceId = 'space',
+        application = { pid = 8 }, resource = route.lease, metadata = { spaceType = 'user', nativeFullscreen = false } }
+      assert(ten:_submitEvent(ready, f.window) == false and not ten.cores.space, 'late callback recreated removed Core')
+      -- Definitive regular destination clears the invalid saved source, not its old slot.
+      f.fullscreen, f.owners = false, { 'next-space' }
+      ready.spaceId = 'next-space'
+      ready.decision = { action = 'manage' }
+      ready.metadata.origin, ready.metadata.createdAfterStart = 'targetedReadiness', false
+      ready.metadata.role, ready.metadata.subrole = 'AXWindow', 'AXStandardWindow'
+      ready.metadata.modal, ready.metadata.movable, ready.metadata.resizable, ready.metadata.selfProcess = false, true, true, false
+      ready.metadata.id, ready.metadata.displayId, ready.metadata.spaceId, ready.metadata.application =
+        ready.id, ready.displayId, ready.spaceId, ready.application
+      assert(ten:_submitEvent(ready, f.window))
+      assert(not ten.focusHistory:unplacedTarget(9) and ten.core:state().manager.windows[9].placementSpaceId == 'next-space')
+      assert(not ten.core:state().manager.windows[9].lifecycle.nativeFullscreen)
+      f.windowWatcher.callback(nil, 'AXUIElementDestroyed')
+      assert(not ten.handleRegistry:target(9) and not ten.core:state().manager.windows[9])
+      ten:stop()
+    end
+  end,
+  ["SPACE-006 WIN-005: destruction after removed scope clears orphan without recreating Core"] = function()
+    local f, ten = workspaceSetup(); local death = f.windowWatcher.callback
+    f:activate('next-space')
+    f.topology = { { ManagedSpaceID = 'next-space', type = 0 }, { ManagedSpaceID = 'third-space', type = 0 } }
+    f.dockObserver.notification(nil, nil, 'AXUIElementDestroyed')
+    assert(ten.focusHistory:unplacedTarget(9) and not ten.cores.space)
+    death(nil, 'AXUIElementDestroyed')
+    assert(not ten.focusHistory:unplacedTarget(9) and not ten.handleRegistry:target(9) and not ten.cores.space)
+    ten:stop()
+  end,
+  ["FOCUS-006 CMD-005 SPACE-005: desktop command cancels local/global focus and rejects previous during switch"] = function()
+    local f, ten = workspaceSetup(); focus(ten, 9)
+    ten:_withEffectBatch(function()
+      ten:_submitCommand({ type = 'FocusNext' })
+      ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 })
+    end)
+    assert(f.focuses == 0 and not ten.focusHistory:pending() and not ten.core:state().manager.focus.desiredBySpace.space.pending)
+    local accepted, reason = ten:_submitCommand({ type = 'FocusManagedPrevious' })
+    assert(not accepted and reason == 'desktop-switch-pending')
+    ten:_submitCommand({ type = 'FocusNext' }) -- same-scope commands remain available
+    assert(ten.core:state().manager.focus.desiredBySpace.space.pending)
+    f:confirm('next-space')
+    assert(not ten.cores.space:state().manager.focus.desiredBySpace.space.pending, 'departure must cancel local focus authority')
+    assert(not ten.focusHistory:pending(), 'departure must cancel global pending from same-scope focus')
+    ten:stop()
+  end,
+  ["FS-005 SPACE-001 SPACE-004: composed desktop commands work from fullscreen and skip fullscreen positions"] = function()
+    local f, ten = workspaceSetup()
+    f.topology = { { ManagedSpaceID = 'space', type = 0 }, { ManagedSpaceID = 'full', type = 4 },
+      { ManagedSpaceID = 'next-space', type = 0 }, { ManagedSpaceID = 'third-space', type = 0 } }
+    f:activate('full'); assert(ten.suspended)
+    local accepted, reason = ten:_submitCommand({ type = 'FocusNext' })
+    assert(not accepted and reason == 'native-fullscreen-has-no-regular-layout')
+    assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 }))
+    local op = ten.workspace:state().switch.inFlight
+    assert(op.sourceId == 'full' and op.sourceType == 'fullscreen' and op.destinationId == 'next-space')
+    f:confirm('next-space')
+    assert(not ten.suspended and ten.core.spaceId == 'next-space' and ten.workspace:state().previousRegularSpaceId == 'space')
+    ten:_submitCommand({ type = 'FocusRelativeRegular', delta = -1 }); f:confirm('space')
+    assert(ten.workspace:state().activeRegularSpaceId == 'space')
+    ten:stop()
+  end,
+  ["FOCUS-005 CMD-005: desktop command cancels already-issued global previous authority without native reversal"] = function()
+    local f, ten = workspaceSetup(); focus(ten, 9)
+    local other = ten:_coreForSpace('next-space')
+    other:submit({ type = 'WindowReady', id = 10, displayId = 'built-in', spaceId = 'next-space', application = { pid = 8 } })
+    local calls = 0
+    ten.handleRegistry:remember(10, 'next-space', { id = function() return 10 end,
+      focus = function() calls = calls + 1 end }, 8, 100, ten.host.appResources[8].lease)
+    ten.focusHistory:observe({ windowId = 10, spaceId = 'next-space' }); focus(ten, 9)
+    assert(ten:_submitCommand({ type = 'FocusManagedPrevious' }))
+    assert(calls == 1 and ten.focusHistory:pending().windowId == 10)
+    ten:_submitCommand({ type = 'FocusRegularPosition', position = 3 })
+    assert(not ten.focusHistory:pending() and not other:state().manager.focus.desiredBySpace['next-space'].pending)
+    focus(ten, 10) -- late native observation remains reality, not reissued intent
+    assert(calls == 1 and not ten.focusHistory:pending())
+    f:confirm('third-space'); assert(calls == 1)
+    ten:stop()
+  end,
+  ["STATE-002 CMD-005: command reentry during native open queues desired without a second operation"] = function()
+    local f, ten = workspaceSetup()
+    f.onOpen = function()
+      f.onOpen = nil
+      assert(ten.workspace:state().switch.inFlight.destinationId == 'next-space')
+      ten:_submitCommand({ type = 'FocusRelativeRegular', delta = 1 })
+    end
+    ten:_submitCommand({ type = 'FocusRelativeRegular', delta = 1 })
+    assert(f.opens == 1 and ten.workspace:state().switch.desiredSpaceId == 'third-space')
+    f:confirm('next-space'); f:confirm('third-space')
+    assert(#f.presses == 2 and not ten.workspace:state().switch.inFlight)
+    ten:stop()
+  end,
+  ["STATE-002 CMD-005: reentrant stop discards workspace effect batch and stale native timer"] = function()
+    local f, ten = workspaceSetup()
+    local original = f.window.setFrame
+    f.window.setFrame = function(window, frame, duration) original(window, frame, duration); ten:stop() end
+    f.actual = { x = 7, y = 0, w = 1, h = 1 }
+    ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 })
+    assert(not ten.started and f.opens == 0 and not ten.workspace and not ten.spaces)
+    f, ten = workspaceSetup()
+    ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 })
+    local timer
+    for _, candidate in ipairs(f.timers) do if candidate.delay == .3 then timer = candidate end end
+    ten:stop(); timer.callback()
+    assert(#f.presses == 0 and not ten.started and f.dockObserver.stopped)
+  end,
   ["WIN-005 COL-005: native mailbox alone removes focused close and recovers occupied or emptied columns"] = function()
     for _,count in ipairs({2,3}) do
       local f = fakeHs(); local app=f.window:application(); local windows={f.window}

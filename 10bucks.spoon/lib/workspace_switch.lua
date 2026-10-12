@@ -71,6 +71,11 @@ function WorkspaceSwitch.validate(state)
     if not snapshot(captured) or not dense(op.regularSpaceIds)[op.destinationId] or op.revision > state.revision then
       return false, "malformed captured operation topology"
     end
+    if op.pressSourceId ~= nil or op.pressSourceType ~= nil then
+      if op.sourceType ~= "fullscreen" or op.pressSourceType ~= "user" or not dense(op.regularSpaceIds)[op.pressSourceId] then
+        return false, "malformed press context"
+      end
+    end
   end
   if state.stopped and (op or s.desiredSpaceId) then return false, "stopped switch retains intent" end
   return true
@@ -92,14 +97,21 @@ function WorkspaceSwitch.reduce(state, event)
   local s, kind = state.switch, event.type
   if kind == "WorkspaceSwitchStopped" then
     state.stopped = true; s.inFlight = nil; s.desiredSpaceId = nil
-  elseif kind == "RegularTopologyObserved" then
+  elseif kind == "RegularTopologyObserved" or kind == "RegularSwitchContextRebased" then
     assert(snapshot(event) and event.displayId == state.displayId, "requires complete topology for this display")
     if event.revision <= state.revision then return state end
     local op, regular = s.inFlight, dense(event.regularSpaceIds)
     local confirmed = matching(op, event) and not op.invalidated and op.phase == "pressed"
       and event.nativeSpaceType == "user" and event.nativeSpaceId == op.destinationId
       and regular[op.destinationId]
-    local sourceUnchanged = op and event.nativeSpaceId == op.sourceId and event.nativeSpaceType == op.sourceType
+    if kind == "RegularSwitchContextRebased" and matching(op, event) and not op.invalidated
+      and op.phase == "requested" and op.sourceType == "fullscreen" and not op.pressSourceId
+      and dense(event.fullSpaceIds)[op.sourceId] and same(event.fullSpaceIds, op.fullSpaceIds)
+      and same(event.regularSpaceIds, op.regularSpaceIds) and event.nativeSpaceType == "user" then
+      op.pressSourceId, op.pressSourceType = event.nativeSpaceId, event.nativeSpaceType
+    end
+    local sourceUnchanged = op and event.nativeSpaceId == (op.pressSourceId or op.sourceId)
+      and event.nativeSpaceType == (op.pressSourceType or op.sourceType)
     local destinationObserved = op and event.nativeSpaceId == op.destinationId and event.nativeSpaceType == "user"
     local invalid = op and (not regular[op.destinationId]
       or (op.phase == "requested" and (not same(event.fullSpaceIds, op.fullSpaceIds)
@@ -150,7 +162,7 @@ local function operationIntent(kind, state, op)
 end
 function WorkspaceSwitch.deriveIntents(state, event, _, previous)
   local intents, op, before = {}, state.switch.inFlight, previous.switch.inFlight
-  if event.type == "RegularTopologyObserved" and state.revision > previous.revision then
+  if (event.type == "RegularTopologyObserved" or event.type == "RegularSwitchContextRebased") and state.revision > previous.revision then
     local remaining = dense(state.regularSpaceIds)
     for _, space in ipairs(previous.regularSpaceIds) do
       if not remaining[space] then intents[#intents + 1] = { kind = "RegularSpaceRemoved", spaceId = space, revision = state.revision } end

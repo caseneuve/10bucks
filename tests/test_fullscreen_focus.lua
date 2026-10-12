@@ -7,6 +7,10 @@ local function setup()
     return { callback = callback, start = function() end, stop = function(self) self.stopped = true end }
   end
   local app = { isHidden = function() return false end, pid = function() return 41 end, name = function() return "Fixture" end, bundleID = function() return "fixture" end }
+  -- Dock owns only the topology boundary observer, never fixture AX windows.
+  local dock = { pid = function() return 81 end, bundleID = function() return 'com.apple.dock' end,
+    allWindows = function() return {} end }
+  local dockElement = { attributeValue = function(_, name) if name == 'AXChildren' then return {} end end }
   local windows = {}
   local function owner(id) return id == 1 and f.fullscreen and "full" or "regular" end
   for id = 1, 2 do
@@ -38,15 +42,32 @@ local function setup()
       windowsForSpace = function(space) local ids = {}; for id in ipairs(windows) do if owner(id) == space then ids[#ids + 1] = id end end; return ids end,
       windowSpaces = function(id) return { owner(id) } end,
       watcher = { new = function(callback) f.contextWatcher = watcher(callback); return f.contextWatcher end } },
-    axuielement = { windowElement = function(window) return {
+    axuielement = { applicationElement = function(application) assert(application == dock); return dockElement end,
+      observer = { notifications = { AXUIElementDestroyed = 'AXUIElementDestroyed' }, new = function(pid)
+        assert(pid == 81)
+        local observer = {
+          callback = function(self, callback) self.notification = callback; return self end,
+          addWatcher = function(_, element, notification)
+            assert(element == dockElement and notification == 'AXUIElementDestroyed'); return true
+          end,
+          start = function(self) self.running = true; return self end,
+          stop = function(self) self.running = false; self.stopped = true end,
+        }
+        f.dockObserver = observer; return observer
+      end }, windowElement = function(window) return {
       attributeValue = function() return false end,
       isAttributeSettable = function(_, attribute) return not (window == windows[1] and f.fullscreen and attribute == "AXPosition") end,
     } end },
     window = { focusedWindow = function() f.queries = f.queries + 1; return f.focused end,
       list = function() local rows = {}; for id in ipairs(windows) do if owner(id) == f.activeSpace then
         rows[#rows + 1] = { kCGWindowNumber = id, kCGWindowOwnerPID = 41 } end end; return rows end },
-    application = { runningApplications = function() return { app } end, applicationForPID = function(pid) return pid == 41 and app or nil end,
-      watcher = { new = function(callback) f.life = watcher(callback); return f.life end,
+    application = { applicationsForBundleID = function(bundle) assert(bundle == 'com.apple.dock'); return { dock } end,
+      runningApplications = function() return { app } end, applicationForPID = function(pid) return pid == 41 and app or nil end,
+      watcher = { new = function(callback)
+        local object = watcher(callback)
+        if not f.life or f.life.stopped then f.life = object else f.dockLife = object end
+        return object
+      end,
         launched = 2, terminated = 3, hidden = 4, unhidden = 5, activated = 6 } },
     canvas = { new = canvas }, mouse = { absolutePosition = function() return { x = 50, y = 50 } end }, host = { interfaceStyle = function() return nil end },
     distributednotifications = { new = function() return { start = function() end, stop = function() end } end },

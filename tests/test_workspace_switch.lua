@@ -30,6 +30,33 @@ local function confirm(m, revision)
   submit(m, snapshot)
 end
 return {
+  ["FS-005 STATE-002: correlated own MC press context preserves initiating tuple and commits reality"] = function()
+    local m = runtime(fact(1, "F", { "A", "B", "C" }, { "A", "F", "B", "C" }, "fullscreen"))
+    submit(m, { type = "FocusRegularPosition", position = 2 })
+    local event = operation(m, "RegularSwitchContextRebased")
+    local rebased = fact(2, "A", { "A", "B", "C" }, { "A", "F", "B", "C" })
+    for k,v in pairs(event) do rebased[k] = v end
+    submit(m, rebased)
+    local op = m:state().switch.inFlight
+    assert(not op.invalidated and op.sourceId == "F" and op.sourceType == "fullscreen" and op.pressSourceId == "A")
+    assert(m:state().nativeSpaceId == "A" and m:state().lastConfirmedRegularSpaceId == "A")
+    submit(m, operation(m, "RegularSwitchPressed")); assert(m:state().switch.inFlight.phase == "pressed")
+  end,
+  ["FS-005 SPACE-006: stale external reordered vanished-source and late-invalidated rebase cannot restore authority"] = function()
+    for _, case in ipairs({ "stale", "external", "order", "vanish", "late" }) do
+      local m = runtime(fact(1, "F", { "A", "B", "C" }, { "A", "F", "B", "C" }, "fullscreen"))
+      submit(m, { type = "FocusRegularPosition", position = 2 })
+      local e = operation(m, "RegularSwitchContextRebased")
+      local f = fact(case == "stale" and 1 or 3, "A", { "A", "B", "C" }, { "A", "F", "B", "C" })
+      for k,v in pairs(e) do f[k] = v end
+      if case == "external" then f.type = "RegularTopologyObserved" end
+      if case == "order" then f.fullSpaceIds = { "F", "A", "B", "C" } end
+      if case == "vanish" then f.fullSpaceIds = { "A", "B", "C" } end
+      if case == "late" then submit(m, fact(2, "A", { "A", "B", "C" }, { "A", "F", "B", "C" })) end
+      submit(m, f); assert(not m:state().switch.inFlight.pressSourceId)
+      if case ~= "stale" then assert(m:state().switch.inFlight.invalidated) end
+    end
+  end,
   ["CMD-005 STATE-002: n,n and n,p serialize B before and after AXPress"] = function()
     for _, pressed in ipairs({ false, true }) do
       for _, delta in ipairs({ 1, -1 }) do

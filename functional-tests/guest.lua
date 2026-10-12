@@ -34,7 +34,9 @@ end
 local function captureFailure(err)
     local allowed={'foreign_standard_baseline','unexpected_seed_baseline','seed_not_standard',
         'candidate_modules_already_loaded','initial_managed_scope_not_empty','regular_space_required',
-        'unlocked_console_required','loginwindow_frontmost','loginwindow_focused','accessibility_required'}
+        'unlocked_console_required','loginwindow_frontmost','loginwindow_focused','accessibility_required',
+        'three_existing_desktops_required','three_regular_desktops_required','initial_D1_required',
+        'native_topology_unavailable','native_display_incomplete','native_display_unavailable'}
     for _,code in ipairs(allowed) do
         if tostring(err):find(code,1,true) then return code end
     end
@@ -56,11 +58,82 @@ local function chord(mods,key)
     local ordered=copy(mods); table.sort(ordered)
     return table.concat(ordered,'+')..':'..key
 end
-local function key(name)
+local syntheticModifiers={'cmd','alt','ctrl','shift'}
+local function releaseSyntheticKeys()
+    -- Guest-only controller. Empty flags + explicit modifier key-up emits the
+    -- flagsChanged boundary; chord key-up alone leaves synthetic Hyper held.
+    local released=true
+    for key in pairs(s.syntheticKeys or {}) do
+        local ok=pcall(function() hs.eventtap.event.newKeyEvent({},key,false):post() end)
+        if ok then s.syntheticKeys[key]=nil else released=false end
+    end
+    for _,mod in ipairs(syntheticModifiers) do
+        local ok=pcall(function() hs.eventtap.event.newKeyEvent({},mod,false):post() end)
+        released=released and ok
+    end
+    return released -- submission only, not proof of observed keyboard flags
+end
+local function emitChord(mods,key)
+    s.syntheticKeys=s.syntheticKeys or {}
+    s.syntheticKeys[key]=true -- retain cleanup authority even if posting throws
+    local ok,err=pcall(function()
+        hs.eventtap.event.newKeyEvent(mods,key,true):post()
+        hs.eventtap.event.newKeyEvent(mods,key,false):post()
+        s.syntheticKeys[key]=nil
+    end)
+    local released=releaseSyntheticKeys()
+    assert(ok,err)
+    assert(released,'synthetic_key_release_failed')
+end
+local function postKey(name)
     local binding=assert(s.chords[name], 'unknown_hotkey')
-    hs.eventtap.event.newKeyEvent(binding[1],binding[2],true):post()
-    hs.eventtap.event.newKeyEvent(binding[1],binding[2],false):post()
-    s.keyPending={name=name,before=s.receipts[name] or 0,deadline=now()+3}
+    s.keyEvents[#s.keyEvents+1]={kind='posted',name=name,at=now()}
+    emitChord(binding[1],binding[2])
+end
+local function keys(names)
+    local expected={}
+    for _,name in ipairs(names) do
+        assert(s.chords[name], 'unknown_hotkey')
+        expected[name]=(expected[name] or s.receipts[name] or 0)+1
+    end
+    s.keyPending={expected=expected,deadline=now()+3}
+    -- All events posted in this callback, before yielding to the .3s AX timer.
+    for _,name in ipairs(names) do postKey(name) end
+end
+local function key(name) keys({name}) end
+local function desktopAlias(id)
+    return id and (s.desktopAliases[id] or 'unknown') or nil
+end
+local function nativeDisplay()
+    -- Independent direct native read, not Context/cache/desired/projection.
+    for _,display in ipairs(assert(hs.spaces.data_managedDisplaySpaces(), 'native_topology_unavailable')) do
+        if display['Display Identifier']==s.screen:getUUID() then
+            assert(type(display.Spaces)=='table' and type(display['Current Space'])=='table', 'native_display_incomplete')
+            return display
+        end
+    end
+    error('native_display_unavailable')
+end
+local function nativeDesktop()
+    local display=nativeDisplay()
+    if s.desktopFullscreen and not s.fullscreenId and s.windows.A and s.windows.A:isFullScreen()==true then
+        local owners=hs.spaces.windowSpaces(s.windows.A:id())
+        if s.axes.A:isValid()==true and type(owners)=='table' and #owners==1 then
+            for _,item in ipairs(display.Spaces) do
+                if item.ManagedSpaceID==owners[1] and item.type==4 and not s.desktopAliases[owners[1]] then
+                    s.fullscreenId=owners[1]; s.desktopAliases[owners[1]]='F1'
+                end
+            end
+        end
+    end
+    local result={active=desktopAlias(display['Current Space'].ManagedSpaceID),order={},types={},regular={},count=#display.Spaces}
+    for _,item in ipairs(display.Spaces) do
+        local kind=item.type==0 and 'user' or item.type==4 and 'fullscreen' or 'unknown'
+        local alias=desktopAlias(item.ManagedSpaceID)
+        result.order[#result.order+1]=alias; result.types[#result.types+1]=kind
+        if kind=='user' then result.regular[#result.regular+1]=alias end
+    end
+    return result
 end
 local function candidateSnapshot()
     local c=s.candidate and s.candidate.core
@@ -102,6 +175,59 @@ local function candidateSnapshot()
         local desired=state.manager.focus.desiredBySpace[c.spaceId]
         diagnostics.desired=desired and s.byId[desired.targetId]
         diagnostics.pending=desired and desired.pending or false
+    end
+    if s.desktopSwitching then
+        diagnostics.retained={}
+        local active=s.candidate.core
+        -- Read every Core, including inactive scopes; never activate/reflow to inspect.
+        for id,core in pairs(s.candidate.cores or {}) do
+            local state=core:state()
+            local coord=state.coordinators[core.spaceId]
+            local row={order={},layouts={},layout=coord and coord.activeLayoutId}
+            if s.desktopFullscreen then
+                row.nativeFullscreen={}; row.unavailable={}
+                for wid,window in pairs(state.manager.windows) do
+                    local alias=s.byId[wid] or 'unknown'
+                    local life=window.lifecycle
+                    if life.nativeFullscreen then row.nativeFullscreen[#row.nativeFullscreen+1]=alias end
+                    if life.nativeFullscreen or life.minimized or life.appHidden then row.unavailable[#row.unavailable+1]=alias end
+                end
+                table.sort(row.nativeFullscreen); table.sort(row.unavailable)
+            end
+            local function aliases(ids)
+                local result={}; for _,wid in ipairs(ids or {}) do
+                    result[#result+1]=s.byId[wid] or 'unknown'
+                end; return result
+            end
+            local scope=state.manager.spaces[core.spaceId]
+            row.order=aliases(scope and scope.memberIds)
+            for name,layout in pairs(coord and coord.layouts or {}) do
+                if name=='stack' then row.layouts[name]={members=aliases(layout.members),selected=s.byId[layout.selectedId]}
+                else
+                    local saved={groups={},selected={},active=layout.activeStack,ratio=layout.ratio}
+                    for _,group in ipairs(layout.stacks or {}) do
+                        saved.groups[#saved.groups+1]=aliases(group.members)
+                        saved.selected[#saved.selected+1]=s.byId[group.selectedId] or 'unknown'
+                    end
+                    row.layouts[name]=saved
+                end
+            end
+            row.active=core==active
+            diagnostics.retained[desktopAlias(id)]=row
+            for wid in pairs(state.manager.windows) do
+                if not s.byId[wid] and core~=active then unknown=unknown+1 end
+            end
+        end
+        local runtime=assert(s.candidate.workspace, 'workspace_runtime_required')
+        local state=runtime:state(); local op=state.switch.inFlight
+        diagnostics.workspace={active=desktopAlias(state.activeRegularSpaceId),
+            desired=desktopAlias(state.switch.desiredSpaceId),
+            history={current=desktopAlias(state.lastConfirmedRegularSpaceId),previous=desktopAlias(state.previousRegularSpaceId)},
+            inFlight=op and {source=desktopAlias(op.sourceId),destination=desktopAlias(op.destinationId),
+                generation=op.generation,phase=op.phase,invalidated=op.invalidated},revision=state.revision}
+        diagnostics.workspaceTrace=copy(s.workspaceTrace)
+        diagnostics.keyEvents=copy(s.keyEvents)
+        diagnostics.instrumentation=s.candidate.instrumentation and s.candidate.instrumentation:status() or nil
     end
     table.sort(managed)
     return managed,unknown,diagnostics
@@ -184,7 +310,18 @@ local function sample()
     end
     table.sort(closed)
     local snapshotStarted=now()
+    -- Join F1 before aliasing workspace diagnostics from the same publication.
+    local desktop=s.desktopSwitching and nativeDesktop() or nil
     local managed,unknown,diagnostics=candidateSnapshot()
+    if s.desktopSwitching then diagnostics.nativeDesktop=desktop end
+    if s.desktopFullscreen then
+        diagnostics.fixtureNative={}
+        for alias,w in pairs(s.windows) do
+            local owners={}
+            for _,id in ipairs(hs.spaces.windowSpaces(w:id()) or {}) do owners[#owners+1]=desktopAlias(id) end
+            diagnostics.fixtureNative[alias]={fullscreen=w:isFullScreen()==true,spaces=owners}
+        end
+    end
     diagnostics.ghosttyAXInvalid=s.axes.C and s.ownerPids.C==s.ghosttyPid and s.axes.C:isValid()==false or false
     diagnostics.ghosttyCloseAt=s.ghosttyCloseAt
     timings.snapshot=now()-snapshotStarted
@@ -194,6 +331,7 @@ local function sample()
     diagnostics.validityMailbox=host and host.validityTimer~=nil or false
     local instrumentation=s.candidate and s.candidate.instrumentation
     diagnostics.asyncRemovalRequests=instrumentation and instrumentation:status().counts.asynchronousValidityRemovals or 0
+    diagnostics.spacesAdapter=s.candidate and s.candidate.spaces and s.candidate.spaces:status() or nil
     local bar=s.candidate and s.candidate.bar
     local pointer=hs.mouse.absolutePosition()
     local barFacts={requested=bar and bar.presentation and bar.presentation.visible or false,
@@ -222,6 +360,11 @@ local function finalize()
     s.cleanup.timerStopped=s.timer==nil
     hs.mouse.absolutePosition(s.originalPointer)
     s.cleanup.pointerRestored=true
+    if s.serviceBinding then s.serviceBinding:delete(); s.serviceBinding=nil end
+    if s.spaceModule then
+        for name,method in pairs(s.spaceMethods) do s.spaceModule[name]=method end
+        s.cleanup.spaceWrappersRestored=true
+    end
     s.cleanup.bindWrapperRestored=hs.hotkey.bind==s.originalBind
     s.cleanup.taskStopped=not s.task or not s.task:isRunning()
     s.cleanup.normalExit=s.exitCode==0
@@ -240,7 +383,8 @@ local function finalize()
     s.cleanup.ghosttyNormal=not s.ghosttyLaunchSubmitted or
         (s.cleanup.ghosttyExited and s.ghosttyExit==0 and not s.ghosttyLaunchForced
          and s.cleanup.ghosttyLaunchStopped)
-    s.cleanup.ok=s.cleanup.nativeWorkerDrained and s.cleanup.ghosttyNormal and s.cleanup.candidateStopped and observerStopped and s.cleanup.bindWrapperRestored
+    local syntheticReleased=s.syntheticKeys==nil or s.cleanup.syntheticKeyReleaseSubmitted==true
+    s.cleanup.ok=syntheticReleased and s.cleanup.nativeWorkerDrained and s.cleanup.ghosttyNormal and s.cleanup.candidateStopped and observerStopped and s.cleanup.bindWrapperRestored
         and s.cleanup.taskStopped and s.cleanup.normalExit and s.cleanup.callbackReceived
         and s.cleanup.claimsAbsent and s.cleanup.quitAcknowledged and not s.cleanup.forced
     if not s.cleanup.ok then s.cleanup.error=s.cleanup.error or 'cleanup_incomplete' end
@@ -252,6 +396,9 @@ local function finalize()
 
 end
 local function cleanupTick()
+    -- Release before candidate.stop() can issue its targeted Mission Control
+    -- Escape; repeat on cleanup retries, including failed actions/startup.
+    s.cleanup.syntheticKeyReleaseSubmitted=releaseSyntheticKeys()
     if not s.cleanup.candidateStopAttempted then
         s.cleanup.candidateStopAttempted=true
         s.stoppedWorker=s.candidate and s.candidate.host and s.candidate.host.validityWorker
@@ -352,7 +499,11 @@ local function tick()
     if not s.ready and now()>s.readyDeadline then failure('ready_timeout'); return end
     if s.keyPending then
         local p=s.keyPending
-        if (s.receipts[p.name] or 0)>p.before then
+        local received=true
+        for name,count in pairs(p.expected) do
+            if (s.receipts[name] or 0)<count then received=false end
+        end
+        if received then
             s.keyPending=nil
             if s.phase=='columns' then
                 local _,unknown,d=candidateSnapshot()
@@ -387,14 +538,40 @@ bootstrap=function()
         if event.type=='WindowReady' then s.nativeDebug.lastAccepted=accepted end
         return accepted
     end
+    if s.desktopSwitching then
+        local Spaces=require('lib.macos.spaces')
+        s.spaceMethods={}; s.spaceModule=Spaces
+        local function row(kind,op)
+            s.workspaceTrace[#s.workspaceTrace+1]={kind=kind,at=now(),generation=op.generation,
+                source=desktopAlias(op.sourceId),destination=desktopAlias(op.destinationId)}
+        end
+        for _,name in ipairs({'execute','_receipt','observe'}) do s.spaceMethods[name]=Spaces[name] end
+        Spaces.execute=function(adapter,intent,...)
+            row(intent.kind,intent)
+            return s.spaceMethods.execute(adapter,intent,...)
+        end
+        Spaces._receipt=function(adapter,op,kind,...)
+            row(kind,op.intent)
+            return s.spaceMethods._receipt(adapter,op,kind,...)
+        end
+        Spaces.observe=function(adapter,context,...)
+            local result=s.spaceMethods.observe(adapter,context,...)
+            if result.generation then row(result.workspaceEventType == 'RegularSwitchContextRebased' and 'pressContextRebased' or 'confirmed',result) end
+            return result
+        end
+    end
     local names={}
     for name,b in pairs(s.candidate.config.hotkeys) do
-        if b~=false then names[chord(b[1],b[2])]=name; s.chords[name]=copy(b) end
+        if b~=false then
+            assert(not s.desktopSwitching or chord(b[1],b[2])~=chord(s.chords.benignService[1],'y'), 'benign_chord_conflict')
+            names[chord(b[1],b[2])]=name; s.chords[name]=copy(b)
+        end
     end
     hs.hotkey.bind=function(mods,k,pressed,...)
         local name=assert(names[chord(mods,k)],'unexpected_startup_binding')
         return s.originalBind(mods,k,function(...)
             s.receipts[name]=(s.receipts[name] or 0)+1
+            s.keyEvents[#s.keyEvents+1]={kind='callback',name=name,at=now()}
             return pressed(...)
         end,...)
     end
@@ -512,7 +689,7 @@ local function takeAction()
     s.actionSequence=data.sequence
     local success=pcall(function()
         if data.operation=='stop' then M.stop()
-        else M.command(data.operation,data.alias) end
+        else M.command(data.operation,data.alias,data.commands) end
     end)
     s.actionAccepted=success; s.actionError=not success and 'action_rejected' or nil
 end
@@ -536,6 +713,7 @@ function M.start(o)
     local screens=hs.screen.allScreens(); assert(#screens==1,'sole_screen_required')
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
+        desktopSwitching=o.desktopSwitching==true,desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
         initialLayout=o.initialLayout or 'columns',ghosttyEnabled=o.ghostty==true,ownedDisposable=o.ownedDisposable==true,cleanSeedTerminal=o.cleanSeedTerminal==true,originalPointer=copy(hs.mouse.absolutePosition()),
         sequence=0,actionSequence=0,windows={},axes={},byId={},ownerPids={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}
@@ -545,6 +723,20 @@ function M.start(o)
     s.settings={soleScreen=true,accessibility=hs.accessibilityState(),barStrip=32,
         cleanedSeedTerminal=false} -- SIP/settings/versions are independently verified by host
     local ok,startupError=pcall(function()
+        if s.desktopSwitching then
+            local display=nativeDisplay()
+            assert(#display.Spaces==3, 'three_existing_desktops_required')
+            for i,item in ipairs(display.Spaces) do
+                assert(item.type==0 and item.ManagedSpaceID~=nil, 'three_regular_desktops_required')
+                s.desktopAliases[item.ManagedSpaceID]='D'..i
+            end
+            assert(desktopAlias(display['Current Space'].ManagedSpaceID)=='D1', 'initial_D1_required')
+            s.chords.benignService={{'cmd','alt','ctrl','shift'},'y'}
+            s.serviceBinding=s.originalBind(s.chords.benignService[1],'y',function()
+                s.receipts.benignService=(s.receipts.benignService or 0)+1
+                s.keyEvents[#s.keyEvents+1]={kind='callback',name='benignService',at=now()}
+            end)
+        end
         s.operation='check_session'
         local properties=hs.caffeinate.sessionProperties()
         assert(properties and properties.kCGSSessionOnConsoleKey==true
@@ -586,6 +778,7 @@ function M.start(o)
             failure('guest_controller_error')
             if now()-s.cleanupAt>=5 or now()-s.started>=60 then
                 if s.task and s.task:isRunning() then s.forced=true; s.task:terminate() end
+                s.cleanup.syntheticKeyReleaseSubmitted=releaseSyntheticKeys()
                 finalize(); pcall(publishStatus)
             end
         end
@@ -593,7 +786,7 @@ function M.start(o)
     publishStatus()
     return M.status()
 end
-function M.command(op,alias)
+function M.command(op,alias,commands)
     assert(s and s.running and s.phase=='active' and not s.error,'controller_not_active')
     assert(not s.pending and not s.keyPending and not s.ghosttyPending,'action_pending')
     if op=='createGhostty' then
@@ -621,8 +814,7 @@ function M.command(op,alias)
             assert(preceding and focused==s.windows[preceding] and app==s.ghosttyApp
                 and app:pid()==s.ghosttyPid and s.axes[preceding]:isValid()==true,'ghostty_new_requires_exact_focus')
             s.ghosttyPending={kind='create',alias=alias,baseline=baseline,deadline=now()+3,submitted_at=now()}
-            hs.eventtap.event.newKeyEvent({'cmd'},'n',true):post()
-            hs.eventtap.event.newKeyEvent({'cmd'},'n',false):post()
+            emitChord({'cmd'},'n')
         end
         return {accepted=true,submitted_at=now()}
     end
@@ -634,11 +826,34 @@ function M.command(op,alias)
             and s.axes.C:isValid()==true,'ghostty_close_requires_exact_focus')
         s.ghosttyCloseAt=now()
         s.ghosttyPending={kind='close',alias=alias,deadline=now()+3,submitted_at=s.ghosttyCloseAt}
-        hs.eventtap.event.newKeyEvent({'ctrl'},'d',true):post()
-        hs.eventtap.event.newKeyEvent({'ctrl'},'d',false):post()
+        emitChord({'ctrl'},'d')
         return {accepted=true,submitted_at=s.ghosttyCloseAt}
     end
+    if op=='enterFixtureFullscreen' or op=='exitFixtureFullscreen' then
+        assert(s.desktopFullscreen and alias=='A' and s.windows.A and s.axes.A:isValid()==true,
+            'fullscreen_requires_owned_fixture_A')
+        local entering=op=='enterFixtureFullscreen'
+        assert(s.windows.A:isFullScreen()==not entering,'fullscreen_transition_already_applied')
+        if entering then
+            assert(nativeDesktop().active=='D1' and hs.window.focusedWindow()==s.windows.A,
+                'fullscreen_enter_requires_native_D1_A_focus')
+        end
+        -- Test setup action only, not a production fullscreen command or repair.
+        s.windows.A:setFullScreen(entering)
+        return {accepted=true,submitted_at=now()}
+    end
+    if op=='hotkeyBurst' then
+        assert(s.desktopSwitching and alias==nil and type(commands)=='table'
+            and (#commands==2 or #commands==3), 'invalid_hotkey_burst')
+        for _,name in ipairs(commands) do
+            assert(name=='benignService' or name=='focusPreviousDesktop' or name=='focusNextDesktop'
+                or name=='focusPreviousDesktopPosition' or name:match('^focusDesktop[1-9]$'), 'invalid_burst_command')
+        end
+        keys(commands)
+        return {accepted=true,submitted_at=now()}
+    end
     if op=='create' or op=='close' then
+        if s.desktopSwitching then assert(nativeDesktop().active=='D1','fixture_requires_D1') end
         assert(type(alias)=='string' and alias:match('^[A-E]$'),'unsupported_alias')
         if op=='create' then assert(not s.windows[alias],'alias_already_used')
         else assert(s.windows[alias],'alias_not_joined') end
@@ -651,6 +866,12 @@ function M.command(op,alias)
         hs.mouse.absolutePosition(point)
         hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved,point):post()
         return {accepted=true,operation=op,submitted_at=now()}
+    end
+    if s.desktopSwitching and (op=='benignService' or op=='resizeLeft' or op=='resizeRight'
+        or op=='focusPreviousDesktop' or op=='focusNextDesktop' or op=='focusPreviousDesktopPosition'
+        or op:match('^focusDesktop[1-9]$')) then
+        assert(alias==nil,'hotkey_alias_forbidden'); key(op)
+        return {accepted=true,submitted_at=now()}
     end
     assert(alias==nil and (op=='focusNext' or op=='focusPrevious' or op=='focusLeftGroup'
         or op=='focusRightGroup' or op=='focusManagedPrevious' or op=='cycleLayout'),'unsupported_acceptance_command')

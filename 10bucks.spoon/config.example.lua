@@ -1,4 +1,4 @@
--- Canary A supports only direct stack navigation and explicit reflow.
+-- Keyboard-first layout, focus, and existing regular-desktop commands.
 -- Before switching from stable, copy the built-in display UUID from the approved
 -- switch preflight into this value. Do not commit a machine-specific UUID.
 local hyper = { "cmd", "alt", "ctrl", "shift" }
@@ -17,5 +17,17 @@ return {
     resizeRight = { hyper, "]" },
     resetRatio = { hyper, "=" },
     reflow = { hyper, "r" },
+    focusDesktop1 = { hyper, "1" },
+    focusDesktop2 = { hyper, "2" },
+    focusDesktop3 = { hyper, "3" },
+    focusDesktop4 = { hyper, "4" },
+    focusDesktop5 = { hyper, "5" },
+    focusDesktop6 = { hyper, "6" },
+    focusDesktop7 = { hyper, "7" },
+    focusDesktop8 = { hyper, "8" },
+    focusDesktop9 = { hyper, "9" },
+    focusPreviousDesktop = { hyper, "0" },
+    focusNextDesktop = { hyper, "n" },
+    focusPreviousDesktopPosition = { hyper, "p" },
   },
 }

@@ -420,4 +420,4 @@ The following are not MVP invariants:
 
 ## Current delivery priority
 
-The September 22 user-approved desktop sequence is existing-desktop switching (positions 1–9 and previous-desktop on 0), creation, then keyboard move without following. Desktop deletion is deferred from this sequence; SPACE-007/008 remain its target contracts, not implemented or waived safeguards. Positions beyond nine remain reachable through cyclic navigation; 0 is not position ten.
+The current user-approved remaining order is recorded in [`development-roadmap.md`](development-roadmap.md). Existing-desktop switching (positions 1–9 and previous-desktop on 0) comes first, then creation and configured rules. Keyboard move-to-desktop without following and desktop deletion are deferred by the October 11 decision; SPACE-010 and SPACE-007/008 remain their future target contracts, not implemented or waived safeguards. Positions beyond nine remain reachable through cyclic navigation; 0 is not position ten.

@@ -6,6 +6,36 @@ local function spaces()
   return { data_managedDisplaySpaces = function() return { { ["Display Identifier"] = "built-in", ["Current Space"] = { ManagedSpaceID = 1 }, Spaces = { { ManagedSpaceID = 1, type = 0 } } } } end }
 end
 return {
+  ["SPACE-004 CMD-006: asynchronous Space adapter invariant sequences"] = function()
+    for name, test in pairs(require("tests.test_spaces")) do
+      local ok, err = pcall(test); assert(ok, name .. ": " .. tostring(err))
+    end
+  end,
+  ["SPACE-009: owned Dock destruction snapshots once reattaches on replacement and detaches stale callbacks"] = function()
+    local calls, boundaries, reads, stopped = 0, 0, 0, 0
+    local observers, appCallback = {}, nil
+    local app = { pid = function() return 7 end, bundleID = function() return "com.apple.dock" end }
+    local selected = screen({ x = 0, y = 0, w = 1, h = 1 })
+    local function watcher() return { start = function(self) return self end, stop = function() end } end
+    local hs = { screen = { allScreens = function() return { selected } end, watcher = { new = watcher } }, spaces = spaces() }
+    local snapshot = hs.spaces.data_managedDisplaySpaces
+    hs.spaces.data_managedDisplaySpaces = function() reads = reads + 1; return snapshot() end
+    hs.spaces.watcher = { new = watcher }
+    hs.application = { applicationsForBundleID = function() return { app } end,
+      watcher = { launched = 1, terminated = 2, new = function(cb) appCallback = cb; return watcher() end } }
+    hs.axuielement = { applicationElement = function() return {} end, observer = { new = function()
+      local observer = { callback = function(self, cb) self.cb = cb end, addWatcher = function(self) return self end,
+        start = function(self) return self end, stop = function() stopped = stopped + 1 end }
+      observers[#observers + 1] = observer; return observer
+    end } }
+    local subscription = Context.watch(hs, "built-in", function(context) calls = calls + 1; assert(context.nativeSpaceId == 1) end,
+      function(context) boundaries = boundaries + 1; assert(context.nativeSpaceId == 1) end)
+    observers[1].cb(nil, nil, "AXUIElementDestroyed"); assert(calls == 1 and boundaries == 1 and reads == 1)
+    appCallback(nil, 2, app); appCallback(nil, 1, app)
+    assert(#observers == 2 and stopped == 1)
+    local before = calls; observers[1].cb(nil, nil, "AXUIElementDestroyed"); assert(calls == before)
+    subscription.detach(); observers[2].cb(nil, nil, "AXUIElementDestroyed"); assert(calls == before and stopped == 2)
+  end,
   ["ENV-004 FS-005: context distinguishes native fullscreen without inventing a regular Space"] = function()
     local selected = screen({ x = 0, y = 0, w = 1, h = 1 })
     local hs = { screen = { allScreens = function() return { selected } end }, spaces = spaces() }
@@ -14,6 +44,8 @@ return {
     hs.spaces.data_managedDisplaySpaces = function() return { { ["Display Identifier"] = "built-in", ["Current Space"] = { ManagedSpaceID = 2 }, Spaces = { { ManagedSpaceID = 2, type = 4 } } } } end
     local fullscreen = Context.snapshot(hs, "built-in")
     assert(fullscreen.regularSpaceId == nil and fullscreen.displayId == "built-in")
+    assert(fullscreen.nativeSpaceId == 2 and fullscreen.nativeSpaceType == "fullscreen" and fullscreen.fullSpaceIds[1] == 2)
+    assert(#fullscreen.regularSpaceIds == 0 and fullscreen.revision == nil)
     hs.spaces.data_managedDisplaySpaces = function() return { { ["Display Identifier"] = "built-in", ["Current Space"] = { ManagedSpaceID = 3 }, Spaces = { { ManagedSpaceID = 3, type = 9 } } } } end
     assert(not pcall(Context.snapshot, hs, "built-in"))
     assert(not pcall(Context.snapshot, hs, "missing"))

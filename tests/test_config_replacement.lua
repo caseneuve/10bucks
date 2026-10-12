@@ -2,6 +2,19 @@ local Config = require("lib.config")
 local Bindings = require("lib.bindings")
 
 return {
+  ["SPACE-001 SPACE-004 SPACE-005 CMD-001: 24 defaults preserve existing commands and copy desktop fields"] = function()
+    local callbacks, events = {}, {}
+    local hs = { hotkey = { bind = function(_, key, callback) callbacks[key] = callback; return { delete = function() end } end } }
+    local bound = Bindings.bind(hs, function(event) events[#events + 1] = event end, Config.build().hotkeys)
+    assert(#bound == 24)
+    for i = 1, 9 do callbacks[tostring(i)](); assert(events[#events].type == "FocusRegularPosition" and events[#events].position == i) end
+    events[#events].position = 999; callbacks["9"](); assert(events[#events].position == 9)
+    callbacks["0"](); assert(events[#events].type == "FocusPreviousRegular")
+    callbacks.n(); assert(events[#events].type == "FocusRelativeRegular" and events[#events].delta == 1)
+    callbacks.p(); assert(events[#events].delta == -1)
+    callbacks.j(); assert(events[#events].type == "FocusNext")
+    callbacks["["](); assert(events[#events].delta == -0.05)
+  end,
   ["Canary A config rejects unknown keys/actions, cycles, malformed modifiers, and duplicate reordered chords"] = function()
     assert(not pcall(Config.build, { unsupported = true }))
     assert(not pcall(Config.build, { hotkeys = false }))
@@ -53,6 +66,7 @@ return {
     local calls, deleted, command = {}, 0, nil
     local hs = { hotkey = { bind = function(_, _, callback) calls[#calls + 1] = callback; return { delete = function() deleted = deleted + 1 end } end } }
     local config = Config.build({ hotkeys = { cycleLayout = false, focusLeftGroup = false, focusRightGroup = false, focusPrevious = false, focusNext = { { "cmd" }, "j" }, focusManagedPrevious = false, moveFocusedToOtherGroup = false, swapGroups = false, resizeLeft = false, resizeRight = false, resetRatio = false, reflow = false } })
+    for name in pairs(config.hotkeys) do if name:find("Desktop", 1, true) then config.hotkeys[name] = false end end
     local bound = Bindings.bind(hs, function(value) command = value end, config.hotkeys)
     assert(#bound == 1); calls[1](); assert(command.type == "FocusNext"); Bindings.delete(bound); assert(deleted == 1)
   end,

@@ -17,6 +17,9 @@ local Coordinator = require("lib.layouts.coordinator")
 local Model = require("lib.model")
 local Bar = require("lib.bar")
 local NativeBar = require("lib.macos.bar")
+local Runtime = require("lib.runtime")
+local WorkspaceSwitch = require("lib.workspace_switch")
+local Spaces = require("lib.macos.spaces")
 
 local Tenbucks = {}
 Tenbucks.__index = Tenbucks
@@ -174,7 +177,40 @@ function Tenbucks:_withEffectBatch(work)
   if parent then
     for _, entry in ipairs(batch) do parent[#parent + 1] = entry end
   else
-    self:_flushCoreIntents(batch)
+    self.effectBatch = batch
+    local flushed, flushError = pcall(function()
+    while #batch > 0 do
+    local pending = batch; batch = {}; self.effectBatch = batch
+    local cores, workspace = {}, {}
+    for _, entry in ipairs(pending) do
+      if entry.workspace then workspace[#workspace + 1] = entry else cores[#cores + 1] = entry end
+    end
+    self:_flushCoreIntents(cores)
+    for _, entry in ipairs(workspace) do
+      for _, intent in ipairs(entry.intents) do
+        if self.spaces and self.workspace then
+          if intent.kind == "resnapshotRegularTopology" then
+            self:_contextChanged(Context.snapshot(hs, self.config.builtInDisplayUUID))
+          elseif intent.kind ~= "RegularSpaceRemoved" then
+            local op = self.workspace:state().switch.inFlight
+            if intent.kind == "cancelRegularSwitch" or (op and not op.invalidated and op.generation == intent.generation) then
+              self.spaces:execute(intent)
+            end
+          end
+        end
+      end
+    end
+    end
+    end)
+    self.effectBatch = nil
+    if not flushed then
+      local op = self.workspace and self.workspace:state().switch.inFlight
+      if op and self.spaces and not self.spaces.operation then
+        self.workspace:submit({ type = "RegularSwitchFailed", generation = op.generation,
+          sourceId = op.sourceId, sourceType = op.sourceType, destinationId = op.destinationId })
+      end
+      error(flushError, 0)
+    end
   end
   return first, second
 end
@@ -189,6 +225,11 @@ function Tenbucks:_coreForSpace(spaceId)
   local core = self.cores and self.cores[spaceId]
   if core then return core end
   if not self.context or not spaceId then return nil end
+  if self.workspace then
+    local present = false
+    for _, id in ipairs(self.workspace:state().regularSpaceIds) do if id == spaceId then present = true end end
+    if not present then return nil end
+  end
   local context = { displayId = self.context.displayId, regularSpaceId = spaceId, workArea = self.context.workArea }
   core = newCore(context)
   self.cores[spaceId] = core
@@ -202,7 +243,7 @@ function Tenbucks:_targetIsManaged(target)
   local unplaced = target and self.focusHistory:unplacedTarget(target.windowId)
   local managed = (window and window.placementSpaceId == target.spaceId)
     or (unplaced and unplaced.target.spaceId == target.spaceId)
-  return managed == true and self.handleRegistry:resolve(target) ~= nil
+  return managed == true and not (unplaced and unplaced.uncertain) and self.handleRegistry:resolve(target) ~= nil
 end
 
 -- A managed focus callback can arrive before the host's Space watcher. Route
@@ -212,6 +253,14 @@ function Tenbucks:_coreForManagedWindow(windowId, lease)
   local core = target and self.cores and self.cores[target.spaceId]
   local window = core and core:state().manager.windows[windowId]
   if window then return core, window, target end
+  if target then
+    for _, retained in pairs(self.cores or {}) do
+      local member = retained:state().manager.windows[windowId]
+      if member and member.lifecycle.nativeFullscreen then
+        return retained, member, { windowId = windowId, spaceId = retained.spaceId, lease = target.lease }
+      end
+    end
+  end
 end
 
 function Tenbucks:_afterCoreEvent(event, eventCore)
@@ -220,13 +269,17 @@ function Tenbucks:_afterCoreEvent(event, eventCore)
   elseif event.type == "ActualFocusChanged" then
     local window = eventCore and eventCore:state().manager.windows[event.id]
     local unplaced = self.focusHistory:unplacedTarget(event.id)
-    local target = window and { windowId = event.id, spaceId = window.placementSpaceId }
-      or (unplaced and unplaced.target)
+    local target = (unplaced and not unplaced.uncertain and unplaced.target)
+      or (window and { windowId = event.id, spaceId = window.placementSpaceId })
     if target and self:_targetIsManaged(target) then self.focusHistory:observe(target) end
   end
 end
 
 function Tenbucks:_submitEvent(event, handle)
+  return self:_withEffectBatch(function() return self:_deliverEvent(event, handle) end)
+end
+
+function Tenbucks:_deliverEvent(event, handle)
   -- A stale lifecycle callback cannot route or mutate actual presentation by
   -- an ID alone after its window resource lease ended. Current global focus is
   -- a separate native read and remains presentation-authoritative.
@@ -283,26 +336,27 @@ function Tenbucks:_submitEvent(event, handle)
     if readyAction ~= "manage" then return true end
     if not readyRouteAllowed() then return false end
     local owner, window = self:_coreForManagedWindow(event.id, event.resource)
+    self.focusHistory:registerUnplaced(event)
     if owner then
       if not window.lifecycle.nativeFullscreen then self:_submitCore(owner, { type = "WindowEnteredNativeFullscreen", id = event.id }) end
-    else
-      self.focusHistory:registerUnplaced(event)
-      rememberReady()
     end
+    rememberReady()
     self:_publishBar(); return true
   end
 
   if event.type == "WindowReady" and readyAction == "manage" then
-    if not readyRouteAllowed() then return false end
+    if not readyRouteAllowed() or not self:_coreForSpace(event.spaceId) then return false end
     self:_withEffectBatch(function()
       local prior, _, target = self:_coreForManagedWindow(event.id, event.resource)
       local destination = self:_coreForSpace(event.spaceId)
       if prior and target.spaceId ~= event.spaceId then
         self:_submitCore(prior, { type = "WindowRelocated", id = event.id })
         self.focusHistory:relocate({ windowId = event.id, spaceId = event.spaceId })
+        self.focusHistory:promote({ windowId = event.id, spaceId = event.spaceId })
       elseif self.focusHistory:unplacedTarget(event.id) then
         self.focusHistory:promote({ windowId = event.id, spaceId = event.spaceId })
       end
+      if not destination then return end
       self:_submitCore(destination, event)
       local window = destination:state().manager.windows[event.id]
       if window and window.lifecycle.nativeFullscreen and event.metadata and event.metadata.nativeFullscreen == false then
@@ -368,9 +422,20 @@ function Tenbucks:_focusManagedPrevious()
 end
 
 function Tenbucks:_submitCommand(command)
-  if command.type == "FocusManagedPrevious" then return self:_focusManagedPrevious() end
+  if command.type == "FocusRegularPosition" or command.type == "FocusRelativeRegular" or command.type == "FocusPreviousRegular" then
+    return self:_withEffectBatch(function()
+      self.focusHistory:cancel()
+      for _, core in pairs(self.cores or {}) do self:_submitCore(core, { type = "FocusRequestCancelled", spaceId = core.spaceId }) end
+      self:_contextChanged(Context.snapshot(hs, self.config.builtInDisplayUUID))
+      return self.workspace:submit(command)
+    end)
+  end
+  if command.type == "FocusManagedPrevious" then
+    if self.workspace and self.workspace:state().switch.inFlight then return false, "desktop-switch-pending" end
+    return self:_withEffectBatch(function() return self:_focusManagedPrevious() end)
+  end
   if self.suspended or not self.core then return false, "native-fullscreen-has-no-regular-layout" end
-  return self.core:submit(command)
+  return self:_withEffectBatch(function() return self.core:submit(command) end)
 end
 
 function Tenbucks:_startHost(context)
@@ -415,8 +480,41 @@ function Tenbucks:_startHost(context)
   end
 end
 
+function Tenbucks:_workspaceFact(context)
+  self.workspaceRevision = (self.workspaceRevision or 0) + 1
+  local fact = { type = context.workspaceEventType or "RegularTopologyObserved", displayId = context.displayId, revision = self.workspaceRevision,
+    nativeSpaceId = context.nativeSpaceId, nativeSpaceType = context.nativeSpaceType,
+    regularSpaceIds = context.regularSpaceIds or context.regularPositions, fullSpaceIds = context.fullSpaceIds }
+  for _, key in ipairs({ "generation", "sourceId", "sourceType", "destinationId" }) do fact[key] = context[key] end
+  return fact
+end
+
+function Tenbucks:_retireSpace(spaceId)
+  local core = self.cores and self.cores[spaceId]
+  if not core then return end
+  local windows = {}
+  for _, window in pairs(core:state().manager.windows) do windows[#windows + 1] = window end
+  self.focusHistory:invalidateSpace(spaceId, windows)
+  self:_submitCore(core, { type = "FocusRequestCancelled", spaceId = spaceId })
+  self.cores[spaceId] = nil
+  if self.core == core then self.core = nil end
+end
+
 function Tenbucks:_beginContext(context)
   self.cores = {}
+  self.workspaceRevision = 0
+  self.workspace = Runtime.new({ initialState = WorkspaceSwitch.initial(self:_workspaceFact(context)),
+    reduce = WorkspaceSwitch.reduce, validate = WorkspaceSwitch.validate, deriveIntents = WorkspaceSwitch.deriveIntents,
+    observeIntents = function(intents)
+      for _, intent in ipairs(intents) do if intent.kind == "RegularSpaceRemoved" then self:_retireSpace(intent.spaceId) end end
+      local entry = { workspace = true, intents = intents }
+      if self.effectBatch then self.effectBatch[#self.effectBatch + 1] = entry end
+    end })
+  self.spaces = Spaces.new(hs, { current = function() return self.workspace and self.workspace:state().switch.inFlight end,
+    snapshot = function() return Context.snapshot(hs, self.config.builtInDisplayUUID) end,
+    submit = function(event)
+      if self.workspace then self:_withEffectBatch(function() assert(self.workspace:submit(event)) end) end
+    end })
   if context.regularSpaceId then
     self.core = newCore(context)
     self.cores[context.regularSpaceId] = self.core
@@ -430,7 +528,24 @@ end
 -- Space's retained pure Core. A newly observed Space gets one bootstrap; a
 -- returning Space reuses its existing order, selection, and layout state.
 function Tenbucks:_contextChanged(context)
-  self.contextEpoch = (self.contextEpoch or 0) + 1
+  return self:_withEffectBatch(function()
+    if self.spaces then context = self.spaces:observe(context) end
+    if self.workspace then assert(self.workspace:submit(self:_workspaceFact(context))) end
+    local previous = self.context and self.context.regularSpaceId
+    if previous and previous ~= context.regularSpaceId then
+      local pending = self.focusHistory:pending()
+      if pending and pending.spaceId == previous then self.focusHistory:cancel() end
+      local old = self.cores[previous]
+      if old then self:_submitCore(old, { type = "FocusRequestCancelled", spaceId = previous }) end
+    end
+    self:_applyContext(context)
+  end)
+end
+
+function Tenbucks:_applyContext(context)
+  if not self.context or self.context.regularSpaceId ~= context.regularSpaceId then
+    self.contextEpoch = (self.contextEpoch or 0) + 1
+  end
   if not context.regularSpaceId then
     self.context, self.suspended = context, true
     if self.host then self.host:setContext(context); self.host:observeFocus() end
@@ -440,8 +555,10 @@ function Tenbucks:_contextChanged(context)
   if self.context and context.regularSpaceId == self.context.regularSpaceId and not self.suspended then
     self.context = context
     if self.host then self.host:setContext(context) end
-    self.core:setWorkArea(context.workArea)
-    self.core:submit({ type = "Reflow" })
+    if self.core then
+      self.core:setWorkArea(context.workArea)
+      self.core:submit({ type = "Reflow" })
+    end
     self:_publishBar()
     return
   end
@@ -484,6 +601,8 @@ function Tenbucks:start()
     bindings = Bindings.bind(hs, function(command) return self:_submitCommand(command) end, self.config.hotkeys)
     contextSubscription = Context.watch(hs, self.config.builtInDisplayUUID, function(context)
       if self.started then self:_contextChanged(context) end
+    end, function(context)
+      if self.spaces then self.spaces:dockBoundary(context) end
     end)
   end)
   if not ok then
@@ -502,6 +621,9 @@ function Tenbucks:stop()
   self.started = false
   if self.contextSubscription then self.contextSubscription.detach() end
   self.contextSubscription = nil
+  if self.workspace then self.workspace:submit({ type = "WorkspaceSwitchStopped" }) end
+  if self.spaces then self.spaces:stop() end
+  self.spaces, self.workspace, self.effectBatch = nil, nil, nil
   self:_stopScope()
   if self.bar then self.bar:stop(); self.bar = nil end
   self.originContext = nil

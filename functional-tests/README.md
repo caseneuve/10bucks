@@ -210,6 +210,137 @@ synchronous focused AX safety-query POC failed fixed tail-cost/gap gates. No pol
 workaround added. Evidence/next architectural hypothesis:
 `docs/pocs/016-three-ghostty-cases-safety-cost.md`.
 
+## desktop-switching
+
+**Target native acceptance; not yet executed by this source-only worker.**
+The coordinator prepares the owned guest with exactly three existing regular
+Spaces, no fullscreen Spaces, D1 active and an empty fixture baseline. The
+scenario never creates/deletes/reorders a desktop or correctively focuses/reflows.
+
+```sh
+./functional-tests/run --headed --reuse-debug VM_NAME desktop-switching
+```
+
+Creates ABC **only on D1**, verifies columns A|BC, changes ratio .50→.55,
+cycles stack, navigates C→B→C, and returns to columns. Retains both layouts,
+physical grouping/order, ratio, selected A/C and stack selection C. Then:
+numbered D2/return D1; previous-position D1→D3 wrap and next D3→D1 wrap;
+missing9 with unchanged native topology; repeated0 posted before confirmation
+then confirmed toggle; queued n,n→D3 through D2; queued n,p→D1 through D2;
+and n,n,absolute1 replacing the queued target, serialized D2→D1.
+All visited Core scopes (including inactive D1 and empty D2/D3) are checked
+on subsequent checkpoints, before reactivation could conceal corruption.
+Native focus on empty D2/D3 need not be a fixture alias. Returning to D1 must
+show actual C focus plus independent .55 split frames. Exactly one callback per
+posted command; no synthetic reducer input or fixture repair.
+
+Unchanged gates: 5s/checkpoint, 250ms matching stability, 50ms samples,
+150ms matching freshness, 2 logical points geometry. Typical successful sequence
+fits the 55s containment/60s guest watchdog and 95s runner bound. A stalled case
+fails rather than extending thresholds. Demo/bar-capture combinations are rejected.
+Runner cleanup stops candidate/fixture and drains the native worker; reused debug
+VM remains running. Reuse remains not-cold-isolation acceptance.
+
+### Separate fullscreen indexing/retention subcase
+
+```sh
+./functional-tests/run --reuse-debug VM_NAME --desktop-fullscreen desktop-switching
+```
+
+Runs separately within the unchanged 95s runner/60s guest bounds. Creates A on D1,
+uses the owned fixture's native `setFullScreen(true)` test action, then requires
+actual fullscreen F1/A focus and three regular/four full native Spaces. F1 is
+joined from exact A's independently observed native owner, not candidate intent.
+Real Hyper2 must reach native D2 (regular position2, skipping F1); Hyper1 must
+return to D1 while A's saved slot/order/layout remain intact and unavailable.
+The fixture's `setFullScreen(false)` action then requires exact native D1,
+A's restored availability/retained slot and full-width native geometry.
+
+**Scope revision:** final fullscreen exit focus is observed and recorded, not
+asserted as A or claimed as restoration acceptance. FS-002 slot restoration is
+covered; production focus restoration remains **Deferred** to restoration step5.
+No corrective focus/reflow is sent. Initial creation/fullscreen-entry focus and
+all existing regular-scenario focus assertions remain mandatory. The 5s deadline,
+250ms stability, 50ms samples, 150ms freshness and 2pt geometry gates are unchanged.
+
+**Coordinator-reported native evidence:** preserved failed session
+`07c880e2baa4` confirms F1→D2→D1 indexing/rebase and retained slot; final native D1
+geometry was correct but fixture focus alias was nil (Finder actually focused).
+That run failed the former A-focus assertion and remains failed evidence; this
+scope correction does not retroactively relabel it green or claim a new live pass.
+No native actions or evidence re-analysis were performed by this source worker.
+The adapter's `pressContextRebased` trace row is **not confirmation**; only real
+pressed-leg destination confirmation completes the secondary switch trace.
+Python oracle negatives cover accidental rebase-as-confirmation as well as wrong
+raw index, wrong regular position, slot loss and incorrect exit geometry.
+
+Fullscreen diagnostics add `fixtureNative.A:{fullscreen,spaces}` and retained
+scope `nativeFullscreen`/`unavailable` alias lists. Every native observation,
+including final `focused:null` when focus is not fixture-owned, remains in the
+existing guest trace and runner assertions without substitution or restamping.
+Benchmark and fullscreen options are mutually exclusive; the regular scenario
+is unchanged.
+
+### Diagnostic schema (alias-only)
+
+`Observation.diagnostics` adds these independent namespaces:
+
+- `nativeDesktop`: `{active, order, types, regular, count}` from one direct
+  `hs.spaces.data_managedDisplaySpaces()` read for the selected display. D1–D3
+  are joined **once to initial native IDs**, not reassigned by current positions.
+  New/unjoined identities become `unknown`; type/order/count changes fail.
+  No Context/cache/bar/desired state is a native oracle; raw IDs are not exported.
+- `workspace`: `{active, desired?, inFlight?, history:{current?,previous?},revision}`
+  read from `candidate.workspace:state()`. `inFlight` contains aliased
+  `source,destination`, primitive `generation,phase,invalidated?`.
+- `retained`: map keyed by desktop alias over **all** `candidate.cores`:
+  `{active,layout,order,layouts}`. Stack is `{members,selected?}`; columns is
+  `{groups,selected,active,ratio}`. Window aliases join exact fixture resources.
+- `workspaceTrace`: cumulative `{kind,at,generation,source,destination}` rows
+  captured at adapter `execute`, `_receipt` and correlated `observe` boundaries.
+  Request/press/confirmation generations and serialization are secondary checks;
+  final desktop identity is always the separate native snapshot.
+- `keyEvents`: cumulative `{kind:posted|callback,name,at}` guest-monotonic rows.
+  Callback rows instrument actual hotkey entry independently of the sender.
+- `instrumentation`: read-only existing canary counters/timer status. No new
+  production counters or alternate runtime are introduced.
+
+New mailbox action: `{sequence,operation:"hotkeyBurst",commands:[name,name,...]}`
+accepts exactly two/three validated real chords. All downs/ups post in one guest
+callback; readiness waits for aggregate callback counts, **not native completion**.
+Scenario verifies every burst callback precedes the first .3s AXPress. Temporary
+adapter wrappers and benign binding are removed in cleanup. Runner records
+`actions.jsonl`, expanded `assertions.jsonl`, frozen sources and guest trace.
+Composition exposes `workspace:state()`; absence is a harness failure,
+not permission to infer history/intent from native state.
+
+### Bounded benchmark subcases
+
+```sh
+# Run three separate invocations for >=30 warmed samples (10 per batch).
+./functional-tests/run --reuse-debug VM_NAME --desktop-benchmark warm desktop-switching
+# Run five separate invocations for five first-switch cold-runtime paths.
+./functional-tests/run --reuse-debug VM_NAME --desktop-benchmark cold desktop-switching
+```
+
+Each invocation starts a fresh candidate runtime, no fixture windows needed;
+warm batches perform an unmeasured D2/D1 warmup then ten alternating switches.
+Cold means first switch of a fresh runtime, **not cold VM/OS boot**. Coordinator
+must restore native D1 as explicit preparation before another invocation (cold
+finishes D2); the scenario never auto-repairs this precondition.
+Calibrates ordinary HyperY first, then posts switch+benign HyperY together on
+every sample. Records all expected posted/callback/request/AXPress/confirmation
+pairs in `desktop-benchmark.json`, zero loss/duplication required, with before/after
+existing instrumentation. Nearest-rank p95 posted→request ≤50ms; concurrent
+benign service p95≤50ms/max≤100ms; native completion is reported separately.
+Failed budget rows are preserved before assertion. Aggregate three/five batches
+and report median/p95/max with `scenarios.desktop_switching.summarize_batches`
+(pure JSON-artifact analysis; rejects incomplete/censored sets). One batch is not
+the complete benchmark gate. This
+in-process posted-event measurement does **not** prove responsiveness to input
+posted while Hammerspoon is blocked, physical-input or representative-host
+performance; an independent timestamped sender remains coordinator evidence.
+
 ## Scenario self-checks
 
 ```sh

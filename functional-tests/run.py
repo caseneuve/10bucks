@@ -17,13 +17,23 @@ BASE = "10bucks-functional-sip-base-20261011"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=["columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention"])
+    parser.add_argument("scenario", choices=["columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching"])
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--demo", action="store_true", help="2s pauses between actions; not a latency benchmark")
     parser.add_argument("--bar-capture", action="store_true", help="capture native bar outside/hover/return pixels for independent visual review")
     parser.add_argument("--keep-open", action="store_true", help="debug only: preserve live guest and controller after failure")
     parser.add_argument("--reuse-debug", metavar="VM", help="reuse running owned debug guest; reset HS modules, no reboot")
+    parser.add_argument('--desktop-benchmark', choices=['warm', 'cold'],
+                        help='desktop-only bounded batch: 10 warm switches or one cold-runtime switch')
+    parser.add_argument('--desktop-fullscreen', action='store_true',
+                        help='desktop-only separate owned-fixture fullscreen indexing/retention subcase')
     args = parser.parse_args()
+    if args.desktop_fullscreen and (args.scenario != 'desktop-switching' or args.desktop_benchmark):
+        parser.error('--desktop-fullscreen requires desktop-switching without --desktop-benchmark')
+    if args.desktop_benchmark and args.scenario != 'desktop-switching':
+        parser.error('--desktop-benchmark requires desktop-switching')
+    if args.scenario == 'desktop-switching' and (args.demo or args.bar_capture):
+        parser.error('desktop-switching cannot combine demo/bar pauses with its watchdog')
     if args.demo and args.scenario=='stack-columns-membership':
         parser.error('--demo cannot fit the combined scenario watchdog; run without --demo')
     execution_deadline = time.monotonic() + 95
@@ -123,14 +133,17 @@ def main():
                 raise RuntimeError(expected_layout + " bootstrap not confirmed")
             return Frame(**status["workArea"])
 
-        def action(self, operation, alias=None):
+        def action(self, operation, alias=None, commands=None):
             remaining(1)
             if args.demo:
                 if remaining(2) < 2:
                     raise RuntimeError("demo pause exceeds execution budget")
                 time.sleep(2)
             self.action_sequence += 1
-            action = {"sequence": self.action_sequence, "operation": operation, "alias": alias}
+            action = {"sequence": self.action_sequence, "operation": operation, "alias": alias,
+                      "commands": commands}
+            with (results / 'actions.jsonl').open('a') as log:
+                log.write(json.dumps(dict(action, host_submitted_at=time.monotonic())) + '\n')
             temp = results / "action.json.tmp"
             temp.write_text(json.dumps(action))
             temp.replace(results / "action.json")
@@ -154,6 +167,15 @@ def main():
         def hotkey(self, command):
             self.action(command)
 
+        def fixture_fullscreen(self, enabled):
+            self.action('enterFixtureFullscreen' if enabled else 'exitFixtureFullscreen', 'A')
+
+        def hotkey_burst(self, commands):
+            self.action('hotkeyBurst', commands=list(commands))
+
+        def benchmark_record(self, value):
+            (results / 'desktop-benchmark.json').write_text(json.dumps(value, indent=2) + '\n')
+
         def observe(self):
             deadline = time.monotonic() + remaining(0.14)
             while time.monotonic() < deadline:
@@ -172,7 +194,8 @@ def main():
             with (results / "assertions.jsonl").open("a") as log:
                 log.write(json.dumps({"checkpoint": checkpoint, "sample": observation.sample_id,
                     "focused": observation.focused, "managed": sorted(observation.managed),
-                    "closed": sorted(observation.closed), "at": observation.sampled_at}) + "\n")
+                    "closed": sorted(observation.closed), "at": observation.sampled_at,
+                    "diagnostics": observation.diagnostics}) + "\n")
 
     try:
         if args.reuse_debug:
@@ -246,9 +269,14 @@ def main():
         ssh(f"mkdir -m 700 {control}")
         hs('ft=dofile("' + guest_root + '/functional-tests/guest.lua"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
-           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization") else "columns"}",ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
+           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization") else "columns"}",desktopSwitching={str(args.scenario=="desktop-switching").lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
         driver = Driver()
-        scenario(driver)
+        if args.desktop_fullscreen:
+            module.fullscreen(driver)
+        elif args.desktop_benchmark:
+            module.benchmark(driver, mode=args.desktop_benchmark)
+        else:
+            scenario(driver)
         if args.bar_capture:
             evidence = []
             for label, operation, showing in (("outside", "pointerOutsideBar", True),

@@ -85,6 +85,13 @@ This status does not claim that broad POC-001 criteria passed. In particular, re
 
 **Current attempt scope:** one asynchronous existing-regular-desktop switch and return, acceptance versus watcher-confirmed completion, cleanup, and independent key-service observation. Ordered regular topology extraction reuses prior evidence. Topology-only reorder notification, creation, movement, and deletion/emptiness checks were outside that historical attempt; needed owned-VM evidence steps now follow the standing authority above. Do not use this POC to certify every application or unrelated core behavior.
 
+## Composed existing-desktop switching acceptance
+
+[`018-existing-desktop-switching.md`](018-existing-desktop-switching.md) records the
+single composed reducer/adapter, complete authoritative regular/fullscreen-source
+VM scenarios, retained failures, narrow benchmark and independent-service evidence.
+It does not retroactively repair POC002's failed budgets or certify host performance.
+
 ## POC-003 — Overlay bar and native handoff
 
 **Status: narrow hover/return and Mission Control observation passed; fullscreen transition flash unresolved.** [`003-overlay-bar-handoff.md`](003-overlay-bar-handoff.md) records the approved 90-second probe, human visual feedback, aggregate trace, and verified cleanup. It supports overlay plus temporary hidden-only pointer tracking, not complete bar acceptance.

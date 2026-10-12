@@ -14,7 +14,12 @@ local actions = {
   resizeRight = { type = "ResizeRatioDelta", delta = 0.05 },
   resetRatio = "ResetRatio",
   reflow = "Reflow",
+  focusPreviousDesktop = "FocusPreviousRegular",
+  focusNextDesktop = { type = "FocusRelativeRegular", delta = 1 },
+  focusPreviousDesktopPosition = { type = "FocusRelativeRegular", delta = -1 },
 }
+
+for position = 1, 9 do actions["focusDesktop" .. position] = { type = "FocusRegularPosition", position = position } end
 
 function Bindings.bind(hs, submit, hotkeys)
   assert(type(submit) == "function", "bindings require a command sink")
@@ -30,7 +35,8 @@ function Bindings.bind(hs, submit, hotkeys)
         seen[identity] = true
         bindings[#bindings + 1] = hs.hotkey.bind(modifiers, key, function()
           if type(command) == "table" then
-            return submit({ type = command.type, delta = command.delta })
+            local event = {}; for key, value in pairs(command) do event[key] = value end
+            return submit(event)
           end
           return submit({ type = command })
         end)
