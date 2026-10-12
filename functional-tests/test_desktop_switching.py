@@ -150,32 +150,48 @@ class FullscreenDriver(Driver):
         self.full = False
         self.fullscreen_actions = []
         self.recorded = []
+        self.fullscreen_backup = None
 
     def record(self, name, observation): self.recorded.append((name, observation))
 
     def fixture_fullscreen(self, enabled):
         self.fullscreen_actions.append(enabled)
         self.full = enabled
+        if enabled:
+            self.fullscreen_backup = self.previous
+            self.previous = 'D1'
         self.active = 'F1' if enabled else 'D1'
         if not enabled and self.defect == 'exit-wrong-desktop': self.active = 'D2'
 
     def hotkey(self, command):
         self.actions.append(('key', command))
-        self.receipt(command)
-        target = 'D2' if command == 'focusDesktop2' else 'D1'
-        if self.defect == 'raw-index' and command == 'focusDesktop2': target = 'F1'
-        if self.defect == 'wrong-regular-position' and command == 'focusDesktop2': target = 'D3'
+        self.fullscreen_switch((command,))
+
+    def hotkey_burst(self, commands):
+        self.actions.append(('burst', tuple(commands)))
+        self.fullscreen_switch(commands)
+
+    def fullscreen_switch(self, commands):
         source = self.active
+        command = commands[0]
+        target = self.previous if command == 'focusPreviousDesktop' else 'D2' if command == 'focusDesktop2' else 'D1'
+        for name in commands: self.receipt(name)
+        if self.defect == 'raw-index' and source == 'F1': target = 'F1'
+        if self.defect == 'wrong-regular-position' and command == 'focusPreviousDesktop' and source == 'D1': target = 'D3'
+        if self.defect == 'undelivered-zero' and len(commands) == 2: self.receipts[command] -= 1
         gen = len(self.trace) + 1
         if source == 'F1':
             self.trace.append({'kind': 'pressContextRebased', 'at': self.time + .1, 'source': source,
                                'destination': target, 'generation': gen})
             if self.defect == 'rebase-as-confirmation': self.trace[-1]['kind'] = 'confirmed'
         for kind, delay in (('switchRegularSpace', 0), ('RegularSwitchPressed', .3), ('confirmed', .4)):
-            self.trace.append({'kind': kind, 'at': self.time + delay, 'source': source,
+            at = self.time + delay - (.001 * (len(commands) - 1) if kind == 'switchRegularSpace' else 0)
+            self.trace.append({'kind': kind, 'at': at, 'source': source,
                                'destination': target, 'generation': gen})
         self.time += .4
-        self.previous, self.active = ('D1' if source == 'F1' else source), target
+        self.previous, self.active = (self.fullscreen_backup if source == 'F1' else source), target
+        if source == 'F1' and self.defect == 'backup-lost': self.previous = 'D1'
+        if len(commands) == 2 and self.defect == 'late-zero': self.events[-1]['at'] = self.time + 1
 
     def observe(self):
         o = super().observe()
@@ -192,7 +208,9 @@ class FullscreenDriver(Driver):
         row['unavailable'] = ['A'] if self.full else []
         if self.full and self.defect == 'lost-slot': row['order'] = []
         if self.full and self.defect == 'available-full': row['unavailable'] = []
-        if self.active == 'F1': d['workspace'] = {'history': {'current': 'D1'}}
+        if self.active == 'F1':
+            d['workspace'] = {'history': {'current': 'D1', 'previous': 'D1'}}
+            if self.defect == 'fullscreen-history': d['workspace']['history']['previous'] = 'D2'
         focused = 'A' if self.active in ('D1', 'F1') and self.order else None
         if not self.full and len(self.fullscreen_actions) == 2 and self.defect == 'exit-unmanaged-focus': focused = None
         if self.full and self.defect == 'entry-focus' and self.active == 'F1': focused = None
@@ -247,7 +265,10 @@ class DesktopChecks(unittest.TestCase):
         d = FullscreenDriver()
         fullscreen(d, clock=d.clock, sleep=d.sleep)
         self.assertEqual(d.fullscreen_actions, [True, False])
-        self.assertEqual(d.actions, [('create', 'A'), ('key', 'focusDesktop2'), ('key', 'focusDesktop1')])
+        self.assertEqual(d.actions, [('create', 'A'), ('key', 'focusDesktop2'), ('key', 'focusDesktop1'),
+                                     ('burst', ('focusPreviousDesktop', 'focusPreviousDesktop')),
+                                     ('key', 'focusPreviousDesktop'), ('key', 'focusDesktop1')])
+        self.assertEqual(sum(r['kind'] == 'RegularSwitchPressed' for r in d.trace), 5)
         self.assertLess(d.time, 55)
 
     def test_fullscreen_exit_focus_is_observed_not_restoration_acceptance(self):
@@ -256,12 +277,12 @@ class DesktopChecks(unittest.TestCase):
         name, last = d.recorded[-1]
         self.assertIn('focus observed only', name)
         self.assertIsNone(last.focused)
-        self.assertEqual(d.actions, [('create', 'A'), ('key', 'focusDesktop2'), ('key', 'focusDesktop1')])
+        self.assertNotIn('focus', [action[0] for action in d.actions])
 
     def test_fullscreen_native_index_and_retention_negatives(self):
         for defect in ('raw-index', 'wrong-regular-position', 'unjoined', 'wrong-type',
                        'lost-slot', 'available-full', 'exit-wrong-desktop', 'entry-focus', 'exit-frame',
-                       'rebase-as-confirmation'):
+                       'rebase-as-confirmation', 'fullscreen-history', 'backup-lost', 'undelivered-zero', 'late-zero'):
             with self.subTest(defect=defect):
                 d = FullscreenDriver(defect)
                 with self.assertRaises(AcceptanceFailure): fullscreen(d, clock=d.clock, sleep=d.sleep)

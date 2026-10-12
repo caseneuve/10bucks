@@ -402,11 +402,15 @@ local function cleanupTick()
     if not s.cleanup.candidateStopAttempted then
         s.cleanup.candidateStopAttempted=true
         s.stoppedWorker=s.candidate and s.candidate.host and s.candidate.host.validityWorker
-        s.cleanup.candidateStopped=not s.candidate or pcall(function()
-            s.candidate:stop()
-            assert(not s.candidate.started and #s.candidate.hotkeyBindings==0,'candidate_still_started')
-        end)
-        if not s.cleanup.candidateStopped then s.cleanup.error='candidate_stop_failed' end
+        local stopped,stopError=true,nil
+        if s.candidate then
+            stopped,stopError=pcall(function()
+                s.candidate:stop()
+                assert(not s.candidate.started and #s.candidate.hotkeyBindings==0,'candidate_still_started')
+            end)
+        end
+        s.cleanup.candidateStopped=stopped
+        if not stopped then s.cleanup.error='candidate_stop_failed';s.cleanup.candidateStopError=tostring(stopError) end
     end
     if s.ghosttyTask and not s.ghosttyApp then
         local app=hs.application.get('com.mitchellh.ghostty')

@@ -102,6 +102,25 @@ operation drain from cancelling callbacks. Stop/failure leaves ambiguous MC unto
 and exposes manual-dismiss guidance. Supported-host latency and broad real-app
 reliability still need manual dogfood/acceptance; guest green does not certify them.
 
+## Manual-feedback correction — fullscreen departure history
+
+User accepted normal host switching and revised SPACE-005: D2→D1→fullscreen must
+make previous=D1, not D2. Fullscreen remains unnumbered; cyclic next still anchors
+D1. The reducer retains the earlier other regular desktop as a primitive backup;
+confirmed return to D1 restores D2 for the next toggle. Repeated fullscreen facts
+and correlated MC presentation rebases do not settle that history early.
+
+Authoritative updated fullscreen sequence `session-88a792442e5c`: PASS,
+independent review69/69hashes,122assertions/8actions/5serializedconfirmedlegs;
+two actual0callbacks before press produce one fullscreen→D1 leg, then0targetsD2.
+Normal cleanup/observerstop/workerdrain/zero drops; reused guest qualified.
+Regular regression `session-ca8ab12c84aa`: PASS.265Lua/36Python pass.
+
+Prior `session-9fba6e38af68` remains overallFAIL/scenarioPassed=true: candidate stop
+failed during cleanup. Original exception was not captured, cause unknown;
+subsequent explicit stop succeeded but does not repair that result. Harness now
+retains the actual future stop exception without changing cleanup acceptance.
+
 ## Cleanup
 
 Production has one adapter path; no gotoSpace busy wait or permanent topology poll.

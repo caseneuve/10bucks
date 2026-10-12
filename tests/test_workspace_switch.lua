@@ -29,7 +29,61 @@ local function confirm(m, revision)
   for key, value in pairs(event) do snapshot[key] = value end
   submit(m, snapshot)
 end
+local function topology(revision, active, nativeType)
+  return fact(revision, active, { "A", "B", "C" }, { "A", "F", "G", "B", "C" }, nativeType)
+end
+local function departed()
+  local m = runtime(topology(1, "B"))
+  submit(m, topology(2, "A")); submit(m, topology(3, "F", "fullscreen"))
+  return m
+end
 return {
+  ["SPACE-005: fullscreen previous is departed regular with backup toggle and no fullscreen numbering"] = function()
+    local m = departed()
+    assert(m:state().previousRegularSpaceId == "A" and m:state().previousBeforeFullscreen == "B")
+    submit(m, topology(4, "G", "fullscreen"))
+    assert(m:state().previousRegularSpaceId == "A" and m:state().previousBeforeFullscreen == "B")
+    command(m, 1); assert(m:state().switch.inFlight.destinationId == "B")
+    m = departed(); submit(m, topology(4, "C"))
+    assert(m:state().previousRegularSpaceId == "A" and m:state().lastConfirmedRegularSpaceId == "C")
+    m = departed(); submit(m, topology(4, "A"))
+    assert(m:state().previousRegularSpaceId == "B" and not m:state().fullscreenHistoryActive)
+  end,
+  ["SPACE-005 STATE-002: repeated previous survives MC rebase duplicate snapshots until bound native confirmation"] = function()
+    local m = departed(); submit(m, { type = "FocusPreviousRegular" })
+    assert(m:state().switch.inFlight.destinationId == "A")
+    local rebase = topology(4, "A")
+    for k,v in pairs(operation(m, "RegularSwitchContextRebased")) do rebase[k] = v end
+    submit(m, rebase); submit(m, topology(5, "A"))
+    assert(m:state().previousRegularSpaceId == "A" and m:state().previousBeforeFullscreen == "B")
+    submit(m, { type = "FocusPreviousRegular" }); assert(m:state().switch.desiredSpaceId == "A")
+    submit(m, operation(m, "RegularSwitchPressed"))
+    submit(m, topology(6, "A")); assert(m:state().previousRegularSpaceId == "A")
+    local confirmed = topology(7, "A")
+    for k,v in pairs(operation(m, "RegularTopologyObserved")) do confirmed[k] = v end
+    submit(m, confirmed)
+    assert(not m:state().switch.inFlight and m:state().previousRegularSpaceId == "B")
+    submit(m, { type = "FocusPreviousRegular" }); assert(m:state().switch.inFlight.destinationId == "B")
+  end,
+  ["SPACE-005 SPACE-006: deleted backups cold fullscreen timeout and external navigation remain coherent"] = function()
+    local m = departed()
+    submit(m, fact(4, "F", { "A", "C" }, { "A", "F", "C" }, "fullscreen"))
+    assert(not m:state().previousBeforeFullscreen and m:state().previousRegularSpaceId == "A")
+    submit(m, fact(5, "A", { "A", "C" }, { "A", "F", "C" }))
+    assert(not m:state().previousRegularSpaceId)
+    m = runtime(topology(1, "F", "fullscreen")); submit(m, { type = "FocusPreviousRegular" })
+    assert(not m:state().switch.inFlight and not m:state().previousRegularSpaceId)
+    m = departed(); submit(m, { type = "FocusPreviousRegular" })
+    local rebase = topology(4, "A")
+    for k,v in pairs(operation(m, "RegularSwitchContextRebased")) do rebase[k] = v end
+    submit(m, rebase); submit(m, operation(m, "RegularSwitchTimedOut"))
+    assert(m:state().previousRegularSpaceId == "B" and not m:state().fullscreenHistoryActive)
+    m = departed(); submit(m, { type = "FocusPreviousRegular" })
+    rebase = topology(4, "A")
+    for k,v in pairs(operation(m, "RegularSwitchContextRebased")) do rebase[k] = v end
+    submit(m, rebase); submit(m, topology(5, "C"))
+    assert(m:state().switch.inFlight.invalidated and m:state().previousRegularSpaceId == "A")
+  end,
   ["FS-005 STATE-002: correlated own MC press context preserves initiating tuple and commits reality"] = function()
     local m = runtime(fact(1, "F", { "A", "B", "C" }, { "A", "F", "B", "C" }, "fullscreen"))
     submit(m, { type = "FocusRegularPosition", position = 2 })
@@ -39,7 +93,7 @@ return {
     submit(m, rebased)
     local op = m:state().switch.inFlight
     assert(not op.invalidated and op.sourceId == "F" and op.sourceType == "fullscreen" and op.pressSourceId == "A")
-    assert(m:state().nativeSpaceId == "A" and m:state().lastConfirmedRegularSpaceId == "A")
+    assert(m:state().nativeSpaceId == "A" and m:state().lastConfirmedRegularSpaceId == nil)
     submit(m, operation(m, "RegularSwitchPressed")); assert(m:state().switch.inFlight.phase == "pressed")
   end,
   ["FS-005 SPACE-006: stale external reordered vanished-source and late-invalidated rebase cannot restore authority"] = function()
@@ -211,8 +265,8 @@ return {
   ["SPACE-005: fullscreen preserves history permits numbered return and cold relative no-ops"] = function()
     local m = runtime(); submit(m, fact(2, "B"))
     local fullscreen = fact(3, "F", { "A", "B", "C" }, { "A", "F", "B", "C" }, "fullscreen")
-    submit(m, fullscreen); assert(m:state().previousRegularSpaceId == "A" and m:state().lastConfirmedRegularSpaceId == "B")
-    submit(m, { type = "FocusPreviousRegular" }); assert(m:state().switch.inFlight.destinationId == "A")
+    submit(m, fullscreen); assert(m:state().previousRegularSpaceId == "B" and m:state().lastConfirmedRegularSpaceId == "B")
+    submit(m, { type = "FocusPreviousRegular" }); assert(m:state().switch.inFlight.destinationId == "B")
     m = runtime(fullscreen); submit(m, { type = "FocusRegularPosition", position = 2 })
     assert(m:state().switch.inFlight.sourceId == "F" and m:state().switch.inFlight.destinationId == "B")
     m = runtime(fullscreen); command(m, 1); assert(not m:state().switch.inFlight)

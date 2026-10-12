@@ -44,17 +44,19 @@ function WorkspaceSwitch.initial(input)
   return { displayId = input.displayId, revision = input.revision, nativeSpaceId = input.nativeSpaceId,
     nativeSpaceType = input.nativeSpaceType, regularSpaceIds = input.regularSpaceIds, fullSpaceIds = input.fullSpaceIds,
     activeRegularSpaceId = active, lastConfirmedRegularSpaceId = active, previousRegularSpaceId = nil,
+    fullscreenHistoryActive = input.nativeSpaceType == "fullscreen",
     stopped = false, switch = { nextGeneration = 0 } }
 end
 function WorkspaceSwitch.validate(state)
   if not snapshot(state) or type(state.stopped) ~= "boolean" then return false, "malformed workspace topology" end
   local regular = dense(state.regularSpaceIds)
-  for _, key in ipairs({ "activeRegularSpaceId", "lastConfirmedRegularSpaceId", "previousRegularSpaceId" }) do
+  for _, key in ipairs({ "activeRegularSpaceId", "lastConfirmedRegularSpaceId", "previousRegularSpaceId", "previousBeforeFullscreen" }) do
     if state[key] ~= nil and not regular[state[key]] then return false, "malformed regular history" end
   end
   if state.activeRegularSpaceId ~= (state.nativeSpaceType == "user" and state.nativeSpaceId or nil) then
     return false, "actual regular scope disagrees with native reality"
   end
+  if type(state.fullscreenHistoryActive) ~= "boolean" then return false, "malformed fullscreen history" end
   local s = state.switch
   if type(s) ~= "table" or not integer(s.nextGeneration)
     or (s.desiredSpaceId ~= nil and not regular[s.desiredSpaceId]) then return false, "malformed switch intent" end
@@ -92,6 +94,26 @@ end
 local function request(state, destination)
   if destination then state.switch.desiredSpaceId = destination; begin(state) end
 end
+local function navigationObserved(state)
+  local active = state.activeRegularSpaceId
+  if not active then
+    if not state.fullscreenHistoryActive then
+      state.previousBeforeFullscreen = state.previousRegularSpaceId
+      state.previousRegularSpaceId = state.lastConfirmedRegularSpaceId
+      state.fullscreenHistoryActive = true
+    end
+  elseif state.fullscreenHistoryActive then
+    if active == state.lastConfirmedRegularSpaceId then state.previousRegularSpaceId = state.previousBeforeFullscreen
+    else state.previousRegularSpaceId = state.lastConfirmedRegularSpaceId end
+    state.lastConfirmedRegularSpaceId = active
+    state.previousBeforeFullscreen = nil
+    state.fullscreenHistoryActive = false
+  elseif active ~= state.lastConfirmedRegularSpaceId then
+    state.previousRegularSpaceId = state.lastConfirmedRegularSpaceId
+    state.lastConfirmedRegularSpaceId = active
+  end
+end
+
 function WorkspaceSwitch.reduce(state, event)
   assert(type(event) == "table" and type(event.type) == "string", "workspace input must be normalized")
   local s, kind = state.switch, event.type
@@ -124,11 +146,11 @@ function WorkspaceSwitch.reduce(state, event)
     state.regularSpaceIds = event.regularSpaceIds; state.fullSpaceIds = event.fullSpaceIds
     if not regular[state.lastConfirmedRegularSpaceId] then state.lastConfirmedRegularSpaceId = nil end
     if not regular[state.previousRegularSpaceId] then state.previousRegularSpaceId = nil end
+    if not regular[state.previousBeforeFullscreen] then state.previousBeforeFullscreen = nil end
     state.activeRegularSpaceId = event.nativeSpaceType == "user" and event.nativeSpaceId or nil
-    if state.activeRegularSpaceId and state.activeRegularSpaceId ~= state.lastConfirmedRegularSpaceId then
-      state.previousRegularSpaceId = state.lastConfirmedRegularSpaceId
-      state.lastConfirmedRegularSpaceId = state.activeRegularSpaceId
-    end
+    -- MC presentation is actual native reality, not confirmed navigation. Keep
+    -- fullscreen previous/anchor through rebase and duplicate source snapshots.
+    if not (op and op.pressSourceId and not op.invalidated and not confirmed) then navigationObserved(state) end
     if s.desiredSpaceId and not regular[s.desiredSpaceId] then
       s.desiredSpaceId = op and regular[op.destinationId] and op.destinationId or nil
     end
@@ -140,7 +162,8 @@ function WorkspaceSwitch.reduce(state, event)
     request(state, state.regularSpaceIds[event.position])
   elseif kind == "FocusRelativeRegular" then
     assert(event.delta == 1 or event.delta == -1, "requires delta +/-1")
-    local anchor = s.desiredSpaceId or state.activeRegularSpaceId or state.lastConfirmedRegularSpaceId
+    local anchor = s.desiredSpaceId or (state.fullscreenHistoryActive and state.lastConfirmedRegularSpaceId)
+      or state.activeRegularSpaceId or state.lastConfirmedRegularSpaceId
     for i, space in ipairs(state.regularSpaceIds) do
       if space == anchor then request(state, state.regularSpaceIds[(i - 1 + event.delta) % #state.regularSpaceIds + 1]); break end
     end
@@ -151,7 +174,10 @@ function WorkspaceSwitch.reduce(state, event)
   elseif kind == "RegularSwitchCancelled" then
     if matching(s.inFlight, event) and s.inFlight.invalidated then s.inFlight = nil; begin(state) end
   elseif kind == "RegularSwitchTimedOut" or kind == "RegularSwitchFailed" then
-    if matching(s.inFlight, event) then s.inFlight = nil; s.desiredSpaceId = nil end
+    if matching(s.inFlight, event) then
+      s.inFlight = nil; s.desiredSpaceId = nil
+      navigationObserved(state) -- expired presentation now settles as external reality
+    end
   else error("unknown workspace input: " .. kind, 2) end
   return state
 end

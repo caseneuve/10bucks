@@ -248,11 +248,21 @@ VM remains running. Reuse remains not-cold-isolation acceptance.
 ```
 
 Runs separately within the unchanged 95s runner/60s guest bounds. Creates A on D1,
-uses the owned fixture's native `setFullScreen(true)` test action, then requires
-actual fullscreen F1/A focus and three regular/four full native Spaces. F1 is
-joined from exact A's independently observed native owner, not candidate intent.
-Real Hyper2 must reach native D2 (regular position2, skipping F1); Hyper1 must
-return to D1 while A's saved slot/order/layout remain intact and unavailable.
+first sends real Hyper2→D2 and Hyper1→D1, establishing confirmed previous D2.
+The owned fixture's native `setFullScreen(true)` test action then requires actual
+fullscreen F1/A focus and three regular/four full native Spaces. F1 is joined
+from exact A's independently observed native owner, not candidate intent.
+Stable native F1 observations must show history current D1/previous D1 (the
+fullscreen-return target), without losing the confirmed D2 backup.
+
+A real Hyper0,Hyper0 burst posts before AXPress: exactly two callbacks, one native
+leg F1→D1, then confirmed history current D1/previous D2. Another real Hyper0
+must toggle to native D2 (regular position2, not F1); real Hyper1 returns D1.
+Every step checks A's retained saved slot/order/layout and unavailable state,
+independent native identities/topology, exact callback counts and secondary
+serialized trace. This is executable guest acceptance, not only a reducer test.
+Cyclic navigation's fullscreen anchor is covered separately by pure sequences;
+this bounded subcase does not add an optional cyclic excursion.
 The fixture's `setFullScreen(false)` action then requires exact native D1,
 A's restored availability/retained slot and full-width native geometry.
 
@@ -271,8 +281,9 @@ scope correction does not retroactively relabel it green or claim a new live pas
 No native actions or evidence re-analysis were performed by this source worker.
 The adapter's `pressContextRebased` trace row is **not confirmation**; only real
 pressed-leg destination confirmation completes the secondary switch trace.
-Python oracle negatives cover accidental rebase-as-confirmation as well as wrong
-raw index, wrong regular position, slot loss and incorrect exit geometry.
+Python oracle negatives cover accidental rebase-as-confirmation, incorrect
+fullscreen return history, lost D2 backup, missing/late repeated0 callbacks,
+wrong raw index/regular position, slot loss and incorrect exit geometry.
 
 Fullscreen diagnostics add `fixtureNative.A:{fullscreen,spaces}` and retained
 scope `nativeFullscreen`/`unavailable` alias lists. Every native observation,
