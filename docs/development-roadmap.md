@@ -83,7 +83,7 @@ handoff before production edits or native builds; see WORK_STATE for exact owner
 and rollback. Do not use unchanged synchronous `hs.spaces.gotoSpace()` in hotkeys.
 
 Fresh-session operational entry: read `.pi/WORK_STATE.md`, then
-`.pi/handoffs/2026-10-11-desktop-switching-next.md`. The ignored handoff holds exact
+`.pi/handoffs/2026-10-12-desktop-creation-next.md`. The ignored handoff holds exact
 live host/VM ownership, rollback and worker protocol; this tracked roadmap holds
 the durable user-approved order. Neither authorizes host window/Space mutations
 merely by being read.
