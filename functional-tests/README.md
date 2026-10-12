@@ -1,5 +1,12 @@
 # Native functional acceptance scenarios
 
+The VM is the agent-owned testing environment: guest setup, native test actions,
+diagnostics, retries and necessary lifecycle repairs are already authorized.
+Do not stop to request approval for individual VM procedures. See `AGENTS.md`
+for the standing ownership boundary, one-operator rule, evidence requirements
+and separate host authority. Complete native scenarios are authoritative for
+guest functional behavior; mock/unit passes do not replace them.
+
 First executable scenario: `scenarios/columns_close_recovery.py`.
 The runner and native guest driver are implemented. The first native scenario
 passed in a fresh SIP-enabled clone on 2026-10-11: A full-width/focused → A left,

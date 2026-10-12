@@ -31,6 +31,14 @@ Keep this file concise and current rather than appending a transcript. Retain on
 
 `.pi/WORK_STATE.md` is operational state, not a behavior contract. `docs/invariants.md`, `docs/architecture.md`, and `docs/rewrite-plan.md` remain authoritative. If several agents run concurrently, the orchestrator is the single state-document writer and consolidates worker results after reviewing them.
 
+## Test VM ownership — standing authority
+
+**The VM is the agent's testing environment. The coordinator owns it.** Do not ask the human for approval of individual guest test procedures or routine retries. Within the assigned delivery scope, the coordinator may prepare and change guest desktops, reorder/create/remove test Spaces, open/close/move/fullscreen test windows, exercise Mission Control, install test dependencies, configure guest test settings/permissions through normal UI, load/reload candidates, repair the harness, and start/stop/reboot or recreate owned disposable guests as needed. Delegate guest operations explicitly; keep one native operator per VM. Reuse the persistent debug guest when practical; reboot is a tool, not a per-turn ritual.
+
+Record procedures and fixed acceptance gates before effects; freeze executed artifacts, inspect underlying failures, preserve evidence, and verify cleanup. VM setup is not product-feature acceptance. Full ownership does not permit bypassing SIP/TCC, deleting unrelated work or unknown VMs, weakening behavior/acceptance contracts, or claiming guest results prove physical-host performance.
+
+Host actions remain a separate boundary: guest ownership does not authorize host Hammerspoon loads/reloads, user-window/Space actions, settings/permission changes, or other host-global mutations. Ask only when a real human decision is required: host authority, changed product scope/contracts, an architectural choice that cannot satisfy approved contracts, or the long-command exception below. Historical per-probe VM approval wording in plans/handoffs is superseded by this standing authority.
+
 ## Non-negotiable implementation rules
 
 - Maintain one runtime path. Do not add shadow, legacy, compatibility, or indefinite feature-flag implementations.
@@ -70,7 +78,7 @@ cite existing evidence where applicable
 ### POC agent time and failure discipline
 
 - A POC agent MUST NOT start a command with a timeout longer than 120 seconds, or start work expected to run longer than 120 seconds, without first stating the expected duration and reason and receiving explicit human approval. Hour- or day-scale defensive timeouts are forbidden. Split work into short, observable steps instead.
-- A POC agent's failure report is not accepted as evidence by itself. Before recording or acting on a failure, the orchestrator MUST inspect the underlying trace/output and independently check for harness defects, stale state, operator/procedure errors, and analyzer mistakes. Safe deterministic re-analysis is allowed; another live action or changed threshold still requires the applicable approval. Classify the outcome as platform evidence only after this review rules out a false negative.
+- A POC agent's failure report is not accepted as evidence by itself. Before recording or acting on a failure, the orchestrator MUST inspect the underlying trace/output and independently check for harness defects, stale state, operator/procedure errors, and analyzer mistakes. Safe deterministic re-analysis and bounded live retries in the owned test VM are authorized under the standing VM authority above. Host live actions and changed acceptance thresholds still require the applicable human approval. Classify the outcome as platform evidence only after this review rules out a false negative.
 
 Do not require a new POC for ordinary pure implementation work whose platform assumptions are already proved. A behavior-preserving tidy-first change is allowed only when it creates a required replacement seam more cheaply than directly rewriting the coupled piece. It must not preserve a rejected contract.
 

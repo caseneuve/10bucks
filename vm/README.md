@@ -5,6 +5,17 @@ Requires macOS/Apple Silicon, the installed Tart binary, Python 3, and the exist
 SSH key. Paths default to `$HOME/.tart`; override `TART_BIN`, `VM_SSH_KEY`, or
 `VM_KNOWN_HOSTS` if necessary.
 
+## Agent-owned testing environment
+
+The coordinator owns the test VM under the standing authority in `AGENTS.md`.
+Guest setup, Space/window/Mission Control actions, test settings and normal-UI
+permissions, dependencies, candidate reloads, diagnostics, retries and necessary
+VM lifecycle repairs do **not** need per-procedure human approval. Keep one native
+operator, prefer persistent-guest reuse, preserve failures and unrelated images,
+freeze executed artifacts and verify cleanup. Do not bypass SIP/TCC or weaken
+acceptance gates. Host actions are not authorized by VM ownership; guest results
+do not certify physical-host performance.
+
 ## Launch from this checkout
 
 ```sh

@@ -4,6 +4,16 @@
 
 POCs use disposable code or instrumentation and never create a second production path. Pure reducer/layout/transaction work does not need a POC. Scheduled canary acceptance validates a composed implementation; it is not another POC or a broad certification program. During a canary, stable and development runtimes are never active simultaneously. A completed replacement deletes its old production path and obsolete tests in the same slice.
 
+## Execution authority
+
+The test VM is agent-owned under `AGENTS.md`. Bounded guest POCs, topology/fixture
+setup, native actions, diagnostics and retries needed for the assigned slice are
+already authorized; document the procedure and gates, then execute without
+asking for per-probe permission. Host/global actions and contract/threshold
+changes remain separate human decisions. Historical host-probe approval records
+are evidence provenance, not a new VM permission gate. Evidence requirements
+and the >120-second human-approval exception below remain unchanged.
+
 ## Evidence rules
 
 - Use **Verified**, **Target**, **Hypothesis**, and **Deferred** precisely.
@@ -69,11 +79,11 @@ This status does not claim that broad POC-001 criteria passed. In particular, re
 
 ## POC-002 — Native Space topology and operations
 
-**Status: narrow asynchronous switch-and-return observed; live key-service budget failed.** [`002-desktop-switching.md`](002-desktop-switching.md) records the initial harness-start abort and separately approved corrected retry. Both desktop identities were confirmed and cleanup verified, but one diagnostic key event waited 743ms. A separately approved attribution run recorded all240 key-down/up pairs, measured684ms/413ms delays, and attributed most context work to repeated app-observer registration/window bootstrap. The first run's return samples remain right-censored; the later run does not retroactively repair them. This is not production/performance acceptance or reorder-notification evidence. Further live work requires approval.
+**Status: narrow asynchronous switch-and-return observed; live key-service budget failed.** [`002-desktop-switching.md`](002-desktop-switching.md) records the initial harness-start abort and separately approved corrected retry. Both desktop identities were confirmed and cleanup verified, but one diagnostic key event waited 743ms. A separately approved attribution run recorded all240 key-down/up pairs, measured684ms/413ms delays, and attributed most context work to repeated app-observer registration/window bootstrap. The first run's return samples remain right-censored; the later run does not retroactively repair them. This is not production/performance acceptance or reorder-notification evidence. Further host live work requires approval; bounded owned-VM work follows the standing authority above.
 
 **Decision needed:** choose a SIP-enabled existing-Space switching and topology-confirmation mechanism; validate the smallest needed create/delete and external-topology observations.
 
-**Current attempt scope:** one asynchronous existing-regular-desktop switch and return, acceptance versus watcher-confirmed completion, cleanup, and independent key-service observation. Ordered regular topology extraction reuses prior evidence. Topology-only reorder notification, creation, movement, and deletion/emptiness checks are separate later evidence steps, not authorized by this attempt. Do not use this POC to certify every application or unrelated core behavior.
+**Current attempt scope:** one asynchronous existing-regular-desktop switch and return, acceptance versus watcher-confirmed completion, cleanup, and independent key-service observation. Ordered regular topology extraction reuses prior evidence. Topology-only reorder notification, creation, movement, and deletion/emptiness checks were outside that historical attempt; needed owned-VM evidence steps now follow the standing authority above. Do not use this POC to certify every application or unrelated core behavior.
 
 ## POC-003 — Overlay bar and native handoff
 
