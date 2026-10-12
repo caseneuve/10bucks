@@ -61,22 +61,26 @@ Step 7 closes residual release coverage; it does not postpone the earlier gates.
 Performance budgets in `performance.md` are unchanged. Native animation time is
 separate from command service, and sender completion never proves hotkey receipt.
 
-## Baseline and next action
+## Delivered checkpoint and next action
 
-As of runtime commit `cfc6c59`, the composed rewrite has layout/focus/divider/reflow
-bindings and the bar, not desktop-switch bindings or a chooser/rules interface.
-`10bucks.spoon/lib/workspace_switch.lua` is a pure, tested **uncomposed** seam—not a native adapter
-or accepted switching implementation. POC-002 observed a narrow asynchronous
-switch-and-return mechanism but failed key-service budgets; no performance pass,
-reorder-notification proof or native-numbered-shortcut equivalence is implied.
+**Desktop switching accepted by the user on 2026-10-12**, runtime `66cdc06`:
+numbered existing regular desktops, cyclic positional N/P, and previous-history0
+including the regular desktop departed into fullscreen. Native VM scenarios and
+manual host feedback are recorded in
+[`pocs/018-existing-desktop-switching.md`](pocs/018-existing-desktop-switching.md).
+Its explicit evidence/performance qualifications remain; user acceptance does not
+retroactively repair POC002 failures or certify full release performance.
 
-Next implementation scope is **existing desktop switching only**. Review the pure
-workspace reducer and current persistent Host/context composition, reuse POC-002
-mechanism evidence where it actually applies, and first specify switching/return,
-pending-input and responsiveness acceptance. Do not reuse synchronous
-`hs.spaces.gotoSpace()` unchanged: its observed busy-wait behavior is rejected for
-the hotkey path. Native numbered shortcuts remain a hypothesis until proved to
-match filtered positional regular-desktop numbering.
+Next implementation scope is **desktop creation only**: a separate configurable
+command creates exactly one next contiguous native regular desktop and focuses it.
+Numbered shortcuts remain focus-only and never create missing positions. Confirm
+actual topology and activation, serialize structural mutations, and verify keyboard
+responsiveness with an authoritative VM scenario. Reuse recorded native evidence;
+prove only unresolved creation assumptions. Movement and deletion remain deferred.
+
+The accepted host runtime stays frozen and active until a deliberate source/runtime
+handoff before production edits or native builds; see WORK_STATE for exact ownership
+and rollback. Do not use unchanged synchronous `hs.spaces.gotoSpace()` in hotkeys.
 
 Fresh-session operational entry: read `.pi/WORK_STATE.md`, then
 `.pi/handoffs/2026-10-11-desktop-switching-next.md`. The ignored handoff holds exact
