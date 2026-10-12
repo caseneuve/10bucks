@@ -90,7 +90,8 @@ Failures retained, not reclassified as passes:
 - Late prior Dock destruction cancelled a new leg; dismissal-debt sequencing fixed.
 - One changed run had340ms sampling gap; unchanged freshness gate correctly failed.
 - Independent sender r1/r2 received99/100; incomplete/censored calibration evidence.
-  R3 delayed arming and waited for complete sender/callback capture; originals kept.
+  R3 delayed arming; all100callbacks and sender exit were recorded before fixed
+  teardown. Originals kept.
 - Fullscreen initial rebase mismatch and original exit-focus assertion failures kept.
   Exit geometry/slot scope deliberately excludes automatic focus restoration (roadmap
   step5); new frozen subcase passed, old failed artifacts remain failed.
