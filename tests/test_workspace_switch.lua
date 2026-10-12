@@ -1,175 +1,216 @@
 local Runtime = require("lib.runtime")
-local WorkspaceSwitch = require("lib.workspace_switch")
-
-local function runtime(active, onObserve)
-  local observed, machine
-  machine = Runtime.new({
-    initialState = WorkspaceSwitch.initial({ displayId = "built-in", regularSpaceIds = { "A", "B", "C" }, activeRegularSpaceId = active }),
-    reduce = WorkspaceSwitch.reduce,
-    validate = WorkspaceSwitch.validate,
-    deriveIntents = WorkspaceSwitch.deriveIntents,
-    observeIntents = function(intents)
-      observed[#observed + 1] = intents
-      if onObserve then onObserve(machine, intents) end
-    end,
-  })
-  observed = {}
-  return machine, observed
+local W = require("lib.workspace_switch")
+local function fact(revision, active, regular, full, nativeType)
+  return { type = "RegularTopologyObserved", displayId = "built-in", revision = revision,
+    nativeSpaceId = active or "A", nativeSpaceType = nativeType or "user",
+    regularSpaceIds = regular or { "A", "B", "C" }, fullSpaceIds = full or regular or { "A", "B", "C" } }
 end
-
-local function submit(machine, event)
-  if event.type == "RegularTopologyObserved" then event.displayId = "built-in" end
-  local ok, err = machine:submit(event)
-  assert(ok, err)
-end
-
-local function latest(observed)
-  return observed[#observed]
-end
-
-return {
-  ["SPACE-005 STATE-002: previous regular toggles only after confirmed activation and commits before its switch intent"] = function()
-    local machine, observed = runtime("A", function(current, intents)
-      if intents[1] and intents[1].kind == "switchRegularSpace" then
-        local state = current:state()
-        assert(state.switch.inFlight and state.switch.inFlight.destinationId == intents[1].destinationId)
+local function runtime(initial)
+  local batches = {}
+  local machine
+  machine = Runtime.new({ initialState = W.initial(initial or fact(1)), reduce = W.reduce, validate = W.validate,
+    deriveIntents = W.deriveIntents, observeIntents = function(intents)
+      batches[#batches + 1] = intents
+      for _, intent in ipairs(intents) do
+        if intent.kind == "switchRegularSpace" then assert(machine:state().switch.inFlight.generation == intent.generation) end
       end
-    end)
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "A", "B", "C" }, activeRegularSpaceId = "B" })
-    submit(machine, { type = "FocusPreviousRegular" })
-    local state = machine:state()
-    assert(state.activeRegularSpaceId == "B" and state.lastConfirmedRegularSpaceId == "B" and state.previousRegularSpaceId == "A")
-    assert(state.switch.inFlight.destinationId == "A" and state.switch.desiredSpaceId == "A")
-    assert(latest(observed)[1].kind == "switchRegularSpace" and latest(observed)[1].destinationId == "A")
-    local generation = state.switch.inFlight.generation
-    submit(machine, { type = "FocusPreviousRegular" })
-    assert(machine:state().switch.inFlight.generation == generation and #latest(observed) == 0)
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "A", "B", "C" }, activeRegularSpaceId = "A" })
-    assert(machine:state().previousRegularSpaceId == "B" and machine:state().switch.inFlight == nil)
-    submit(machine, { type = "FocusPreviousRegular" })
-    assert(latest(observed)[1].destinationId == "B")
+    end })
+  return machine, batches
+end
+local function submit(m, e) local ok, err = m:submit(e); assert(ok, err) end
+local function command(m, delta) submit(m, { type = "FocusRelativeRegular", delta = delta }) end
+local function operation(m, kind)
+  local op = m:state().switch.inFlight
+  return { type = kind, generation = op.generation, sourceId = op.sourceId, sourceType = op.sourceType, destinationId = op.destinationId }
+end
+local function confirm(m, revision)
+  local event = operation(m, "RegularTopologyObserved")
+  local snapshot = fact(revision, event.destinationId)
+  for key, value in pairs(event) do snapshot[key] = value end
+  submit(m, snapshot)
+end
+return {
+  ["CMD-005 STATE-002: n,n and n,p serialize B before and after AXPress"] = function()
+    for _, pressed in ipairs({ false, true }) do
+      for _, delta in ipairs({ 1, -1 }) do
+        local m, batches = runtime()
+        command(m, 1)
+        local first = m:state().switch.inFlight.generation
+        if pressed then submit(m, operation(m, "RegularSwitchPressed")) end
+        command(m, delta)
+        assert(m:state().switch.inFlight.generation == first and #batches[#batches] == 0)
+        assert(m:state().switch.desiredSpaceId == (delta == 1 and "C" or "A"))
+        submit(m, fact(2)) -- revision alone does not cancel
+        assert(not m:state().switch.inFlight.invalidated and #batches[#batches] == 0)
+        if not pressed then submit(m, operation(m, "RegularSwitchPressed")) end
+        confirm(m, 3)
+        assert(m:state().switch.inFlight.destinationId == (delta == 1 and "C" or "A"))
+        assert(m:state().switch.inFlight.sourceId == "B" and m:state().switch.inFlight.generation == first + 1)
+      end
+    end
   end,
-
-  ["SPACE-001 SPACE-005: reorder changes numeric positions but retains confirmed history by identity"] = function()
-    local machine, observed = runtime("A")
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "A", "B", "C" }, activeRegularSpaceId = "B" })
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "C", "A", "B" }, activeRegularSpaceId = "B" })
-    submit(machine, { type = "FocusRegularPosition", position = 1 })
-    assert(latest(observed)[1].destinationId == "C")
-    submit(machine, { type = "FocusPreviousRegular" })
-    assert(machine:state().switch.desiredSpaceId == "A" and #latest(observed) == 0,
-      "previous history retains A's identity rather than its old position")
+  ["SPACE-005: previous is confirmed history; repeated zero and later toggle"] = function()
+    local m = runtime()
+    submit(m, fact(2, "B"))
+    submit(m, { type = "FocusPreviousRegular" })
+    local generation = m:state().switch.inFlight.generation
+    submit(m, { type = "FocusPreviousRegular" })
+    assert(m:state().switch.inFlight.generation == generation and m:state().previousRegularSpaceId == "A")
+    submit(m, operation(m, "RegularSwitchPressed")); confirm(m, 3)
+    assert(not m:state().switch.inFlight and m:state().previousRegularSpaceId == "B")
+    submit(m, { type = "FocusPreviousRegular" })
+    assert(m:state().switch.inFlight.destinationId == "B")
   end,
-
-  ["CMD-005: relative commands coalesce from desired destination while native switches remain serialized"] = function()
-    local machine, observed = runtime("A")
-    submit(machine, { type = "FocusRelativeRegular", delta = 1 })
-    local first = machine:state().switch.inFlight.generation
-    assert(latest(observed)[1].destinationId == "B")
-    submit(machine, { type = "FocusRelativeRegular", delta = 1 })
-    assert(machine:state().switch.inFlight.generation == first and machine:state().switch.desiredSpaceId == "C" and #latest(observed) == 0)
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "A", "B", "C" }, activeRegularSpaceId = "B" })
-    assert(latest(observed)[1].destinationId == "C" and machine:state().switch.inFlight.generation == first + 1)
-
-    machine, observed = runtime("A")
-    submit(machine, { type = "FocusRelativeRegular", delta = 1 })
-    submit(machine, { type = "FocusRelativeRegular", delta = -1 })
-    assert(machine:state().switch.desiredSpaceId == "A" and #latest(observed) == 0)
-    -- A screen/reorder watcher can report the unchanged source while B is
-    -- still in flight. This must retain queued return-to-A intent.
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "C", "A", "B" }, activeRegularSpaceId = "A" })
-    assert(machine:state().switch.inFlight.destinationId == "B" and machine:state().switch.desiredSpaceId == "A"
-      and #latest(observed) == 0)
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "C", "A", "B" }, activeRegularSpaceId = "B" })
-    assert(latest(observed)[1].destinationId == "A")
+  ["SPACE-001 SPACE-002 SPACE-004: positions reorder, missing rejects, relative wraps"] = function()
+    local m, batches = runtime()
+    submit(m, { type = "FocusRegularPosition", position = 9 }); assert(#batches[#batches] == 0)
+    submit(m, { type = "FocusPreviousRegular" }); assert(#batches[#batches] == 0)
+    submit(m, fact(2, "A", { "C", "A", "B" }))
+    submit(m, { type = "FocusRegularPosition", position = 1 }); assert(m:state().switch.inFlight.destinationId == "C")
+    m = runtime(); command(m, -1); assert(m:state().switch.inFlight.destinationId == "C")
   end,
-
-  ["CMD-005: absolute replacement and unchanged source snapshots retain a serialized queued destination"] = function()
-    local machine, observed = runtime("A")
-    submit(machine, { type = "FocusRelativeRegular", delta = 1 })
-    local generation = machine:state().switch.inFlight.generation
-    submit(machine, { type = "FocusRegularPosition", position = 3 })
-    assert(machine:state().switch.inFlight.generation == generation and machine:state().switch.desiredSpaceId == "C")
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "C", "A", "B" }, activeRegularSpaceId = "A" })
-    assert(machine:state().switch.inFlight.generation == generation and machine:state().switch.desiredSpaceId == "C"
-      and #latest(observed) == 0, "an unchanged/source snapshot must not erase the queued replacement")
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "C", "A", "B" }, activeRegularSpaceId = "B" })
-    assert(latest(observed)[1].destinationId == "C" and machine:state().switch.inFlight.generation == generation + 1)
+  ["SPACE-006 STATE-003: complete dense ordered topology rejects holes duplicates partial source and stale observations"] = function()
+    local m = runtime()
+    for _, bad in ipairs({ fact(2, "A", { [1] = "A", [3] = "C" }), fact(2, "A", { "A", "A" }),
+      fact(2, "A", { "A", "B" }, { "A" }), fact(2, "X") }) do
+      local ok = m:submit(bad); assert(not ok)
+      assert(m:state().revision == 1)
+    end
+    submit(m, fact(3, "B")); local version = m:version()
+    submit(m, fact(2)); submit(m, fact(3)); assert(m:version() == version and m:state().nativeSpaceId == "B")
   end,
-
-  ["SPACE-004 CMD-005: relative navigation wraps across regular positions"] = function()
-    local machine, observed = runtime("A")
-    submit(machine, { type = "FocusRelativeRegular", delta = -1 })
-    assert(latest(observed)[1].destinationId == "C")
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "A", "B", "C" }, activeRegularSpaceId = "C" })
-    submit(machine, { type = "FocusRelativeRegular", delta = 1 })
-    assert(latest(observed)[1].destinationId == "A")
+  ["SPACE-005: fullscreen source is primitive native identity not fabricated regular scope"] = function()
+    local m = runtime(fact(1, "F", { "A", "B", "C" }, { "A", "F", "B", "C" }, "fullscreen"))
+    assert(m:state().activeRegularSpaceId == nil)
+    submit(m, { type = "FocusRegularPosition", position = 2 })
+    local op = m:state().switch.inFlight
+    assert(op.sourceId == "F" and op.sourceType == "fullscreen" and op.destinationId == "B")
   end,
-
-  ["SPACE-005: fullscreen actual context remains nil while numbered and history targets remain usable"] = function()
-    local machine, observed = runtime("A")
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "A", "B", "C" }, activeRegularSpaceId = "B" })
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "A", "B", "C" }, activeRegularSpaceId = nil })
-    local state = machine:state()
-    assert(state.activeRegularSpaceId == nil and state.lastConfirmedRegularSpaceId == "B" and state.previousRegularSpaceId == "A")
-    submit(machine, { type = "FocusPreviousRegular" })
-    assert(latest(observed)[1].destinationId == "A")
-    machine, observed = runtime("B")
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "A", "B", "C" }, activeRegularSpaceId = nil })
-    submit(machine, { type = "FocusRegularPosition", position = 2 })
-    assert(latest(observed)[1].destinationId == "B", "numbered B must switch from fullscreen even when B is last confirmed")
-    machine, observed = runtime(nil)
-    submit(machine, { type = "FocusRegularPosition", position = 2 })
-    assert(latest(observed)[1].destinationId == "B")
-    submit(machine, { type = "RegularSwitchFailed", generation = machine:state().switch.inFlight.generation })
-    submit(machine, { type = "FocusRelativeRegular", delta = 1 })
-    assert(#latest(observed) == 0, "relative navigation without an actual or confirmed regular anchor is a no-op")
+  ["CMD-006 SPACE-006: timeout guards clears resnapshots; late native activation is external"] = function()
+    local m, batches = runtime(); command(m, 1)
+    local timeout = operation(m, "RegularSwitchTimedOut")
+    local stale = operation(m, "RegularSwitchTimedOut"); stale.sourceId = "X"
+    submit(m, stale); assert(m:state().switch.inFlight and #batches[#batches] == 0)
+    stale.sourceId = timeout.sourceId; stale.generation = 99
+    submit(m, stale); assert(m:state().switch.inFlight)
+    submit(m, timeout); assert(not m:state().switch.inFlight and not m:state().switch.desiredSpaceId)
+    assert(batches[#batches][1].kind == "resnapshotRegularTopology")
+    submit(m, fact(2, "B")); assert(m:state().lastConfirmedRegularSpaceId == "B" and not m:state().switch.inFlight)
+    command(m, 1); submit(m, timeout); assert(m:state().switch.inFlight.generation == 2)
   end,
-
-  ["SPACE-002 SPACE-005: missing numbered targets and absent previous history issue no switch"] = function()
-    local machine, observed = runtime("A")
-    submit(machine, { type = "FocusRegularPosition", position = 9 })
-    assert(#latest(observed) == 0)
-    submit(machine, { type = "FocusPreviousRegular" })
-    assert(#latest(observed) == 0)
+  ["STATE-003: confirmation requires pressed matching operation plus actual observation"] = function()
+    local m, batches = runtime(); command(m, 1)
+    local press = operation(m, "RegularSwitchPressed"); press.destinationId = "C"
+    submit(m, press); assert(m:state().switch.inFlight.phase == "requested")
+    submit(m, operation(m, "RegularSwitchPressed"))
+    local bad = fact(2, "B"); bad.generation = 99
+    submit(m, bad)
+    assert(not m:state().switch.inFlight.invalidated and #batches[#batches] == 0)
+    assert(m:state().activeRegularSpaceId == "B")
+    confirm(m, 3); assert(not m:state().switch.inFlight)
   end,
-
-  ["SPACE-006 CMD-006: external topology and current-generation expiry clear only switch intent and stale expiry is ignored"] = function()
-    local machine, observed = runtime("A")
-    submit(machine, { type = "FocusRegularPosition", position = 3 })
-    local first = machine:state().switch.inFlight.generation
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "A", "B", "C" }, activeRegularSpaceId = "B" })
-    assert(machine:state().activeRegularSpaceId == "B" and machine:state().switch.inFlight.destinationId == "C",
-      "nonmatching observed activation is external reality, not completion")
-    submit(machine, { type = "RegularSwitchTimedOut", generation = first })
-    assert(machine:state().switch.inFlight == nil and machine:state().switch.desiredSpaceId == nil)
-    assert(latest(observed)[1].kind == "resnapshotRegularTopology")
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "A", "B", "C" }, activeRegularSpaceId = "C" })
-    assert(machine:state().lastConfirmedRegularSpaceId == "C" and machine:state().switch.inFlight == nil,
-      "late activation after expiry is external, not an expired completion")
-
-    submit(machine, { type = "FocusRegularPosition", position = 1 })
-    local second = machine:state().switch.inFlight.generation
-    submit(machine, { type = "RegularSwitchFailed", generation = first })
-    assert(machine:state().switch.inFlight.generation == second and #latest(observed) == 0)
-    submit(machine, { type = "RegularSwitchFailed", generation = second })
-    assert(latest(observed)[1].kind == "resnapshotRegularTopology")
+  ["SPACE-006 SPACE-009: semantic order removal invalidates but preserves barrier and emits primitive removals"] = function()
+    local m, batches = runtime(); command(m, 1); command(m, 1)
+    submit(m, fact(2, "A", { "A", "B" }))
+    assert(m:state().switch.inFlight.invalidated and m:state().switch.desiredSpaceId == "B")
+    assert(batches[#batches][1].kind == "RegularSpaceRemoved" and batches[#batches][1].spaceId == "C")
+    assert(batches[#batches][2].kind == "cancelRegularSwitch")
+    command(m, -1); assert(#batches[#batches] == 0 and m:state().switch.inFlight.generation == 1)
+    submit(m, operation(m, "RegularSwitchFailed")); assert(not m:state().switch.inFlight)
+    m, batches = runtime(); command(m, 1)
+    submit(m, fact(2, "A", { "C", "A", "B" }))
+    assert(m:state().switch.inFlight.invalidated and batches[#batches][1].kind == "cancelRegularSwitch")
   end,
-
-  ["SPACE-006: topology removal retains an issued generation as a serialization barrier without Core-side cleanup"] = function()
-    local machine, observed = runtime("A")
-    submit(machine, { type = "FocusRelativeRegular", delta = 1 }) -- issued B
-    local generation = machine:state().switch.inFlight.generation
-    submit(machine, { type = "FocusRelativeRegular", delta = 1 }) -- queued C
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "A", "B" }, activeRegularSpaceId = "A" })
-    local state = machine:state()
-    assert(state.switch.inFlight.destinationId == "B" and state.switch.desiredSpaceId == "B" and #latest(observed) == 0,
-      "removing queued C must retain issued B until it confirms or expires")
-    submit(machine, { type = "RegularTopologyObserved", regularSpaceIds = { "A" }, activeRegularSpaceId = "A" })
-    state = machine:state()
-    assert(state.switch.inFlight.destinationId == "B" and state.switch.desiredSpaceId == nil and #latest(observed) == 0,
-      "removing issued B must not overlap a new native request")
-    submit(machine, { type = "RegularSwitchTimedOut", generation = generation })
-    assert(machine:state().switch.inFlight == nil and latest(observed)[1].kind == "resnapshotRegularTopology")
+  ["CMD-005 SPACE-006: pressed leg survives queued removal and full-order changes"] = function()
+    local m, batches = runtime(); command(m, 1)
+    submit(m, operation(m, "RegularSwitchPressed")); command(m, 1)
+    submit(m, fact(2, "A", { "A", "B" }))
+    assert(not m:state().switch.inFlight.invalidated and m:state().switch.desiredSpaceId == "B")
+    assert(#batches[#batches] == 1 and batches[#batches][1].kind == "RegularSpaceRemoved")
+    local event = operation(m, "RegularTopologyObserved")
+    local observed = fact(3, "B", { "B", "A" })
+    for k, v in pairs(event) do observed[k] = v end
+    submit(m, observed)
+    assert(not m:state().switch.inFlight and not m:state().switch.desiredSpaceId)
+  end,
+  ["CMD-006: cancellation acknowledgement preserves fresh desired unlike genuine failure"] = function()
+    for _, kind in ipairs({ "RegularSwitchCancelled", "RegularSwitchFailed", "RegularSwitchTimedOut" }) do
+      local m, batches = runtime(); command(m, 1)
+      local receipt = operation(m, kind)
+      submit(m, fact(2, "A", { "C", "A", "B" }))
+      assert(m:state().switch.inFlight.invalidated)
+      submit(m, { type = "FocusRegularPosition", position = 1 })
+      submit(m, receipt)
+      if kind == "RegularSwitchCancelled" then
+        assert(m:state().switch.inFlight.destinationId == "C" and m:state().switch.inFlight.revision == 2)
+        assert(batches[#batches][1].kind == "switchRegularSpace")
+      else
+        assert(not m:state().switch.inFlight and not m:state().switch.desiredSpaceId)
+        assert(batches[#batches][1].kind == "resnapshotRegularTopology")
+      end
+    end
+    local m, batches = runtime(); command(m, 1)
+    submit(m, operation(m, "RegularSwitchCancelled")); assert(m:state().switch.inFlight)
+    submit(m, fact(2, "C")); assert(batches[#batches][1].kind == "cancelRegularSwitch")
+    submit(m, { type = "WorkspaceSwitchStopped" }); assert(#batches[#batches] == 0)
+  end,
+  ["STATE-003: captured operation topology validates source type membership order destination and revision"] = function()
+    local m = runtime(); command(m, 1)
+    for _, change in ipairs({ function(op) op.sourceType = "mystery" end,
+      function(op) op.sourceId = "X" end,
+      function(op) op.destinationId = "F" end,
+      function(op) op.revision = 99 end,
+      function(op) op.regularSpaceIds = { "C", "B", "A" } end }) do
+      local state = m:state(); change(state.switch.inFlight)
+      assert(not W.validate(state))
+    end
+    local ok = m:submit(fact(2, "F", { "A" }, { "A", "F" }, "mystery")); assert(not ok)
+  end,
+  ["CMD-005 SPACE-004 SPACE-005: absolute replacements back to A serialize both phases and both wraps"] = function()
+    for _, pressed in ipairs({ false, true }) do
+      local m = runtime(); command(m, 1)
+      if pressed then submit(m, operation(m, "RegularSwitchPressed")) end
+      submit(m, { type = "FocusRegularPosition", position = 3 })
+      submit(m, { type = "FocusRegularPosition", position = 1 })
+      assert(m:state().switch.inFlight.destinationId == "B" and m:state().switch.desiredSpaceId == "A")
+      submit(m, operation(m, "RegularSwitchPressed")); confirm(m, 2)
+      assert(m:state().switch.inFlight.destinationId == "A")
+    end
+    local m = runtime(fact(1, "C")); command(m, 1); assert(m:state().switch.inFlight.destinationId == "A")
+    m = runtime(); submit(m, fact(2, "B")); submit(m, fact(3, "B", { "C", "A", "B" }))
+    assert(m:state().previousRegularSpaceId == "A")
+    submit(m, { type = "FocusPreviousRegular" }); assert(m:state().switch.inFlight.destinationId == "A")
+  end,
+  ["SPACE-005: fullscreen preserves history permits numbered return and cold relative no-ops"] = function()
+    local m = runtime(); submit(m, fact(2, "B"))
+    local fullscreen = fact(3, "F", { "A", "B", "C" }, { "A", "F", "B", "C" }, "fullscreen")
+    submit(m, fullscreen); assert(m:state().previousRegularSpaceId == "A" and m:state().lastConfirmedRegularSpaceId == "B")
+    submit(m, { type = "FocusPreviousRegular" }); assert(m:state().switch.inFlight.destinationId == "A")
+    m = runtime(fullscreen); submit(m, { type = "FocusRegularPosition", position = 2 })
+    assert(m:state().switch.inFlight.sourceId == "F" and m:state().switch.inFlight.destinationId == "B")
+    m = runtime(fullscreen); command(m, 1); assert(not m:state().switch.inFlight)
+  end,
+  ["SPACE-006 STATE-003: pressed destination removal and stale tuples never release barrier"] = function()
+    local m, batches = runtime(); command(m, 1)
+    local cancel = operation(m, "RegularSwitchCancelled")
+    submit(m, operation(m, "RegularSwitchPressed")); assert(m:state().activeRegularSpaceId == "A")
+    submit(m, fact(2, "A", { "A", "C" }))
+    assert(m:state().switch.inFlight.invalidated and batches[#batches][2].kind == "cancelRegularSwitch")
+    submit(m, { type = "FocusRegularPosition", position = 2 })
+    for _, key in ipairs({ "generation", "sourceId", "sourceType", "destinationId" }) do
+      local stale = {}; for k,v in pairs(cancel) do stale[k] = v end
+      stale[key] = key == "generation" and 99 or "wrong"
+      submit(m, stale); assert(m:state().switch.inFlight.destinationId == "B")
+    end
+    submit(m, cancel); assert(m:state().switch.inFlight.destinationId == "C")
+  end,
+  ["CMD-006: explicit stop cancels once discards desired and rejects further commands"] = function()
+    local m, batches = runtime(); command(m, 1); command(m, 1)
+    submit(m, { type = "WorkspaceSwitchStopped" })
+    assert(m:state().stopped and not m:state().switch.inFlight and not m:state().switch.desiredSpaceId)
+    assert(batches[#batches][1].kind == "cancelRegularSwitch")
+    submit(m, { type = "WorkspaceSwitchStopped" }); assert(#batches[#batches] == 0)
+    command(m, 1); assert(not m:state().switch.inFlight)
+    submit(m, fact(2, "B")); assert(m:state().nativeSpaceId == "B" and not m:state().switch.inFlight)
   end,
 }
