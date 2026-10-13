@@ -10,6 +10,38 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var numbers: [String: Int] = [:] // reuse requires an explicit closed-alias acknowledgement
     var timer: Timer?
     var creationFrames: [String: [String: Double]] = [:]
+    var observationSequence = 0
+    var observeNative = false
+    var closedAliases = Set<String>()
+
+    func publishObservation() {
+        observationSequence += 1
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        let acquired = Double(mach_absolute_time()) * Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
+        let top = NSScreen.screens[0].frame.maxY
+        var rows: [String: Any] = [:]
+        for (alias, window) in windows {
+            let frame = window.frame
+            rows[alias] = ["windowNumber": window.windowNumber, "key": window.isKeyWindow,
+                "frame": ["x": frame.minX, "y": top - frame.maxY, "w": frame.width, "h": frame.height],
+                "minimized": window.isMiniaturized, "hidden": NSApp.isHidden,
+                "fullscreen": window.styleMask.contains(.fullScreen), "title": window.title]
+        }
+        let value: [String: Any] = ["run": run, "pid": Int(getpid()),
+            "sequence": observationSequence, "sampled_at": acquired,
+            "isActive": NSApp.isActive, "windows": rows,
+            "closed": Dictionary(uniqueKeysWithValues: closedAliases.compactMap { alias in
+                numbers[alias].map { (alias, $0) }
+            })]
+        do {
+            let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+            try data.write(to: directory.appendingPathComponent("native-observation.json"), options: .atomic)
+        } catch {
+            fputs("fixture: observation write failed\n", stderr)
+            exit(1)
+        }
+    }
 
     init(run: String, directory: URL) {
         self.run = run
@@ -36,6 +68,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
         acknowledge(operation: "ready", alias: nil, accepted: true)
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             self?.processRequest()
+            if self?.observeNative == true { self?.publishObservation() }
         }
     }
 
@@ -44,6 +77,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow,
               let alias = windows.first(where: { $0.value === window })?.key else { return }
+        closedAliases.insert(alias) // explicit AppKit closure, not snapshot absence
         windows.removeValue(forKey: alias) // release our owning reference; no survivor focus
     }
 
@@ -108,6 +142,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     finish(operation: operation, alias: name, accepted: false, error: "alias_not_closed")
                     return
                 }
+                closedAliases.remove(name)
                 numbers.removeValue(forKey: name)
                 creationFrames.removeValue(forKey: name)
                 finish(operation: operation, alias: name, accepted: true)
@@ -157,7 +192,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
 }
 
 let arguments = CommandLine.arguments
- guard arguments.count == 5, arguments[1] == "--run", arguments[3] == "--control-dir",
+ guard (arguments.count == 5 || (arguments.count == 6 && arguments[5] == "--observe-native")), arguments[1] == "--run", arguments[3] == "--control-dir",
        !arguments[2].isEmpty, arguments[2].utf8.count <= 128,
        arguments[2].unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_" }),
        arguments[4].hasPrefix("/") else {
@@ -171,6 +206,7 @@ guard mkdir(directory.path, 0o700) == 0 else {
 }
 let app = NSApplication.shared
 let fixture = Fixture(run: arguments[2], directory: directory)
+fixture.observeNative = arguments.count == 6
 app.setActivationPolicy(.regular)
 app.delegate = fixture
 app.run()

@@ -120,7 +120,7 @@ Run the fullscreen portion immediately before fullscreen effects. It must answer
 
 ## POC-006 — Cached chooser and cross-Space focus
 
-**Status: deferred.** Slice 2 composes the cached backend and proves it with pure query-count tests plus targeted acceptance. Benchmark ordinary chooser invocation, row stability, and restoration behavior at that swap; no standalone platform certification is required unless an unresolved private mechanism emerges.
+**Status: cached chooser scoped delivery verified; restoration deferred to roadmap step 5.** [`021-cached-managed-window-chooser.md`](021-cached-managed-window-chooser.md) records pure behavior/query checks, settled-state native UI/focus acceptance, separate 30-warm/5-cold measurements and independent-sender stress. Earlier failed sampling/setup artifacts and inactive-unhide geometry qualifications remain explicit. No pixel/physical-host/full-release certificate or host-manual readiness is implied; no standalone broad platform certification was needed.
 
 ## POC-007 — macOS settings and read-only doctor
 

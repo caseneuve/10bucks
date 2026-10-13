@@ -15,17 +15,19 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = "10bucks-functional-sip-base-20261011"
 
 
-def evidence_complete(result, *, configured_rules=False):
+def evidence_complete(result, *, configured_rules=False, managed_window_chooser=False):
     return (isinstance(result, dict) and type(result.get('dropped')) is int and result['dropped'] == 0
             and isinstance(result.get('trace'), list) and len(result['trace']) > 0
             and result.get('error') is None and result.get('cleanup', {}).get('ok') is True
             and (not configured_rules or (result.get('cleanup', {}).get('ruleResourcesCleared') is True
-                and result.get('cleanup', {}).get('ruleWrappersRestored') is True)))
+                and result.get('cleanup', {}).get('ruleWrappersRestored') is True))
+            and (not managed_window_chooser or all(result.get('cleanup', {}).get(k) is True for k in
+                 ('chooserNativeGone', 'chooserReleased', 'chooserDefaultFocusReleased', 'chooserWrapperRestored'))))
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=["rules-benchmark", "desktop-switching-benchmark", "desktop-creation-benchmark", "configured-rules", "desktop-creation-race", "columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching", "desktop-creation"])
+    parser.add_argument("scenario", choices=["rules-benchmark", "desktop-switching-benchmark", "desktop-creation-benchmark", "configured-rules", "managed-window-chooser", "desktop-creation-race", "columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching", "desktop-creation"])
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--demo", action="store_true", help="2s pauses between actions; not a latency benchmark")
     parser.add_argument("--bar-capture", action="store_true", help="capture native bar outside/hover/return pixels for independent visual review")
@@ -46,7 +48,7 @@ def main():
         parser.error('--desktop-fullscreen requires desktop-switching without --desktop-benchmark')
     if desktop_benchmark and args.scenario not in ('desktop-switching','desktop-creation'):
         parser.error('--desktop-benchmark requires desktop-switching')
-    if args.scenario in ('desktop-switching', 'configured-rules') and (args.demo or args.bar_capture):
+    if args.scenario in ('desktop-switching', 'configured-rules', 'managed-window-chooser') and (args.demo or args.bar_capture):
         parser.error('desktop-switching cannot combine demo/bar pauses with its watchdog')
     if args.demo and args.scenario=='stack-columns-membership':
         parser.error('--demo cannot fit the combined scenario watchdog; run without --demo')
@@ -192,6 +194,9 @@ def main():
         def fixture_fullscreen(self, enabled):
             self.action('enterFixtureFullscreen' if enabled else 'exitFixtureFullscreen', 'A')
 
+        def chooser_query(self, query):
+            self.action('chooserQuery', commands=[query])
+
         def hotkey_burst(self, commands):
             self.action('hotkeyBurst', commands=list(commands))
 
@@ -294,7 +299,7 @@ def main():
         ssh(f"mkdir -m 700 {control}")
         hs('ft=dofile("' + guest_root + ('/functional-tests/benchmarks/guest.lua' if rules_benchmark else '/functional-tests/benchmarks/desktop_guest.lua' if desktop_benchmark else '/functional-tests/guest.lua') + '"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
-           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization") else "columns"}",configuredRules={str(args.scenario == "configured-rules").lower()},desktopSwitching={str(args.scenario in ("configured-rules","desktop-switching","desktop-creation","desktop-creation-race")).lower()},desktopCreation={str(args.scenario in ("desktop-creation","desktop-creation-race")).lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
+           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization") else "columns"}",configuredRules={str(args.scenario == "configured-rules").lower()},managedWindowChooser={str(args.scenario == "managed-window-chooser").lower()},desktopSwitching={str(args.scenario in ("managed-window-chooser","configured-rules","desktop-switching","desktop-creation","desktop-creation-race")).lower()},desktopCreation={str(args.scenario in ("desktop-creation","desktop-creation-race")).lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
         driver = Driver()
         if rules_benchmark:
             module.run(driver, mode=args.benchmark_mode)
@@ -436,7 +441,8 @@ def main():
             (results / "debug-owner.json").write_text(json.dumps({"vm": vm, "tartPid": process.pid,
                 "run": nonce, "source": str(snapshot), "acceptance": False}, indent=2))
         guest_result = read('guest-result.json')
-        evidence_ok = evidence_complete(guest_result, configured_rules=args.scenario == 'configured-rules')
+        evidence_ok = evidence_complete(guest_result, configured_rules=args.scenario == 'configured-rules',
+                                        managed_window_chooser=args.scenario == 'managed-window-chooser')
         cleanup['completeEvidence'] = evidence_ok
         success = evidence_ok and passed and error is None and not (final or {}).get("error") and (args.reuse_debug or (cleanup.get("vmStopped") and cleanup.get("tartExited"))) and cleanup.get("guest", {}).get("ok") is True
         summary = {"pass": bool(success), "scenarioPassed": passed, "error": error,

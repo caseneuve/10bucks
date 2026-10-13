@@ -114,11 +114,17 @@ local function nativeDisplay()
     end
     error('native_display_unavailable')
 end
+local function nativeNumber(alias)
+    for number,knownAlias in pairs(s.byId) do
+        if knownAlias==alias then return number end
+    end
+end
 local function nativeDesktop()
     local display=nativeDisplay()
-    if s.desktopFullscreen and not s.fullscreenId and s.windows.A and s.windows.A:isFullScreen()==true then
-        local owners=hs.spaces.windowSpaces(s.windows.A:id())
-        if s.axes.A:isValid()==true and type(owners)=='table' and #owners==1 then
+    if (s.desktopFullscreen or s.managedWindowChooser) and not s.fullscreenId and s.windows.A
+        and (s.managedWindowChooser and s.chooserNativeFullscreen or not s.managedWindowChooser and s.windows.A:isFullScreen()==true) then
+        local owners=hs.spaces.windowSpaces(s.managedWindowChooser and nativeNumber('A') or s.windows.A:id())
+        if (s.managedWindowChooser or s.axes.A:isValid()==true) and type(owners)=='table' and #owners==1 then
             for _,item in ipairs(display.Spaces) do
                 if item.ManagedSpaceID==owners[1] and item.type==4 and not s.desktopAliases[owners[1]] then
                     s.fullscreenId=owners[1]; s.desktopAliases[owners[1]]='F1'
@@ -340,13 +346,49 @@ local function sample()
     local sampledAt=now()
     local timings={} -- acquisition starts before any focus/AX/native frame reads
     local frames,closed={},{}
-    local focused=hs.window.focusedWindow()
+    local native
+    local focused,frontPid
+    if s.managedWindowChooser then
+        native=hs.json.read(s.dir..'/native-observation.json')
+        assert(type(native)=='table' and native.run==s.run and native.pid==s.pid
+            and type(native.sequence)=='number' and native.sequence<math.huge
+            and native.sequence>0 and native.sequence%1==0
+            and type(native.sampled_at)=='number' and sampledAt>=native.sampled_at
+            and sampledAt-native.sampled_at<=.15 and type(native.windows)=='table' and type(native.closed)=='table',
+            'fixture_native_observation_missing_or_stale')
+        assert(not s.nativeSnapshotSequence or (native.sequence>=s.nativeSnapshotSequence
+            and (native.sequence==s.nativeSnapshotSequence and native.sampled_at==s.nativeSnapshotTime
+                or native.sequence>s.nativeSnapshotSequence and native.sampled_at>s.nativeSnapshotTime)),
+            'fixture_native_observation_regressed')
+        s.nativeSnapshotSequence=native.sequence; s.nativeSnapshotTime=native.sampled_at
+        -- Ack and atomic snapshot publish separately in one fixture tick.
+        -- Defer publication across that skew; never invent an empty row/death.
+        -- Ordinary action/fresh-sample deadlines bound this wait; wrong IDs fail.
+        for alias in pairs(s.windows) do
+            local number=assert(nativeNumber(alias),'fixture_native_identity_missing')
+            local closedNumber=native.closed[alias]
+            assert(closedNumber==nil or closedNumber==number,'fixture_native_identity_missing')
+            if closedNumber==nil and native.windows[alias]==nil then return end
+        end
+        local front=hs.application.frontmostApplication()
+        frontPid=front and front:pid()
+    else focused=hs.window.focusedWindow() end
     timings.focus=now()-sampledAt
     local focusedAlias
     for alias,w in pairs(s.windows) do
         local aliasStarted=now()
         local ax=s.axes[alias]
-        if s.destroyed[alias] or ax:isValid()==false then closed[#closed+1]=alias
+        if native then
+            local number=nativeNumber(alias)
+            if native.closed[alias]==number then closed[#closed+1]=alias
+            else
+                local row=native.windows[alias]
+                assert(row and row.windowNumber==number and native.pid==s.ownerPids[alias]
+                    and type(row.frame)=='table','fixture_native_identity_missing')
+                frames[alias]=copy(row.frame)
+                if row.key and native.isActive and frontPid==native.pid then focusedAlias=alias end
+            end
+        elseif s.destroyed[alias] or ax:isValid()==false then closed[#closed+1]=alias
         elseif ax:isValid()==true then
             local f=w:frame(); frames[alias]={x=f.x,y=f.y,w=f.w,h=f.h}
             local owner=focused and focused:application()
@@ -357,6 +399,7 @@ local function sample()
     table.sort(closed)
     local snapshotStarted=now()
     -- Join F1 before aliasing workspace diagnostics from the same publication.
+    s.chooserNativeFullscreen=native and native.windows.A and native.windows.A.fullscreen or false
     local desktop=s.desktopSwitching and nativeDesktop() or nil
     local managed,unknown,diagnostics=candidateSnapshot()
     if s.desktopSwitching then diagnostics.nativeDesktop=desktop end
@@ -367,6 +410,41 @@ local function sample()
             for _,id in ipairs(hs.spaces.windowSpaces(w:id()) or {}) do owners[#owners+1]=desktopAlias(id) end
             diagnostics.fixtureNative[alias]={fullscreen=w:isFullScreen()==true,spaces=owners}
         end
+    end
+    if s.managedWindowChooser then
+        local adapter=s.candidate.windowChooser
+        local chooser=adapter and adapter.chooser
+        local pending=s.candidate.focusHistory:pending()~=nil
+        for _,core in pairs(s.candidate.cores or {}) do
+            for _,desired in pairs(core:state().manager.focus.desiredBySpace) do
+                if desired.pending then pending=true end
+            end
+        end
+        local d={visible=chooser and chooser:isVisible() or false,rows={},query=chooser and chooser:query() or '',
+            completions=copy(s.chooserCompletions),native={},pending=pending,
+            setupSettlements=copy(s.chooserSetupSettlements or {}),
+            nativeSnapshot={sequence=native.sequence,sampled_at=native.sampled_at,
+                age=sampledAt-native.sampled_at,runMatch=true,pidMatch=true,
+                isActive=native.isActive,frontmostFixture=frontPid==native.pid}}
+        if d.visible then
+            for i=1,6 do -- five owned aliases plus an overflow sentinel
+                local row=chooser:selectedRowContents(i)
+                if next(row)==nil then break end
+                local alias=s.byId[row.windowId]
+                local record=s.candidate.host.handles[row.windowId]
+                local exact=alias and record and record.active and record.lease==row.lease
+                    and record.handle==s.windows[alias] and record.element==s.axes[alias]
+                    and record.pid==s.ownerPids[alias] and row.windowId==nativeNumber(alias)
+                d.rows[#d.rows+1]={alias=exact and alias or 'unknown',text=row.text,subText=row.subText}
+            end
+        end
+        for alias in pairs(s.windows) do
+            if native.closed[alias]==nil then
+                local row=native.windows[alias]
+                d.native[alias]={minimized=row.minimized,hidden=row.hidden,fullscreen=row.fullscreen,title=row.title,identityMatch=true}
+            end
+        end
+        diagnostics.chooser=d
     end
     if s.configuredRules then
         diagnostics.configuredRules={baseline=copy(s.creationFrames),effects={},titles={},history={},actions={},evaluations={},titleTokens={},commandResults=copy(s.ruleCommandResults or {}),excludedSafetyTargets={},lifetimeMismatch=false,instrumented=s.effectHost==s.candidate.host and s.effectWrappers~=nil
@@ -478,6 +556,11 @@ local function sample()
         unknownMembers=unknown,diagnostics=diagnostics,
         timings=timings,bar=barFacts}
     s.latest.observed_at=now() -- guest publication clock; host must not restamp
+    if native then
+        local age=s.latest.observed_at-native.sampled_at
+        assert(age>=0 and age<=.15,'fixture_native_observation_publication_stale')
+        diagnostics.chooser.nativeSnapshot.age=age
+    end
     atomic(s.outputDir..'/observation.json',s.latest)
     s.trace[#s.trace+1]=copy(s.latest)
     if #s.trace>1200 then table.remove(s.trace,1); s.dropped=s.dropped+1 end
@@ -558,18 +641,59 @@ local function finalize()
 
 end
 local function cleanupTick()
+    s.lifecycleSetup=nil -- cleanup owns termination, never acceptance settlement
     -- Release before candidate.stop() can issue its targeted Mission Control
     -- Escape; repeat on cleanup retries, including failed actions/startup.
     s.cleanup.syntheticKeyReleaseSubmitted=releaseSyntheticKeys()
     if not s.cleanup.candidateStopAttempted then
+        if s.chooserSelectOriginal then
+            s.candidate._chooseWindow=s.chooserSelectOriginal
+            s.chooserSelectOriginal=nil
+        end
         s.cleanup.candidateStopAttempted=true
         s.stoppedHost=s.candidate and s.candidate.host
         s.stoppedWindows=s.candidate and s.candidate.windows
         s.stoppedWorker=s.stoppedHost and s.stoppedHost.validityWorker
         local stopped,stopError=true,nil
         if s.candidate then
+            local adapter=s.managedWindowChooser and s.candidate.windowChooser
+            local chooser=adapter and adapter.chooser
+            local chooserAX
+            local joined,joinError=pcall(function()
+                if chooser and chooser:isVisible() then
+                    local app=hs.application.get('org.hammerspoon.Hammerspoon')
+                    local appAX=app and hs.axuielement.applicationElement(app)
+                    chooserAX=appAX and appAX:attributeValue('AXFocusedWindow')
+                    local focusedUI=appAX and appAX:attributeValue('AXFocusedUIElement')
+                    -- Native query-field focus in this exact Hammerspoon window,
+                    -- while the sole candidate chooser is visibly open.
+                    assert(chooserAX and chooserAX:attributeValue('AXRole')=='AXWindow'
+                        and focusedUI and focusedUI:attributeValue('AXRole')=='AXTextField'
+                        and focusedUI:attributeValue('AXWindow')==chooserAX,
+                        'open_chooser_native_cleanup_join_missing')
+                end
+            end)
+            -- Observation failure must never skip ordinary runtime shutdown.
             stopped,stopError=pcall(function()
                 s.candidate:stop()
+                if s.managedWindowChooser then
+                    assert(joined,joinError)
+                    local app=hs.application.get('org.hammerspoon.Hammerspoon')
+                    local absent=true
+                    if chooserAX then
+                        local windows=app and hs.axuielement.applicationElement(app):attributeValue('AXWindows')
+                        assert(type(windows)=='table','chooser_cleanup_native_read_uncertain')
+                        for _,window in ipairs(windows) do
+                            if window==chooserAX then absent=false end
+                        end
+                    end
+                    s.cleanup.chooserNativeGone=absent
+                    s.cleanup.chooserReleased=s.candidate.windowChooser==nil
+                    s.cleanup.chooserDefaultFocusReleased=not chooser or hs.chooser._lastFocused[chooser]==nil
+                    s.cleanup.chooserWrapperRestored=s.chooserSelectOriginal==nil
+                    assert(absent and s.cleanup.chooserReleased and s.cleanup.chooserDefaultFocusReleased
+                        and s.cleanup.chooserWrapperRestored,'chooser_cleanup_incomplete')
+                end
                 assert(not s.candidate.started and #s.candidate.hotkeyBindings==0,'candidate_still_started')
             end)
         end
@@ -681,9 +805,53 @@ local function tick()
             end
         elseif now()>p.deadline then failure('hotkey_receipt_timeout') end
     end
+    if s.managedWindowChooser and s.phase=='ready' then
+        local first=hs.json.read(s.dir..'/native-observation.json')
+        if not first then
+            if now()>s.readyDeadline then failure('native_snapshot_ready_timeout') end
+            return -- bounded readiness wait, never publish an empty native sample
+        end
+    end
     if s.ready and s.phase=='ready' then
         if s.initialLayout=='stack' then s.phase='active'
         else s.phase='columns'; key('cycleLayout') end
+    end
+    local setup=s.lifecycleSetup
+    if setup then
+        if now()>setup.deadline then failure('fixture_lifecycle_setup_timeout'); return end
+        local native=hs.json.read(s.dir..'/native-observation.json')
+        local row=native and native.windows and native.windows[setup.alias]
+        local age=native and type(native.sampled_at)=='number' and now()-native.sampled_at
+        if not (native and native.run==s.run and native.pid==s.pid
+            and type(native.sequence)=='number' and native.sequence>setup.afterSequence
+            and age and age>=0 and age<=.15 and row
+            and row.windowNumber==nativeNumber(setup.alias) and row[setup.field]==setup.wanted) then
+            setup.stableSince=nil; return
+        end
+        if setup.field=='fullscreen' then
+            local owners=hs.spaces.windowSpaces(nativeNumber(setup.alias))
+            local owner=type(owners)=='table' and #owners==1 and owners[1]
+            local ownerType
+            for _,item in ipairs(nativeDisplay().Spaces) do
+                if item.ManagedSpaceID==owner then ownerType=item.type end
+            end
+            local matches=owner and hs.spaces.focusedSpace()==owner
+                and ownerType==(setup.wanted and 4 or 0)
+            if not matches then setup.stableSince=nil; return end
+            setup.stableSince=setup.stableSince or now()
+            if now()-setup.stableSince<.25 then return end
+        end
+        s.chooserSetupSettlements=s.chooserSetupSettlements or {}
+        s.chooserSetupSettlements[#s.chooserSetupSettlements+1]={alias=setup.alias,field=setup.field,
+            wanted=setup.wanted,observed=row[setup.field],started=setup.started,finished=now(),sequence=native.sequence,
+            afterSequence=setup.afterSequence,
+            nativeOwnerMatch=setup.field=='fullscreen' and true or nil,
+            nativeOwnerStableSeconds=setup.stableSince and now()-setup.stableSince or nil}
+        s.lifecycleSetup=nil
+        s.controllerStage='tick.sample'
+        sample() -- fresh acceptance publication precedes action completion
+        s.actionAccepted=true
+        return
     end
     s.controllerStage='tick.sample'
     sample()
@@ -691,6 +859,21 @@ end
 bootstrap=function()
     s.candidate=dofile(s.sourceRoot..'/10bucks.spoon/init.lua').new()
     local config={builtInDisplayUUID=s.screen:getUUID(),canaryInstrumentation=true}
+    if s.managedWindowChooser then
+        config.rules={{match={bundleID='dev.10bucks.functional-fixture',title='10bucks fixture B'},action='exclude'}}
+        s.chooserCompletions={}
+        s.chooserSelectOriginal=s.candidate._chooseWindow
+        s.candidate._chooseWindow=function(candidate,choice)
+            local record=candidate.host.handles[choice.windowId]
+            local alias=s.byId[choice.windowId]
+            local exact=alias and record and record.active and record.lease==choice.lease
+                and record.handle==s.windows[alias] and record.element==s.axes[alias]
+                and record.pid==s.ownerPids[alias] and choice.windowId==nativeNumber(alias)
+            local accepted,reason=s.chooserSelectOriginal(candidate,choice)
+            s.chooserCompletions[#s.chooserCompletions+1]={alias=exact and alias or 'unknown',accepted=accepted,reason=reason}
+            return accepted,reason
+        end
+    end
     if s.configuredRules then
         s.filterCounts={}; s.commitCounts={}; s.aliasResources={}; s.safetyTargets={}; s.ruleRecords={}
         config.rules={
@@ -850,6 +1033,7 @@ bootstrap=function()
     local owner=s
     local Session=dofile(s.sourceRoot..'/functional-tests/fixture/session.lua')
     s.fixtureSession=Session.new({sourceRoot=s.sourceRoot,executable=s.executable,controlDir=s.dir,run=s.run,
+        observeNative=s.managedWindowChooser,
         onExit=function(code) owner.exitCode=code end,
         onOwned=function(fixture) owner.fixtureSession=fixture;owner.task=fixture.task end})
     s.task=s.fixtureSession.task; s.pid=s.fixtureSession.pid
@@ -909,7 +1093,7 @@ local function takeAction()
         if data.operation=='stop' then M.stop()
         else M.command(data.operation,data.alias,data.commands) end
     end)
-    s.actionAccepted=success; s.actionError=not success and tostring(actionFailure) or nil
+    s.actionAccepted=success and s.lifecycleSetup==nil; s.actionError=not success and tostring(actionFailure) or nil
 end
 local function publishStatus()
     atomic(s.outputDir..'/status.json',M.status())
@@ -931,7 +1115,7 @@ function M.start(o)
     local screens=hs.screen.allScreens(); assert(#screens==1,'sole_screen_required')
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
-        configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
+        managedWindowChooser=o.managedWindowChooser==true,configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
         initialLayout=o.initialLayout or 'columns',ghosttyEnabled=o.ghostty==true,ownedDisposable=o.ownedDisposable==true,cleanSeedTerminal=o.cleanSeedTerminal==true,originalPointer=copy(hs.mouse.absolutePosition()),
         sequence=0,actionSequence=0,windows={},axes={},byId={},ownerPids={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}
@@ -1001,7 +1185,10 @@ function M.start(o)
             local code='unclassified_exception'
             for _,known in ipairs({'exact_host_resource_required','host_handle_mismatch','host_identity_changed',
                 'effect_exact_resource_required','ack_mismatch','ack_alias_mismatch','ack_before_cleanup',
-                'missing_native_number','independent_creation_frame_required','invalid_join','ambiguous_join'}) do
+                'missing_native_number','independent_creation_frame_required','invalid_join','ambiguous_join',
+                'fixture_native_observation_missing_or_stale','fixture_native_observation_regressed',
+                'fixture_native_identity_missing','fixture_native_observation_publication_stale',
+                'fixture_lifecycle_setup_timeout'}) do
                 if message:find(known,1,true) then code=known; break end
             end
             local file,line=message:match('([^/\\]+%.lua):(%d+):')
@@ -1023,7 +1210,7 @@ function M.start(o)
 end
 function M.command(op,alias,commands)
     assert(s and s.running and s.phase=='active' and not s.error,'controller_not_active')
-    assert(not s.pending and not s.keyPending and not s.ghosttyPending,'action_pending')
+    assert(not s.pending and not s.keyPending and not s.ghosttyPending and not s.lifecycleSetup,'action_pending')
     if op=='createGhostty' then
         assert(s.ghosttyEnabled and s.ownedDisposable and type(alias)=='string' and alias:match('^[A-C]$')
             and not s.windows[alias],'ghostty_alias_rejected')
@@ -1115,12 +1302,45 @@ function M.command(op,alias,commands)
         keys(commands)
         return {accepted=true,submitted_at=now()}
     end
-    if s.configuredRules and (op=='focus' or op=='renameToExcluded' or op=='renameToManaged') then
+    if s.managedWindowChooser then
+        if op=='chooserQuery' then
+            assert(type(commands)=='table' and #commands==1 and type(commands[1])=='string' and #commands[1]<=64,'invalid_chooser_query')
+            local chooser=assert(s.candidate.windowChooser,'chooser_not_created').chooser
+            assert(chooser:isVisible(),'chooser_not_visible')
+            -- Real text entry, not calling the product query/filter callback.
+            emitChord({'cmd'},'a')
+            hs.eventtap.keyStrokes(commands[1])
+            return {accepted=true,submitted_at=now()}
+        end
+        if op=='chooserCmd2' or op=='chooserEnter' or op=='chooserCancel' then
+            assert(s.candidate.windowChooser.chooser:isVisible(),'chooser_not_visible')
+            emitChord(op=='chooserCmd2' and {'cmd'} or {},op=='chooserCmd2' and '2' or op=='chooserEnter' and 'return' or 'escape')
+            return {accepted=true,submitted_at=now()}
+        end
+        if op=='chooseWindow' then key(op);return {accepted=true,submitted_at=now()} end
+        if op=='minimize' or op=='unminimize' or op=='hide' or op=='unhide' or op=='enterFullscreen' or op=='exitFullscreen' then
+            assert(alias and s.windows[alias] and not s.destroyed[alias],'owned_alias_required')
+            local w=s.windows[alias]
+            local field=(op=='minimize' or op=='unminimize') and 'minimized'
+                or (op=='hide' or op=='unhide') and 'hidden' or 'fullscreen'
+            local started=now()
+            s.lifecycleSetup={alias=alias,field=field,wanted=op=='minimize' or op=='hide' or op=='enterFullscreen',
+                afterSequence=assert(s.nativeSnapshotSequence,'fixture_native_identity_missing'),
+                started=started,deadline=started+3}
+            if op=='minimize' then w:minimize()
+            elseif op=='unminimize' then w:unminimize()
+            elseif op=='hide' then w:application():hide()
+            elseif op=='unhide' then w:application():unhide()
+            else w:setFullScreen(op=='enterFullscreen') end
+            return {accepted=true,submitted_at=now()}
+        end
+    end
+    if (s.configuredRules or s.managedWindowChooser) and (op=='focus' or op=='renameToExcluded' or op=='renameToManaged') then
         assert(type(alias)=='string' and alias:match('^[A-E]$') and s.windows[alias],'owned_alias_required')
         return publish(op,alias)
     end
     if op=='create' or op=='createExcluded' or op=='close' then
-        if s.desktopSwitching then assert(nativeDesktop().active=='D1','fixture_requires_D1') end
+        if s.desktopSwitching and not s.managedWindowChooser then assert(nativeDesktop().active=='D1','fixture_requires_D1') end
         assert(type(alias)=='string' and alias:match('^[A-E]$'),'unsupported_alias')
         if op=='create' or op=='createExcluded' then assert(not s.windows[alias],'alias_already_used')
         else assert(s.windows[alias],'alias_not_joined') end
@@ -1152,7 +1372,7 @@ function M.status()
         observed_at=now(),actionSequence=s.actionSequence,actionAccepted=s.actionAccepted,actionError=s.actionError,
         fixtureReady=s.ready==true,candidateReady=s.phase=='active',
         layout=observation and observation.diagnostics.layout,unknownMembers=observation and observation.unknownMembers,
-        lastAck=copy(s.lastAck),pending=s.pending~=nil or s.keyPending~=nil or s.ghosttyPending~=nil,
+        lastAck=copy(s.lastAck),pending=s.pending~=nil or s.keyPending~=nil or s.ghosttyPending~=nil or s.lifecycleSetup~=nil,
         ghosttyCloseAt=s.ghosttyCloseAt,
         workArea=copy(s.workArea),settings=copy(s.settings),cleanup=copy(s.cleanup),
         failedOperation=s.failedOperation,baseline=s.baselineFacts,

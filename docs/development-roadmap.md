@@ -97,8 +97,16 @@ separate; no benchmark orchestration remains in behavioral scenarios.
 `nativeFullscreenOnCreate` remains step 6, chooser UI step 4; movement/deletion
 remain deferred.
 
-**Next delivery: cached managed-window chooser.** The user's updated scheduling
-decision on 2026-10-13 is to deliver chooser first, then fix the reported bugs:
+**Cached managed-window chooser delivered on 2026-10-13** within the scoped
+fixture-VM acceptance: managed-only stable cached rows, fuzzy title/application
+search, native visible-row shortcuts, exact-resource regular target selection,
+and explicit rejection of restoration-requiring targets. Functional acceptance,
+30-warm/5-cold measurements, independent-sender stress and retained failures are
+recorded in [`pocs/021-cached-managed-window-chooser.md`](pocs/021-cached-managed-window-chooser.md).
+This does not establish host-manual readiness or deliver roadmap step 5 restoration.
+
+**Next: reported bugs, with deliberate contract decisions.** The user's updated
+scheduling decision on 2026-10-13 is chooser first, then:
 [`0001 close recovery`](../todos/0001-close-recovery-returns-underlying-member.md)
 and [`0002 sole-column movement rebalance`](../todos/0002-move-sole-column-member-rebalances-peer.md).
 Both remain open; their recovery/movement contract decisions must be settled

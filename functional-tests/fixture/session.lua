@@ -3,8 +3,9 @@ local Session={};Session.__index=Session
 function Session.new(o)
     local self=setmetatable({dir=o.controlDir,run=o.run,sequence=0,windows={},closed={}},Session)
     self.mailbox=dofile(o.sourceRoot..'/functional-tests/fixture/mailbox.lua')
-    self.task=assert(hs.task.new(o.executable,function(code) self.exitCode=code;if o.onExit then o.onExit(code) end end,
-        {'--run',o.run,'--control-dir',o.controlDir}))
+    local args={'--run',o.run,'--control-dir',o.controlDir}
+    if o.observeNative then args[#args+1]='--observe-native' end
+    self.task=assert(hs.task.new(o.executable,function(code) self.exitCode=code;if o.onExit then o.onExit(code) end end,args))
     if o.onOwned then o.onOwned(self) end -- retain cleanup authority before start can fail
     assert(self.task:start(),'fixture_start_failed');self.pid=self.task:pid()
     self.pending={operation='ready',sequence=0}
