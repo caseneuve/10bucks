@@ -72,7 +72,7 @@ Its explicit evidence/performance qualifications remain; user acceptance does no
 retroactively repair POC002 failures or certify full release performance.
 
 **Desktop creation reviewed VM checkpoint prepared on 2026-10-13:** a separate
-configurable HyperC default appends one regular desktop and focuses its actual new
+configurable HyperD default appends one regular desktop and focuses its actual new
 native identity; digits remain focus-only. Regular/fullscreen-source/external-race
 scenarios, pending focus/layout service, 30 warm/5 cold measurements and independent
 sender evidence are recorded in [`pocs/019-desktop-creation.md`](pocs/019-desktop-creation.md).

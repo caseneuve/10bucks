@@ -363,7 +363,7 @@ performance; an independent timestamped sender remains coordinator evidence.
 ```
 
 Starts with three regular desktops/D1 active. Real configurable createDesktop hotkey
-(default HyperC) adds exactly one next regular desktop and focuses its independently
+(default HyperD) adds exactly one next regular desktop and focuses its independently
 observed native identity. Digits remain focus-only. Regular scenario retains ABC
 columns/stack/order/selections/.55ratio, verifies repeated-create and desktop-navigation
 rejections, same-Space j/k callbacks, numbered/history return and missing9 no mutation.

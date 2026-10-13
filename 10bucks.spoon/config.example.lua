@@ -18,7 +18,7 @@ return {
     resizeRight = { hyper, "]" },
     resetRatio = { hyper, "=" },
     reflow = { hyper, "r" },
-    createDesktop = { hyper, "c" }, -- configurable; false disables this binding
+    createDesktop = { hyper, "d" }, -- configurable; false disables this binding
     focusDesktop1 = { hyper, "1" },
     focusDesktop2 = { hyper, "2" },
     focusDesktop3 = { hyper, "3" },

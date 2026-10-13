@@ -39,7 +39,7 @@ original5s operation deadline. Failure/timeout clears matching intent and resnap
 late effects are external reality. No mutation retry. Pending repeatedcreate and
 regular-desktop navigation reject; same-Space focus/layout remain available. Same-
 Space managed-previous is allowed only for active regular Core/nonfullscreen target.
-Default configurable HyperC; digits focus only, N/P/0 unchanged. No delete/move command.
+Default configurable HyperD (user-selected after a host skhd conflict with C); digits focus only, N/P/0 unchanged. No delete/move command.
 
 Environment: persistent owned debug guest macOS26.6.2/25G83, arm64, HS1.1.1, SIP/AX,
 one guest display; reuse is not cold isolation. Host legacy restored/verified before
@@ -134,5 +134,8 @@ Guest source/probes stopped and topology restored afterownedcleanup; host solele
 unchanged. Source/oracle/evidence reviews completed with stated qualifications. Loader review
 fixed rollback-target and cleanup-exception defects; 26-artifact creation manifest
 matches, expected 25 enabled Hyper bindings checked. Read-only host preflight confirms
-legacy sole registered runtime/26bindings and HyperC system-assignable. Actual new
-host load requires separate authorization; no host automated window/Space tests.
+legacy sole registered runtime/26bindings and HyperC system-assignable. The first
+authorized manual host trial exposed skhd consuming HyperC for Chrome mode; system
+assignability did not establish external-hotkey conflict freedom. User selected
+HyperD; actual skhd config contains no D binding. Binding-only source/default/example
+and real callback tests updated; no skhd edits or automated host window/Space tests.
