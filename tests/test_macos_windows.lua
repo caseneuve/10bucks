@@ -23,7 +23,7 @@ local function fake()
     return { detach = function() value.detached = value.detached + 1 end }
   end
   value.native = {
-    managedDecision = function(id) return value.decisions and value.decisions[id] end,
+    decide = function(event) return event.decision end,
     subscribeApplications = function(callback) table.insert(value.applicationCallbacks, callback); return subscription() end,
     subscribeExistingWindows = function(callback) table.insert(value.existingCallbacks, callback); return subscription() end,
     subscribeWindow = function(handle, callback)
@@ -46,6 +46,22 @@ local function adapter(fake)
 end
 
 return {
+  ["LIFE-004 STATE-002: destruction or stop during native attachment cannot admit or leak returned observers"] = function()
+    for _, mode in ipairs({ "destroy", "stop" }) do
+      local f, instance = fake(), nil
+      instance = adapter(f):start()
+      f.native.subscribeWindow = function(_, callback)
+        if mode == "destroy" then callback({ kind = "destroyed", id = "window-1", resource = 10 })
+        else instance:stop() end
+        return { detach = function() f.detached = f.detached + 1 end }
+      end
+      f.existingCallbacks[1]({ kind = "ready", metadata = metadata(), handle = {}, resource = 10, appResource = 20 })
+      assert(not instance:handleForId("window-1"))
+      for _, event in ipairs(f.events) do assert(event.type ~= "WindowReady") end
+      assert(f.detached >= 1)
+      instance:stop()
+    end
+  end,
   ["STATE-003 PERF-001 PERF-002: adapter only sends plain normalized events and has no global-query or timer path"] = function()
     local f, instance = fake(), nil
     instance = adapter(f):start()
@@ -119,10 +135,10 @@ return {
     deferred.movable = nil
     window({ kind = "ready", metadata = deferred, handle = {} })
     window({ kind = "ready", metadata = metadata("excluded", { modal = true }), handle = {} })
-    equal(f.events[1].decision.action, "defer")
-    equal(f.events[2].decision.action, "exclude")
+    equal(#f.events, 1)
+    equal(f.events[1].decision.action, "exclude")
     assert(instance:handleForId("deferred") == nil and instance:handleForId("excluded") == nil)
-    equal(f.windowSubscriptions, 0)
+    equal(f.windowSubscriptions, 1)
   end,
 
   ["STATE-003 LIFE-004: stopped and previous-generation callbacks cannot resurrect cache, subscriptions, or events"] = function()
@@ -217,10 +233,10 @@ return {
     window({ kind = "ready", metadata = metadata("managed"), handle = {}, resource = 11, appResource = 20 })
     window({ kind = "titleChanged", id = "managed", title = "stale", resource = 11 })
     assert(#f.events == 1 and instance:handleForId("managed") == handle)
-    assert(#f.releasedWindows == 1 and f.releasedWindows[1].lease == 11, "unadmitted conflict releases only its provisional lease")
+    assert(#f.releasedWindows == 0, "decision owner retains identity uncertainty rather than adapter cleanup")
     local ok = pcall(function() window({ kind = "destroyed", id = "managed", resource = 10 }) end)
     assert(not ok and f.events[#f.events].type == "WindowDestroyed")
-    assert(instance:handleForId("managed") == nil and #f.releasedWindows == 2 and f.releasedWindows[2].lease == 10)
+    assert(instance:handleForId("managed") == nil and #f.releasedWindows == 1 and f.releasedWindows[1].lease == 10)
     local app = f.applicationCallbacks[1]
     app({ kind = "terminated", pid = 41, resource = 20 })
     assert(#f.releasedApplications == 1 and f.releasedApplications[1].lease == 20)

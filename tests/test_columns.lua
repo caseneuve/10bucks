@@ -106,7 +106,7 @@ return {
   ["COL-006 WIN-002: guarded move preserves source order, appends/focuses destination, and never creates an empty placeholder"] = function()
     local state = Columns.initialState({ "one", "two", "three" }, context())
     state = Columns.reduce(state, { type = "ManagedFocusObserved", memberId = "two" }, context())
-    state = Columns.reduce(state, { type = "MoveFocusedToOther" }, context())
+    state = Columns.reduce(state, { type = "MoveFocusedToOther", memberId = "two" }, context())
     assert(deepEqual(state.stacks[1].members, { "one" }))
     assert(deepEqual(state.stacks[2].members, { "three", "two" }))
     equal(state.activeStack, 2)
@@ -114,7 +114,11 @@ return {
     assertValid(state, { "one", "two", "three" })
 
     state = Columns.reduce(state, { type = "ManagedFocusObserved", memberId = "one" }, context())
-    assert(Columns.reduce(state, { type = "MoveFocusedToOther" }, context()) == state)
+    assert(Columns.reduce(state, { type = "MoveFocusedToOther", memberId = "one" }, context()) == state)
+    local pending = Columns.initialState({ "one", "two", "three" }, context())
+    pending = Columns.reduce(pending, { type = "MoveFocusedToOther", memberId = "one" }, context())
+    assert(deepEqual(pending.stacks[1].members, { "two" }))
+    assert(deepEqual(pending.stacks[2].members, { "three", "one" }))
   end,
 
   ["COL-007: swap atomically exchanges ordered stacks and selections while active content follows the opposite physical side"] = function()

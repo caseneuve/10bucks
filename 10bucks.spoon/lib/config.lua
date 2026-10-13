@@ -29,6 +29,7 @@ Config.defaults = {
     focusNextDesktop = { { "cmd", "alt", "ctrl", "shift" }, "n" },
     focusPreviousDesktopPosition = { { "cmd", "alt", "ctrl", "shift" }, "p" },
   },
+  rules = {},
   canaryInstrumentation = false,
 }
 
@@ -48,7 +49,7 @@ local function chord(name, value)
 end
 function Config.build(override)
   override = override or {}; assert(type(override) == "table", "10bucks config must be a table")
-  for key in pairs(override) do assert(key == "hotkeys" or key == "builtInDisplayUUID" or key == "canaryInstrumentation", "10bucks Canary A does not support config." .. tostring(key)) end
+  for key in pairs(override) do assert(key == "hotkeys" or key == "builtInDisplayUUID" or key == "canaryInstrumentation" or key == "rules", "10bucks Canary A does not support config." .. tostring(key)) end
   local config = copy(Config.defaults)
   if override.builtInDisplayUUID ~= nil then config.builtInDisplayUUID = override.builtInDisplayUUID end
   if override.canaryInstrumentation ~= nil then config.canaryInstrumentation = override.canaryInstrumentation end
@@ -57,6 +58,26 @@ function Config.build(override)
   if override.hotkeys ~= nil then
     assert(type(override.hotkeys) == "table", "hotkeys must be a table")
     for name, binding in pairs(override.hotkeys) do assert(config.hotkeys[name] ~= nil, "10bucks Canary A does not support hotkeys." .. tostring(name)); config.hotkeys[name] = copy(binding) end
+  end
+  -- RULE-001: deliberately exact, data-only schema; fullscreen effects are deferred.
+  if override.rules ~= nil then
+    assert(type(override.rules) == "table" and getmetatable(override.rules) == nil, "config.rules must be a plain array")
+    for _, rule in pairs(override.rules) do
+      assert(type(rule) == "table" and getmetatable(rule) == nil, "rule must be plain data")
+      assert(type(rule.match) == "table" and getmetatable(rule.match) == nil, "rule.match must be plain data")
+    end
+    config.rules = copy(override.rules)
+  end
+  assert(type(config.rules) == "table" and getmetatable(config.rules) == nil and dense(config.rules), "config.rules must be an ordered array")
+  for _, rule in ipairs(config.rules) do
+    assert(type(rule) == "table", "rule must be a table")
+    for key in pairs(rule) do assert(key == "match" or key == "action", "unsupported rule field") end
+    assert(rule.action ~= "nativeFullscreenOnCreate", "nativeFullscreenOnCreate is unsupported until fullscreen effects are implemented")
+    assert(rule.action == "manage" or rule.action == "exclude", "rule action must be manage or exclude")
+    assert(type(rule.match) == "table", "rule.match must be a table")
+    for field, value in pairs(rule.match) do
+      assert((field == "bundleID" or field == "title" or field == "titlePrefix") and type(value) == "string", "rule.match supports bundleID/title exact strings and literal titlePrefix only")
+    end
   end
   local used = {}; for name, binding in pairs(config.hotkeys) do local id = chord(name, binding); assert(not id or not used[id], "10bucks config: duplicate hotkey chord"); if id then used[id] = name end end
   return config

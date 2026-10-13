@@ -37,6 +37,19 @@ local function readinessFixture()
 end
 
 return {
+  ["LIFE-004: stop during multi-application bootstrap cannot attach later applications or leak returned watcher"] = function()
+    local f, app = fake()
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+    local secondCalls, returnedStopped = 0, false
+    local second = { pid = function() return 8 end, newWatcher = function() secondCalls = secondCalls + 1 end }
+    f.hs.application.runningApplications = function() return { app, second } end
+    app.newWatcher = function()
+      host:stop()
+      return { start = function() error("stopped watcher must not start") end, stop = function() returnedStopped = true end }
+    end
+    host:subscribeExistingWindows(function() error("stopped bootstrap must not publish") end)
+    assert(returnedStopped and secondCalls == 0 and not next(host.owned) and not next(host.handles))
+  end,
   ["LIFE-004: async setup faults reentry and mailbox faults clean exact resources"] = function()
     for _,phase in ipairs({'create','set','timer','poll','stopTimer'})do
       local f=fake();f.window.isFullScreen=function()return false end
@@ -52,7 +65,7 @@ return {
       host=Host.new(f.hs,{displayId='d',regularSpaceId=9},nil,nil,{create=function()
         if phase=='create'then host:stop()end;return worker
       end}):start()
-      host:subscribeExistingWindows(function()end);host:subscribeWindow(f.window,function()end)
+      host:subscribeExistingWindows(function()end);host:subscribeWindow(f.window,function()end); host:enableManaged(9, host.handles[9].lease)
       host.windowCallback=function()end;f.focusedWindow=f.window;host:observeFocus()
       if phase=='poll'then cb();assert(host.validityError=='mailbox_poll_failed');cb()end
       host:stop();assert(stopped==1 and not host.validityTarget and not host.validityTimer)
@@ -73,6 +86,7 @@ return {
     local events = {}
     host:subscribeExistingWindows(function() end)
     host:subscribeWindow(f.window, function() end)
+    host:enableManaged(9, host.handles[9].lease)
     host.windowCallback = function(e)
       events[#events + 1] = e
       if e.kind == "destroyed" then host:releaseWindow(e.id, e.resource) end
@@ -103,7 +117,7 @@ return {
           return {{token=token,status="invalid",error=-25202}}
         end }
       host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }, nil, nil, {create=function()return worker end}):start()
-      host:subscribeExistingWindows(function() end); host:subscribeWindow(f.window,function()end)
+      host:subscribeExistingWindows(function() end); host:subscribeWindow(f.window,function()end); host:enableManaged(9, host.handles[9].lease)
       local destroyed = 0; host.windowCallback = function(e) if e.kind == "destroyed" then destroyed = destroyed + 1 end end
       f.focusedWindow = f.window
       if mode == "minimized" then f.window.isMinimized=function()return true end
@@ -152,12 +166,12 @@ return {
       probeReadiness = function(id, cb) return host:probeReadiness(id, cb) end,
       releaseWindow = function(id, lease) return host:releaseWindow(id, lease) end,
       releaseApplication = function(pid, lease) return host:releaseApplication(pid, lease) end,
-      managedDecision = function() end,
+      decide = function(event) return event.decision end,
     } }):start()
     f.appWatchers[1].callback(f.window, "AXWindowCreated")
     f.window.newWatcher = function() return nil end
     f.owners = { 9 }; timers[1].callback()
-    assert(emitted == 0 and not windows:handleForId(9) and not host.handles[9])
+    assert(emitted == 0 and not windows:handleForId(9) and host.handles[9])
     assert(not host.readiness[9] and #timers == 1)
     timers[1].callback(); assert(#timers == 1)
     windows:stop(); host:stop()
@@ -231,7 +245,12 @@ return {
       f.owners = { 9 }
       if field == "minimized" then f.window.isMinimized = function() return nil end
       else element.isAttributeSettable = function() return nil end end
-      create(); assert(#events == 0 and #timers == 1)
+      host.windowCallback = function(event)
+        local normalized = assert(require("lib.rules").ready(event.metadata))
+        if normalized.decision.action == "defer" then return "uncertain" end
+        events[#events + 1] = event; return true
+      end
+      host:_creationReady(f.window, "created", host.windowCallback); assert(#events == 0 and #timers == 1)
       f.window.isMinimized = function() return false end
       element.isAttributeSettable = function() return true end
       timers[1].callback()
@@ -290,7 +309,7 @@ return {
     local f, host, timers, events, create = readinessFixture()
     create(); f.owners = { 9 }
     host.windowCallback = function()
-      assert(not host.readiness[9], "publication must settle token before callback")
+      assert(host.readiness[9], "candidate retains bounded identity through normalization")
       host:setContext({ displayId = "d", regularSpaceId = 10 })
       return false
     end
@@ -334,7 +353,7 @@ return {
       probeReadiness = function(id, callback) return host:probeReadiness(id, callback) end,
       releaseWindow = function(id, lease) return host:releaseWindow(id, lease) end,
       releaseApplication = function(pid, lease) return host:releaseApplication(pid, lease) end,
-      managedDecision = function() end,
+      decide = function(event) return event.decision end,
     } }):start()
     -- Empty bootstrap is not death evidence. App observer is already attached.
     local before = f.ownerQueries
@@ -361,7 +380,7 @@ return {
   end,
   ["WIN-005 FOCUS-005: direct retained focus rejects explicitly invalid resource before native request"] = function()
     local f, app, element = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
-    host:subscribeExistingWindows(function() end); host:subscribeWindow(f.window, function() end)
+    host:subscribeExistingWindows(function() end); host:subscribeWindow(f.window, function() end); host:enableManaged(9, host.handles[9].lease)
     host.windowCallback = function(event) if event.kind == "destroyed" then host:releaseWindow(event.id, event.resource) end end
     element.isValid = function() return false end
     assert(host:focus(f.window) == false and f.focusRequests == 0 and not host.handles[9])
@@ -385,6 +404,7 @@ return {
     local events = {}
     host:subscribeExistingWindows(function() end)
     host:subscribeWindow(f.window, function() end)
+    host:enableManaged(9, host.handles[9].lease)
     host.windowCallback = function(event)
       events[#events + 1] = event
       if event.kind == "destroyed" then host:releaseWindow(event.id, event.resource) end
@@ -402,6 +422,7 @@ return {
     local events = {}
     host:subscribeExistingWindows(function() end)
     host:subscribeWindow(f.window, function() end)
+    host:enableManaged(9, host.handles[9].lease)
     host.windowCallback = function(event)
       events[#events + 1] = event
       if event.kind == "destroyed" then host:releaseWindow(event.id, event.resource) end
@@ -618,9 +639,9 @@ return {
       probeReadiness = function(id, callback) return host:probeReadiness(id, callback) end,
       releaseWindow = function(id, lease) return host:releaseWindow(id, lease) end,
       releaseApplication = function(pid, lease) return host:releaseApplication(pid, lease) end,
-      managedDecision = function() end,
+      decide = function(event) return event.decision end,
     } }):start()
-    assert(events[1].decision.action == "exclude" and not host.handles[9] and not windows:handleForId(9))
+    assert(events[1].decision.action == "exclude" and host.handles[9] and not windows:handleForId(9))
     element.attributeValue = function(_, key) return key == "AXModal" and false end
     host:_ready(f.window, "created", host.windowCallback)
     local admitted = host.handles[9]
@@ -630,11 +651,11 @@ return {
 
     element.isAttributeSettable = function(_, key) if key == "AXPosition" then return nil end; return true end
     host:_ready(f.window, "created", host.windowCallback)
-    assert(events[#events].decision.action == "defer" and not host.handles[9])
+    assert(host.handles[9] and not windows:handleForId(9), "unknown readiness retains identity without admission")
     element.isAttributeSettable = function() return true end
     local original = f.window.newWatcher; f.window.newWatcher = function() return nil end
     host:_ready(f.window, "created", host.windowCallback)
-    assert(not host.handles[9] and not windows:handleForId(9), "failed attach discards its exact provisional record")
+    assert(host.handles[9] and not windows:handleForId(9), "failed attach retains identity for later readiness")
     f.window.newWatcher = original; host:_ready(f.window, "created", host.windowCallback)
     assert(host.handles[9] and windows:handleForId(9) == f.window, "same ID may retry after provisional cleanup")
     f.windowWatcher.callback(nil, "AXUIElementDestroyed")
@@ -674,7 +695,7 @@ return {
     assert(#events == before + 1)
     subscription.detach(); assert(ownedCount(host) == windowBaseline, "detached current watcher must leave active ownership")
     for _ = 1, 3 do
-      local churn = host:subscribeWindow(f.window, function() end)
+      local churn = host:subscribeWindow(f.window, function() end); host:enableManaged(9, host.handles[9].lease)
       assert(churn); churn.detach()
     end
     assert(ownedCount(host) == windowBaseline, "closed/failed watcher churn cannot retain stopped ownership")

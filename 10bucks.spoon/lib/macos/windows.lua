@@ -36,18 +36,18 @@ function Windows.new(dependencies)
   if type(dependencies) ~= "table" or type(dependencies.sink) ~= "function" or type(dependencies.native) ~= "table" then
     error("window adapter requires sink and native dependencies", 2)
   end
-  for _, name in ipairs({ "subscribeApplications", "subscribeExistingWindows", "subscribeWindow", "probeReadiness", "managedDecision" }) do
+  for _, name in ipairs({ "subscribeApplications", "subscribeExistingWindows", "subscribeWindow", "probeReadiness", "decide" }) do
     requireFunction(dependencies.native[name], name)
   end
   return setmetatable({
-    sink = dependencies.sink, native = dependencies.native, subscriptions = {}, cache = {},
+    sink = dependencies.sink, native = dependencies.native, withTransaction = dependencies.withTransaction or function(work) return work() end, subscriptions = {}, cache = {},
     probeSubscriptions = {}, probing = {}, generation = 0, started = false,
   }, Windows)
 end
 
 function Windows:handleForId(id)
   local entry = self.cache[id]
-  return entry and entry.handle or nil
+  return entry and entry.managed and entry.handle or nil
 end
 
 function Windows:_active(generation)
@@ -63,15 +63,23 @@ end
 
 function Windows:_retain(id, handle, pid, resource, appResource, generation)
   local previous = self.cache[id]
-  if previous and previous.resource == resource then return previous.subscription, false end
+  if previous and previous.resource == resource and (previous.subscription or previous.attaching) then return previous.subscription, false end
   -- A different resource for a current ID is deferred by Host. Do not detach a
   -- still-live subscription merely because a wrapper comparison differed.
-  if previous then return nil, false end
+  if previous and previous.resource ~= resource then return nil, false end
+  -- LIFE-004: keep the exact observed identity through attachment uncertainty.
+  local entry = previous or { handle = handle, pid = pid, resource = resource, appResource = appResource }
+  entry.attaching = true
+  self.cache[id] = entry
   local ok, subscription = pcall(self.native.subscribeWindow, handle, function(observation)
     self:_window(observation, generation)
   end)
-  if not ok or not subscription or not self:_active(generation) then detach(subscription); return nil, false end
-  self.cache[id] = { handle = handle, pid = pid, resource = resource, appResource = appResource, subscription = subscription }
+  if not ok or not subscription or not self:_active(generation) or self.cache[id] ~= entry then
+    detach(subscription)
+    entry.attaching = nil
+    return nil, false
+  end
+  entry.attaching, entry.subscription = nil, subscription
   return subscription, true
 end
 
@@ -83,26 +91,29 @@ function Windows:_discardProvisional(id, resource)
 end
 
 function Windows:_ready(observation, generation)
+  return self.withTransaction(function() return self:_readyTransaction(observation, generation) end)
+end
+
+function Windows:_readyTransaction(observation, generation)
   if not self:_active(generation) or type(observation) ~= "table" then return end
   if type(observation.metadata) ~= "table" then
     self:_discardProvisional(observation.id, observation.resource)
     return
   end
-  -- Re-observation/exit reuses the already committed lifetime decision.
-  local event = Rules.ready(observation.metadata, self.native.managedDecision(observation.metadata.id))
+  local event = Rules.ready(observation.metadata)
   if not event then
     self:_discardProvisional(observation.metadata.id, observation.resource)
     return
   end
-  -- Defer/exclude facts remain reducer-visible, but their provisional Host
-  -- records do not prove liveness or ownership after the decision commits.
   event.resource, event.appResource = observation.resource, observation.appResource
+  -- STATE-002: composition commits the exact lifetime decision before attachment.
+  event.decision = self.native.decide(event)
+  if event.decision.action == "defer" then return "uncertain" end
   local retained, created = nil, false
-  if event.decision.action == "manage" and observation.handle ~= nil then
+  if observation.handle ~= nil then
     retained, created = self:_retain(event.id, observation.handle, event.application.pid, observation.resource, observation.appResource, generation)
     if not retained then
-      self:_discardProvisional(event.id, observation.resource)
-      return
+      return false
     end
   end
   if not self:_active(generation) then
@@ -113,20 +124,37 @@ function Windows:_ready(observation, generation)
     self:_discardProvisional(event.id, observation.resource)
     return
   end
-  local ok, accepted = pcall(self._emit, self, event)
-  if accepted == false and event.decision.action == "manage" and created then
-    local entry = self.cache[event.id]
-    if entry and entry.resource == observation.resource then detach(entry.subscription); self.cache[event.id] = nil end
-    self:_discardProvisional(event.id, observation.resource)
-  elseif event.decision.action ~= "manage" then
-    self:_discardProvisional(event.id, observation.resource)
+  if self.native.current and not self.native.current(event.id, event.resource, event.appResource, event.application.pid) then return false end
+  local entry = self.cache[event.id]
+  local previouslyManaged = entry and entry.managed
+  if entry then
+    -- FS-002/DISC-002: a transition during attachment invalidates the
+    -- pre-attachment ownership fact. Reuse targeted readiness before placement;
+    -- never project a regular slot from that stale ownership snapshot.
+    local fullscreenChanged = entry.availability and entry.availability.nativeFullscreen ~= nil
+      and entry.availability.nativeFullscreen ~= event.metadata.nativeFullscreen
+    for field, value in pairs(entry.availability or {}) do event.metadata[field] = value end
+    entry.availability = nil
+    if fullscreenChanged then
+      self:_probe(event.id, generation, true)
+      return false
+    end
+    entry.managed = event.decision.action == "manage"
   end
+  local ok, accepted = pcall(self._emit, self, event)
+  local committed = not ok and self.native.committed and self.native.committed(event)
+  if ((ok and accepted ~= false) or committed) and entry and event.decision.action == "manage" and self.native.enableManaged then
+    self.native.enableManaged(event.id, event.resource)
+  end
+  -- A refused admission does not revoke a committed native lifetime. Retry at
+  -- an existing readiness boundary with the same identity and observation.
+  if (not ok or accepted == false) and not committed and entry then entry.managed = previouslyManaged end
   if not ok then error(accepted, 0) end
   return accepted ~= false and event.decision.action == "manage"
 end
 
 function Windows:_probe(id, generation, force)
-  if not self:_active(generation) or not validId(id) or (self.cache[id] and not force) or self.probing[id] then return end
+  if not self:_active(generation) or not validId(id) or (self.cache[id] and self.cache[id].subscription and not force) or self.probing[id] then return end
   local hadCachedResource = self.cache[id] ~= nil
   self.probing[id] = true
   local subscription, completed = nil, false
@@ -170,6 +198,14 @@ end
 
 function Windows:_application(observation, generation)
   if not self:_active(generation) or type(observation) ~= "table" or not validId(observation.pid) then return end
+  if self.native.appCurrent and not self.native.appCurrent(observation.pid, observation.resource) then return end
+  if observation.kind == "hidden" or observation.kind == "unhidden" then
+    for _, entry in pairs(self.cache) do
+      if entry.attaching and entry.pid == observation.pid and entry.appResource == observation.resource then
+        entry.availability = entry.availability or {}; entry.availability.appHidden = observation.kind == "hidden"
+      end
+    end
+  end
   if observation.kind == "terminated" then
     local event = { type = "ApplicationTerminated", pid = observation.pid, resource = observation.resource }
     local ok, err = pcall(self._emit, self, event)
@@ -225,6 +261,12 @@ function Windows:_window(observation, generation)
   if types[observation.kind] and validId(observation.id) then
     local entry = self.cache[observation.id]
     if not entry or entry.resource ~= observation.resource then return end
+    if entry.attaching then
+      local field = (observation.kind == "minimized" or observation.kind == "restored") and "minimized" or "nativeFullscreen"
+      entry.availability = entry.availability or {}
+      entry.availability[field] = observation.kind == "minimized" or observation.kind == "enteredNativeFullscreen"
+      return
+    end
     self:_emit({ type = types[observation.kind], id = observation.id, resource = observation.resource,
       presentationResource = observation.presentationResource })
     if observation.kind == "exitedNativeFullscreen" then self:_probe(observation.id, generation, true) end
@@ -244,7 +286,7 @@ end
 function Windows:discover(bootstrap)
   if not self.started then return end
   local generation = self.generation
-  return self.native.subscribeExistingWindows(function(event) self:_window(event, generation) end, bootstrap == true)
+  return self.native.subscribeExistingWindows(function(event) return self:_window(event, generation) end, bootstrap == true)
 end
 
 function Windows:start()
@@ -261,6 +303,10 @@ function Windows:start()
     self.started = false
     self.generation = self.generation + 1
     error(err, 0)
+  end
+  if not self:_active(generation) then
+    for _, subscription in ipairs(attached) do detach(subscription) end
+    return self
   end
   self.subscriptions = attached
   return self

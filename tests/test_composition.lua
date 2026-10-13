@@ -176,6 +176,174 @@ local function workspaceSetup()
 end
 
 return {
+  ["LIFE-004 PERF-001: native image preparation retries failures and loads once without creating workers"] = function()
+    local original = package.loadlib
+    local loads, creates, initializers = 0, 0, 0
+    local shim = assert(loadfile("10bucks.spoon/lib/macos/ax_validity.lua"))()
+    local ok, err = pcall(function()
+      package.loadlib = function(path, symbol)
+        loads = loads + 1
+        assert(path:find("/native/build/ax_validity.so", 1, true) and symbol == "luaopen_ax_validity")
+        if loads == 1 then return nil, "load failed" end
+        return function()
+          initializers = initializers + 1
+          if initializers == 1 then error("initializer failed") end
+          return { create = function() creates = creates + 1; return creates end }
+        end
+      end
+      assert(not pcall(shim.prepare)); assert(not pcall(shim.prepare))
+      shim.prepare(); shim.prepare()
+      assert(loads == 3 and initializers == 2 and creates == 0)
+      assert(shim.create() == 1 and shim.create() == 2 and loads == 3)
+    end)
+    package.loadlib = original
+    assert(ok, err)
+  end,
+  ["LIFE-004 STATE-002: startup prepares image before bar/bootstrap/bindings and preparation failure leaves no owners"] = function()
+    for _, mode in ipairs({ "success", "failure", "cancel" }) do
+      local f = fakeHs(); local ten = load(f)
+      local prepared = false
+      ten.nativeValidity.prepare = function()
+        assert(not f.canvas and not f.appWatcher and #f.bindings == 0)
+        prepared = true
+        if mode == "failure" then error("prepare failed") end
+        if mode == "cancel" then ten:stop() end
+      end
+      local original = hs.canvas.new
+      hs.canvas.new = function(...) assert(prepared); return original(...) end
+      local ok = pcall(function() ten:start() end)
+      if mode == "failure" then
+        assert(not ok and not ten.started and not ten.host and not ten.bar and #ten.hotkeyBindings == 0 and #f.bindings == 0)
+      elseif mode == "cancel" then
+        assert(ok and prepared and not ten.started and not ten.host and not f.canvas and not f.appWatcher)
+        assert(#f.bindings == 0 and f.frames == 0 and f.focuses == 0)
+      else assert(ok and prepared and ten.started); ten:stop() end
+    end
+  end,
+  ["STATE-002 LIFE-004: stop during bootstrap cannot resurrect startup bindings or owners"] = function()
+    local f = fakeHs(); local ten = load(f)
+    local original = f.window.newWatcher
+    f.window.newWatcher = function(window, callback)
+      ten:stop()
+      return original(window, callback)
+    end
+    ten:start()
+    assert(not ten.started and not ten.host and not ten.windows and #ten.hotkeyBindings == 0)
+    assert(f.windowWatcher.stopped and f.appWatcher.stopped)
+  end,
+  ["STATE-008 STATE-002 FS-002: availability during attachment cannot project stale regular ownership"] = function()
+    for _, mode in ipairs({ "minimized", "fullscreen", "unknownFullscreenOwner" }) do
+      local f = fakeHs(); local ten = load(f)
+      local original = f.window.newWatcher
+      f.window.newWatcher = function(window, callback)
+        local watcher = original(window, callback)
+        watcher.start = function()
+          if mode == "minimized" then callback(nil, "AXWindowMiniaturized")
+          else
+            f.fullscreen = true
+            f.owners = mode == "fullscreen" and { "fullscreen-space" } or {}
+            hs.spaces.spaceType = function(id) return id == "fullscreen-space" and "fullscreen" or "user" end
+            callback(nil, "AXWindowResized")
+          end
+        end
+        return watcher
+      end
+      ten:start()
+      local window = ten.core:state().manager.windows[9]
+      if mode == "minimized" then assert(window and window.lifecycle.minimized)
+      else
+        assert(not window, "fullscreen transition must not invent a regular slot")
+        if mode == "fullscreen" then assert(ten.focusHistory:unplacedTarget(9))
+        else assert(not ten.focusHistory:unplacedTarget(9)) end
+      end
+      assert(f.frames == 0 and f.focuses == 0)
+      ten:stop()
+    end
+  end,
+  ["STATE-002 LIFE-004: post-commit sink error preserves exact admitted adapter and safety authority"] = function()
+    local f = fakeHs(); local ten = load(f); f.members = {}; ten:start()
+    local deliver = ten._deliverEvent
+    ten._deliverEvent = function(self, event, handle)
+      local accepted = deliver(self, event, handle)
+      if event.type == "WindowReady" then error("after admitted commit") end
+      return accepted
+    end
+    assert(not pcall(function() ten.host:_ready(f.window, "created", ten.host.windowCallback) end))
+    assert(ten.core:state().manager.windows[9] and ten.handleRegistry:target(9))
+    assert(ten.windows:handleForId(9) == f.window and ten.host.managedObservers[9])
+    ten:stop()
+  end,
+  ["RULE-001 LIFE-003 WIN-001: configured exclusion observes actual presentation, stays outside authority, and reevaluates only after death"] = function()
+    local f, element = fakeHs(); local ten = load(f)
+    ten:configure({ builtInDisplayUUID = "built-in", rules = {
+      { match = { title = "Window" }, action = "exclude" },
+      { match = {}, action = "manage" },
+    } }):start()
+    local lease = ten.host.handles[9].lease
+    assert(not ten.core:state().manager.windows[9] and not ten.windows:handleForId(9) and not ten.handleRegistry:target(9))
+    assert(f.frames == 0 and f.focuses == 0 and #ten.focusHistory:snapshot() == 0 and not ten.host.managedObservers[9] and not ten.host.validityTarget)
+    local lifecycleWatcher = f.windowWatcher
+    f.focusedWindow = f.window; ten.host:observeFocus()
+    f.window.title = function() return "Changed" end
+    lifecycleWatcher.callback(nil, "AXTitleChanged")
+    element.isAttributeSettable = function() return false end
+    ten.host:_ready(f.window, "targetedReadiness", ten.host.windowCallback)
+    assert(ten.host.handles[9].lease == lease and not ten.windows:handleForId(9))
+    assert(ten.actualPresentation.title == "Changed" and f.frames == 0 and f.focuses == 0)
+    lifecycleWatcher.callback(nil, "AXUIElementDestroyed")
+    assert(not ten.host.handles[9])
+    element.isAttributeSettable = function() return true end
+    ten.host:_ready(f.window, "created", ten.host.windowCallback)
+    assert(ten.host.handles[9].lease ~= lease and ten.windows:handleForId(9) == f.window)
+    f.window.title = function() return "Window" end
+    element.isAttributeSettable = function() return false end
+    ten.host:_ready(f.window, "targetedReadiness", ten.host.windowCallback)
+    assert(ten.core:state().manager.windows[9] and ten.windows:handleForId(9) == f.window)
+    local app = f.window:application()
+    local impostor = { pid = app.pid }
+    f.life.callback(nil, hs.application.watcher.terminated, impostor)
+    assert(ten.host.handles[9] and ten.core:state().manager.windows[9])
+    f.life.callback(nil, hs.application.watcher.terminated, app)
+    assert(not ten.host.handles[9] and not ten.core:state().manager.windows[9])
+    ten:stop()
+  end,
+  ["RULE-001 DISC-002: unavailable matching title defers through three bounded attempts then an independent boundary admits"] = function()
+    local f = fakeHs(); local ten = load(f); f.members = {}
+    local timers = {}
+    hs.timer.doAfter = function(delay, callback)
+      local timer = { delay = delay, callback = callback, stop = function(self) self.stopped = true end }
+      if delay == 0.1 then timers[#timers + 1] = timer end
+      return timer
+    end
+    ten:configure({ builtInDisplayUUID = "built-in", rules = { { match = { title = "Utility" }, action = "exclude" } } }):start()
+    f.window.title = function() return nil end
+    f.appWatcher.callback(f.window, "AXWindowCreated")
+    assert(#timers == 1 and not ten.windows:handleForId(9))
+    timers[1].callback(); timers[2].callback()
+    assert(#timers == 2 and not ten.host.readiness[9] and not ten.core:state().manager.windows[9])
+    local lease = ten.host.handles[9].lease
+    f.window.title = function() return "Normal" end
+    ten.host:_ready(f.window, "targetedReadiness", ten.host.windowCallback)
+    assert(ten.host.handles[9].lease == lease and ten.windows:handleForId(9) == f.window)
+    ten:stop()
+  end,
+  ["STATE-002 LIFE-004: attachment refusal and same-resource reentry preserve identity without recursive admission"] = function()
+    local f = fakeHs(); local ten = load(f); f.members = {}; ten:start()
+    local original = f.window.newWatcher
+    f.window.newWatcher = function() return nil end
+    ten.host:_ready(f.window, "created", ten.host.windowCallback)
+    local lease = ten.host.handles[9].lease
+    assert(not ten.windows:handleForId(9) and not ten.core:state().manager.windows[9])
+    local calls = 0
+    f.window.newWatcher = function(window, callback)
+      calls = calls + 1
+      ten.host:_ready(window, "targetedReadiness", ten.host.windowCallback)
+      return original(window, callback)
+    end
+    ten.host:_ready(f.window, "created", ten.host.windowCallback)
+    assert(calls == 1 and ten.host.handles[9].lease == lease and ten.windows:handleForId(9) == f.window)
+    ten:stop()
+  end,
   ["CMD-006: structural pending permits only active regular managed previous target"] = function()
     local f,ten=workspaceSetup();assert(ten:_submitCommand({type='CreateRegularDesktop'}))
     local original=ten.focusHistory.previous;local focused=0
@@ -992,8 +1160,8 @@ return {
     _G.hs.axuielement.windowElement = function() return element end
     ten.host:_ready(candidate, "created", ten.host.windowCallback)
     assert(ten.core:state().manager.windows[10] and ten.handleRegistry:target(10).lease == 900)
-    assert(not ten.host.handles[10] and not ten.windows:handleForId(10) and candidateWatcher.stopped,
-      "explicit false cleans only the just-attached provisional resource")
+    assert(ten.host.handles[10] and not ten.windows:handleForId(10) and not candidateWatcher.stopped,
+      "terminal decision retains exact observation identity despite admission refusal")
     ten:stop()
   end,
   ["LIFE-001: post-commit native frame error preserves committed route until authoritative destruction"] = function()
@@ -1047,14 +1215,14 @@ return {
   ["LIFE-001 BAR-004: focused deferred release promotes without losing actual presentation authority"] = function()
     local f, element = fakeHs(); local ten = load(f); ten:start()
     f.windowWatcher.callback(nil, "AXUIElementDestroyed")
-    element.attributeValue = function() return true end
+    element.isAttributeSettable = function() return nil end
     f.focusedWindow = f.window; assert(ten.host:observeFocus())
     local priorWindowLease, presentationLease = ten.actualPresentation.windowResource, ten.actualPresentation.presentationResource
-    assert(priorWindowLease and presentationLease and not ten.host.handles[9], "deferred focus releases only its provisional Host record")
-    element.attributeValue = function() return false end
+    assert(priorWindowLease and presentationLease and ten.host.handles[9] and not ten.windows:handleForId(9), "deferred focus retains identity without authority")
+    element.isAttributeSettable = function() return true end
     ten.host:_ready(f.window, "created", ten.host.windowCallback)
     local promoted = ten.handleRegistry:target(9)
-    assert(promoted and promoted.lease ~= priorWindowLease and ten.actualPresentation.presentationResource == presentationLease)
+    assert(promoted and promoted.lease == priorWindowLease and ten.actualPresentation.presentationResource == presentationLease)
     f.window.title = function() return "Promoted title" end
     f.windowWatcher.callback(nil, "AXTitleChanged")
     assert(f.canvas.elements[4].text:find("Promoted title", 1, true), "managed title carries the retained presentation authority")
@@ -1066,7 +1234,7 @@ return {
     for _, shape in ipairs({ "nil", "start-failed" }) do
       local f, element = fakeHs(); local ten = load(f); ten:start()
       f.windowWatcher.callback(nil, "AXUIElementDestroyed")
-      element.attributeValue = function() return true end
+      element.isAttributeSettable = function() return nil end
       local original = f.window.newWatcher
       f.window.newWatcher = function(_, callback)
         if shape == "nil" then return nil end
@@ -1074,10 +1242,10 @@ return {
       end
       f.focusedWindow = f.window; assert(ten.host:observeFocus())
       local oldLease, presentationLease = ten.actualPresentation.windowResource, ten.actualPresentation.presentationResource
-      assert(oldLease and presentationLease and not ten.host.handles[9])
-      f.window.newWatcher = original; element.attributeValue = function() return false end
+      assert(oldLease and presentationLease and ten.host.handles[9] and not ten.windows:handleForId(9))
+      f.window.newWatcher = original; element.isAttributeSettable = function() return true end
       ten.host:_ready(f.window, "created", ten.host.windowCallback)
-      assert(ten.handleRegistry:target(9).lease ~= oldLease and ten.actualPresentation.presentationResource == presentationLease)
+      assert(ten.handleRegistry:target(9).lease == oldLease and ten.actualPresentation.presentationResource == presentationLease)
       f.window.title = function() return shape .. " promoted" end
       f.windowWatcher.callback(nil, "AXTitleChanged")
       assert(f.canvas.elements[4].text:find(shape .. " promoted", 1, true))

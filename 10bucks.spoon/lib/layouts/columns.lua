@@ -373,11 +373,13 @@ function Columns.reduce(state, event, context)
 
   if event.type == "MoveFocusedToOther" then
     if #state.stacks ~= 2 then return state end
-    local sourceIndex = state.activeStack
+    -- COL-006/FOCUS-002: composition supplies the actual authorized member.
+    local sourceIndex = event.memberId and stackIndexForMember(state, event.memberId)
+    if not sourceIndex then return state end
     local destinationIndex = sourceIndex == 1 and 2 or 1
     local source = state.stacks[sourceIndex]
     if #source.members < 2 then return state end
-    local selectedId = source.selectedId
+    local selectedId = event.memberId
     local selectedIndex
     for index, memberId in ipairs(source.members) do if memberId == selectedId then selectedIndex = index; break end end
     local stacks = copyStacks(state.stacks)

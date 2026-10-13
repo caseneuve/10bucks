@@ -37,6 +37,76 @@ local function initial()
 end
 
 return {
+  ["RULE-001 RULE-002: titlePrefix is literal case-sensitive conjunctive data with existing unknown and safety semantics"] = function()
+    local rules = {
+      { match = { bundleID = "example.app", titlePrefix = "[Utility].*" }, action = "exclude" },
+      { match = {}, action = "manage" },
+    }
+    local input = metadata({ title = "[Utility].* draft" })
+    local function action(generic) return Rules.filter(input, rules, generic or { action = "manage" }).action end
+    equal(action(), "exclude")
+    input.title = "[utility].* draft"; equal(action(), "manage")
+    input.title = "Utility draft"; equal(action(), "manage")
+    input.title = nil; equal(action(), "defer")
+    input.application.bundleID = "other.app"; equal(action(), "manage")
+    input.application.bundleID, input.title = "example.app", "[Utility].* draft"
+    equal(Rules.filter(input, { rules[2], rules[1] }, { action = "manage" }).action, "manage")
+    equal(action({ action = "exclude" }), "exclude")
+    equal(action({ action = "defer" }), "defer")
+    rules[1].match.title = "exact"; equal(action(), "manage")
+    rules[1].match.titlePrefix, input.title = "ex", "exact"; equal(action(), "exclude")
+    rules[1].match = { titlePrefix = "" }; input.title = ""; equal(action(), "exclude")
+    input.title = nil; equal(action(), "defer")
+  end,
+  ["RULE-001 LIFE-003 STATE-001: ordered exact decisions defer unknown matches and retain exact lifetimes"] = function()
+    local configured = {
+      { match = { bundleID = "example.app", title = "Utility" }, action = "exclude" },
+      { match = { bundleID = "example.app" }, action = "manage" },
+    }
+    local input = metadata({ title = "Utility" })
+    local ready = assert(Rules.ready(input))
+    ready.decision = Rules.filter(ready.metadata, configured, ready.decision)
+    equal(ready.decision.action, "exclude")
+    ready.resource, ready.appResource = 10, 20
+    local records = Rules.reduce({}, ready)
+    equal(Rules.action(records, ready.id, 10, 20, 99), "exclude")
+    assert(Rules.action(records, ready.id, 11, 20, 99) == nil)
+    input.title = "Changed"
+    equal(Rules.filter(input, configured, { action = "manage" }).action, "manage")
+    assert(Rules.reduce(records, ready) == records)
+    ready.decision = { action = "manage" }
+    assert(Rules.reduce(records, ready) == records)
+    ready.resource = 11
+    assert(Rules.reduce(records, ready) == records)
+    ready.resource, ready.decision = 10, { action = "exclude" }
+    assert(Rules.action(records, ready.id, 10, 20, 100) == nil)
+    local invalid = { type = "WindowReady", application = { pid = 99 }, resource = 1, appResource = 2, decision = { action = "manage" } }
+    assert(not pcall(Rules.reduce, {}, invalid))
+    invalid.id = "other"
+    invalid.application.handle = io.stdout
+    assert(not pcall(Rules.reduce, {}, invalid))
+    input.title = nil
+    equal(Rules.filter(input, configured, { action = "manage" }).action, "defer")
+    input.application.bundleID = "other.app"
+    equal(Rules.filter(input, configured, { action = "manage" }).action, "manage")
+    equal(Rules.filter(input, configured, { action = "exclude" }).action, "exclude")
+    input.application.bundleID, input.title = nil, "Utility"
+    equal(Rules.filter(input, configured, { action = "manage" }).action, "defer")
+    input.title = "known mismatch"
+    equal(Rules.filter(input, { configured[1] }, { action = "manage" }).action, "manage")
+    input.application.bundleID, input.title = "example.app", ""
+    equal(Rules.filter(input, { { match = { title = "" }, action = "exclude" } }, { action = "manage" }).action, "exclude")
+    equal(Rules.filter(input, { configured[2], { match = {}, action = "exclude" } }, { action = "manage" }).action, "manage")
+    assert(Rules.reduce(records, { type = "WindowDestroyed", id = ready.id, resource = 11 }) == records)
+    assert(Rules.reduce(records, { type = "ApplicationTerminated", pid = 99, resource = 21 })[ready.id])
+    local removed = Rules.reduce(records, { type = "WindowDestroyed", id = ready.id, resource = 10 })
+    assert(removed[ready.id] == nil and records[ready.id] ~= nil)
+    ready.resource = 11
+    equal(Rules.action(Rules.reduce(removed, ready), ready.id, 11, 20, 99), "exclude")
+    assert(Rules.reduce(records, { type = "ApplicationTerminated", pid = 99, resource = 20 })[ready.id] == nil)
+    ready.decision = { action = "defer" }
+    assert(next(Rules.reduce({}, ready)) == nil)
+  end,
   ["STATE-003 RULE-002 RULE-003: readiness normalizes by immutable primitive copy and rejects userdata, functions, and metatables"] = function()
     local input = metadata()
     local event = assert(Rules.ready(input))
@@ -62,9 +132,9 @@ return {
   end,
 
   ["RULE-002 WIN-008: generic policy has no app-specific branch and excludes self, nonstandard, modal/transient, immovable, and fixed-size windows"] = function()
-    local accepted = assert(Rules.ready(metadata({ application = { pid = 99, bundleID = "org.signal.Signal", name = "Signal" } })))
+    local accepted = assert(Rules.ready(metadata({ application = { pid = 99, bundleID = "example.first", name = "First App" } })))
     equal(accepted.decision.action, "manage")
-    local other = assert(Rules.ready(metadata({ application = { pid = 99, bundleID = "org.mozilla.thunderbird", name = "Thunderbird" } })))
+    local other = assert(Rules.ready(metadata({ application = { pid = 99, bundleID = "example.second", name = "Second App" } })))
     equal(other.decision.action, "manage")
 
     local cases = {
@@ -137,9 +207,15 @@ return {
       spaceType = "user", nativeFullscreen = false,
     })
     equal(assert(Rules.ready(changed)).decision.action, "exclude")
-    equal(assert(Rules.ready(changed, { action = "manage" })).decision.action, "manage")
+    local original = assert(Rules.ready(metadata()))
+    original.resource, original.appResource = 10, 20
+    local records = Rules.reduce({}, original)
+    local reobserved = assert(Rules.ready(changed))
+    reobserved.decision = { action = assert(Rules.action(records, changed.id, 10, 20, 99)) }
+    equal(reobserved.decision.action, "manage")
+    assert(Rules.reduce(records, reobserved) == records)
 
-    local focus = assert(Rules.ready(metadata({ origin = "focus" }), { action = "manage" }))
+    local focus = assert(Rules.ready(metadata({ origin = "focus" })))
     equal(focus.decision.action, "defer")
     equal(focus.decision.reason, "focus-is-not-readiness")
   end,

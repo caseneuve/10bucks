@@ -3,6 +3,7 @@ local root = source:match("(.*/)")
 if root then package.path = root .. "?.lua;" .. root .. "?/init.lua;" .. package.path end
 
 local Config = require("lib.config")
+local Rules = require("lib.rules")
 local Core = require("lib.core")
 local Stack = require("lib.layouts.stack")
 local Columns = require("lib.layouts.columns")
@@ -284,7 +285,10 @@ function Tenbucks:_deliverEvent(event, handle)
   -- an ID alone after its window resource lease ended. Current global focus is
   -- a separate native read and remains presentation-authoritative.
   if event.id and event.resource and event.type ~= "WindowReady" and event.type ~= "ActualFocusChanged"
-    and not self.handleRegistry:matches(event.id, event.resource) then return true end
+    and not self.handleRegistry:matches(event.id, event.resource) then
+    -- Excluded lifetime events retire observation decisions, never enter Core.
+    self:_publishBar(); return true
+  end
   self.actualPresentation = Bar.reduceActual(self.actualPresentation, event)
   if event.type == "ActualFocusChanged" and event.id == nil then self:_publishBar(); return true end
   if event.type == "PresentationEnded" then self:_publishBar(); return true end
@@ -449,6 +453,14 @@ function Tenbucks:_submitCommand(command)
     return self:_withEffectBatch(function() return self:_focusManagedPrevious() end)
   end
   if self.suspended or not self.core then return false, "native-fullscreen-has-no-regular-layout" end
+  if command.type == "MoveFocusedToOther" then
+    local actual = self.actualPresentation or {}
+    local lease = self.host and self.host:focusedManagedLease(actual.id, actual.presentationResource)
+    local owner, window
+    if lease then owner, window = self:_coreForManagedWindow(actual.id, lease) end
+    if owner ~= self.core or not window or not Model.isAvailable(window) then return false, "actual-focus-is-not-managed" end
+    command = { type = command.type, memberId = window.id }
+  end
   return self:_withEffectBatch(function() return self.core:submit(command) end)
 end
 
@@ -456,6 +468,7 @@ function Tenbucks:_startHost(context)
   -- Context and Core exist before bootstrap can synchronously publish facts.
   self.context = context
   local host, adapter
+  local records = {} -- Host-scoped primitive state; Rules.reduce is its only writer.
   local ok, err = pcall(function()
     host = Host.new(hs, context, self.instrumentation, self.handleRegistry, self.nativeValidity):start()
     local native = {
@@ -465,15 +478,36 @@ function Tenbucks:_startHost(context)
       probeReadiness = function(id, callback) return host:probeReadiness(id, callback) end,
       releaseWindow = function(id, lease) return host:releaseWindow(id, lease) end,
       releaseApplication = function(pid, lease) return host:releaseApplication(pid, lease) end,
-      managedDecision = function(id)
-        local _, window = self:_coreForManagedWindow(id)
-        if window then return { action = window.ruleAction } end
-        if self.focusHistory:unplacedTarget(id) then return { action = "manage" } end
+      decide = function(event)
+        local prior = Rules.action(records, event.id, event.resource, event.appResource, event.application.pid)
+        if records[event.id] and not prior then return { action = "defer", reason = "conflicting-resource" } end
+        event.decision = prior and { action = prior } or Rules.filter(event.metadata, self.config.rules, event.decision)
+        records = Rules.reduce(records, event)
+        return event.decision
       end,
+      current = function(...) return host:current(...) end,
+      appCurrent = function(...) return host:appCurrent(...) end,
+      committed = function(event)
+        local route = self.handleRegistry:target(event.id, event.resource)
+        return route ~= nil and self:_targetIsManaged(route)
+      end,
+      enableManaged = function(...) return host:enableManaged(...) end,
       record = function(kind) self:_record(kind) end,
       recordEvent = function(eventType) if self.instrumentation then self.instrumentation:recordEvent(eventType) end end,
     }
-    adapter = Windows.new({ native = native, sink = function(event)
+    adapter = Windows.new({ native = native,
+      withTransaction = function(work) return self:_withEffectBatch(work) end,
+      sink = function(event)
+      if (event.type == "ApplicationHidden" or event.type == "ApplicationUnhidden" or event.type == "ApplicationTerminated")
+        and not host:appCurrent(event.pid, event.resource) then return false end
+      local observed = event.id and records[event.id]
+      local authorized = observed and observed.resource == event.resource
+      records = Rules.reduce(records, event)
+      if event.type == "WindowReady" and event.decision.action == "exclude" then return true end
+      if authorized and observed.action == "exclude" then
+        self.actualPresentation = Bar.reduceActual(self.actualPresentation, event)
+        self:_publishBar(); return true
+      end
       return self:_submitEvent(event, event.id and adapter:handleForId(event.id))
     end })
     self.host, self.windows = host, adapter
@@ -484,7 +518,7 @@ function Tenbucks:_startHost(context)
     adapter:start() -- one runtime-lifetime observer set; initial full discovery.
     -- Bootstrap readiness may precede the only focus observation; sample once
     -- without requesting focus.
-    host:observeFocus()
+    if host.started and adapter.started then host:observeFocus() end
   end)
   if not ok then
     if adapter then adapter:stop() end
@@ -601,7 +635,13 @@ function Tenbucks:start()
   self.canaryObservedVersion = 0
   if self.instrumentation then self.instrumentation:setActiveTimers(0) end
   local bindings, contextSubscription
+  self.starting = true
   local ok, err = pcall(function()
+    -- Prepare the required image before any native observation or bindings;
+    -- injected worker factories may omit this optional preparation operation.
+    local validity = self.nativeValidity or require("lib.macos.ax_validity")
+    if validity.prepare then validity.prepare() end
+    if not self.starting then return end
     local style = hs.host and hs.host.interfaceStyle and hs.host.interfaceStyle() or nil
     self.darkAppearance = style == "Dark" -- appearance-change notification remains Hypothesis; no polling.
     self.bar = NativeBar.new(hs, function(kind)
@@ -612,8 +652,10 @@ function Tenbucks:start()
       self:_publishBar()
     end):start()
     self:_beginContext(Context.snapshot(hs, self.config.builtInDisplayUUID))
+    if not self.starting then return end
     self:_publishBar()
     bindings = Bindings.bind(hs, function(command) return self:_submitCommand(command) end, self.config.hotkeys)
+    if not self.starting then Bindings.delete(bindings); return end
     contextSubscription = Context.watch(hs, self.config.builtInDisplayUUID, function(context)
       if self.started then self:_contextChanged(context) end
     end, function(context)
@@ -628,12 +670,18 @@ function Tenbucks:start()
     self:stop()
     error(err, 0)
   end
+  if not self.starting then
+    if contextSubscription then contextSubscription.detach() end
+    Bindings.delete(bindings)
+    self:stop(); return self
+  end
+  self.starting = nil
   self.contextSubscription, self.hotkeyBindings, self.started = contextSubscription, bindings, true
   return self
 end
 
 function Tenbucks:stop()
-  self.started = false
+  self.started, self.starting = false, nil
   if self.contextSubscription then self.contextSubscription.detach() end
   self.contextSubscription = nil
   if self.workspace then self.workspace:submit({ type = "WorkspaceSwitchStopped" }) end

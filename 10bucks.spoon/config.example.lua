@@ -5,6 +5,9 @@
 local hyper = { "cmd", "alt", "ctrl", "shift" }
 return {
   builtInDisplayUUID = "REPLACE-WITH-VERIFIED-BUILT-IN-DISPLAY-UUID",
+  -- First match wins; bundleID/title are exact, titlePrefix is literal and case-sensitive.
+  -- Empty titlePrefix matches every known title; unavailable titles defer. No predicates/patterns.
+  rules = {}, -- e.g. { { match = { bundleID = "com.example.App", titlePrefix = "Utility: " }, action = "exclude" } }
   hotkeys = {
     cycleLayout = { hyper, "space" },
     focusLeftGroup = { hyper, "h" },

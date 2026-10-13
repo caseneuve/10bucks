@@ -2,6 +2,34 @@ local Config = require("lib.config")
 local Bindings = require("lib.bindings")
 
 return {
+  ["RULE-001 RULE-003: narrow rules config copies exact matches and rejects unsupported actions/matchers"] = function()
+    local input = { rules = { { match = { bundleID = "example.app", title = "" }, action = "exclude" } } }
+    local config = Config.build(input)
+    input.rules[1].match.title = "changed"
+    assert(config.rules[1].match.title == "")
+    assert(#Config.build().rules == 0)
+    local prefix = { rules = { { match = { titlePrefix = "Utility: " }, action = "exclude" } } }
+    assert(Config.build(prefix).rules[1].match.titlePrefix == "Utility: ")
+    assert(not pcall(Config.build, { rules = { { match = { titlePrefix = false }, action = "exclude" } } }))
+    for _, rule in ipairs({
+      { match = {}, action = "nativeFullscreenOnCreate" },
+      { match = { titlePattern = "Utility.*" }, action = "exclude" },
+      { match = { title = false }, action = "manage" },
+      { match = {}, action = "exclude", predicate = function() return true end },
+      { action = "exclude" },
+      { match = {}, action = "unsupported" },
+    }) do assert(not pcall(Config.build, { rules = { rule } })) end
+    local rule = { match = {}, action = "manage" }
+    assert(not pcall(Config.build, { rules = { [2] = rule } }))
+    assert(not pcall(Config.build, { rules = { named = rule } }))
+    for _, value in ipairs({
+      { rules = setmetatable({}, {}) },
+      { rules = { setmetatable({ match = {}, action = "manage" }, {}) } },
+      { rules = { { match = setmetatable({}, {}), action = "manage" } } },
+    }) do assert(not pcall(Config.build, value)) end
+    local cycle = {}; cycle[1] = cycle
+    assert(not pcall(Config.build, { rules = cycle }))
+  end,
   ["SPACE-001 SPACE-003 SPACE-004 SPACE-005 CMD-001: 25 defaults preserve existing commands and copy desktop fields"] = function()
     local callbacks, events = {}, {}
     local hs = { hotkey = { bind = function(_, key, callback) callbacks[key] = callback; return { delete = function() end } end } }

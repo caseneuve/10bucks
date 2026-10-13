@@ -1,7 +1,6 @@
 -- Concrete direct-AX host. Creation callbacks can deliver hs.window wrappers
 -- or AX elements; conversion and native handles stay here. Focus signals trigger
 -- a current native focus read rather than treating their payload as global focus.
-local Rules = require("lib.rules")
 local Host = {}
 Host.__index = Host
 
@@ -59,9 +58,12 @@ end
 -- Register before start: several native watcher APIs may have allocated a live
 -- observer even when start reports an error.
 function Host:_startOwned(watcher, events)
+  local generation = self.generation
   local subscription = self:_own(watcher)
+  if not self.started then subscription.detach(); return subscription end
   local ok, err = pcall(watcher.start, watcher, events)
   if not ok then subscription.detach(); error(err, 0) end
+  if not self.started or self.generation ~= generation then subscription.detach() end
   return subscription
 end
 
@@ -265,26 +267,18 @@ function Host:_ready(window, origin, callback, membershipSet, token)
   local metadata = self:_metadata(window, origin, spaceId, spaceType)
   if not metadata then return "uncertain" end
   if token and not self:_readinessCurrent(token) then return "rejected" end
-  local decision = Rules.ready(metadata)
-  if token and decision and decision.decision.action == "defer" then return "uncertain" end
   local record = self:_remember(window)
   if not record then return "rejected" end
   if token then
     token.publishLease = record.lease
     if not self:_readinessCurrent(token, record) then return "rejected" end
     -- No native operation between the pure authority check and publication.
-    self.readiness[id] = nil
-    local timer = token.timer; token.timer = nil
-    -- The queued timer is now inert; stop only after publication below.
-    token.completedTimer = timer
   end
+  -- Publication may defer; keep the same candidate identity and retry budget.
   local ok, accepted = pcall(callback, { kind = "ready", metadata = metadata, handle = window, resource = record.lease, appResource = record.appLease })
-  if token and token.completedTimer then
-    local timer = token.completedTimer; token.completedTimer = nil
-    pcall(timer.stop, timer)
-  end
+  if token and accepted ~= "uncertain" and self.readiness[id] == token then self:_cancelReadiness(id) end
   if not ok then error(accepted, 0) end
-  return accepted == false and "rejected" or "ready"
+  return accepted == "uncertain" and "uncertain" or (accepted == false and "rejected" or "ready")
 end
 
 function Host:subscribeWindow(window, callback)
@@ -292,6 +286,7 @@ function Host:subscribeWindow(window, callback)
   local id, generation = call(window, "id"), self.generation
   if not record or id == nil then return nil end
   if record.subscription then return record.subscription end
+  if record.windowAttachment then return nil end
   -- Verified by read-only installed-runtime query: focused hs.window.newWatcher
   -- is a function, its AX element's newWatcher is nil, and application.newWatcher
   -- is a function. Installed hs.window.filter source also calls win:newWatcher.
@@ -302,6 +297,7 @@ function Host:subscribeWindow(window, callback)
   -- Attachment currentness is narrower than the accepted window lifetime. A
   -- watcher whose start failed may still deliver a queued callback after retry.
   local attachment = {}
+  record.windowAttachment = attachment
   local ok, watcher = pcall(window.newWatcher, window, function(_, event)
     -- Aggregate raw delivery before resource guards, so acceptance can separate
     -- a missing native close signal from a stale callback rejected by us.
@@ -335,10 +331,11 @@ function Host:subscribeWindow(window, callback)
     elseif kinds[event] then callback({ kind = kinds[event], id = id, resource = record.lease,
       presentationResource = self.presentationWindow == window and self.presentationLease or nil }) end
   end)
-  if not ok or not watcher then return nil end
+  if not ok or not watcher then if record.windowAttachment == attachment then record.windowAttachment = nil end; return nil end
   local started, subscription = pcall(self._startOwned, self, watcher,
     { "AXUIElementDestroyed", "AXWindowMiniaturized", "AXWindowDeminiaturized", "AXTitleChanged", "AXWindowResized" })
-  if not started then error(subscription, 0) end
+  if not started then if record.windowAttachment == attachment then record.windowAttachment = nil end; error(subscription, 0) end
+  if not self:current(id, record.lease, record.appLease, record.pid) or record.windowAttachment ~= attachment then subscription.detach(); return nil end
   local ownedSubscription = subscription
   subscription = { detach = function()
     if record.windowAttachment == attachment then
@@ -351,7 +348,6 @@ function Host:subscribeWindow(window, callback)
   record.windowAttachment = attachment
   subscription.initialNativeFullscreen, subscription.resource = knownFullscreen, record.lease
   record.subscription = subscription
-  self.managedObservers[id] = { record = record, attachment = attachment }
   -- A full lifecycle observer supersedes the focused-excluded title-only one.
   if self.presentationId == id and self.presentationWindow == window and self.presentationSubscription then
     self.presentationSubscription.detach()
@@ -365,11 +361,12 @@ function Host:_attachApp(app, callback)
   local generation = self.generation
   local record = self:_acceptApp(app)
   if not record then return nil end
-  if record.subscription then return record end
+  if record.subscription or record.appAttachment then return record end
   -- Read-only runtime preflight separately requires application.newWatcher on
   -- the focused app. An ordinary running/background application may still not expose an AX watcher.
   -- Its absence is uncertainty: defer it without disturbing other apps.
   local attachment = {}
+  record.appAttachment = attachment
   local ok, watcher = pcall(app.newWatcher, app, function(element, event)
     if not self.started or generation ~= self.generation or not record.active or self.appResources[record.pid] ~= record
       or record.appAttachment ~= attachment then return end
@@ -384,9 +381,11 @@ function Host:_attachApp(app, callback)
       self:observeFocus()
     end
   end)
-  if not ok or not watcher then return record end
+  if not ok or not watcher then if record.appAttachment == attachment then record.appAttachment = nil end; return record end
+  if not self.started or generation ~= self.generation or not record.active or self.appResources[record.pid] ~= record then pcall(watcher.stop, watcher); return nil end
   local started, subscription = pcall(self._startOwned, self, watcher, { "AXWindowCreated", "AXFocusedWindowChanged" })
-  if not started then error(subscription, 0) end
+  if not started then if record.appAttachment == attachment then record.appAttachment = nil end; error(subscription, 0) end
+  if not self.started or generation ~= self.generation or not record.active or self.appResources[record.pid] ~= record then subscription.detach(); return nil end
   local ownedSubscription = subscription
   subscription = { detach = function()
     if record.appAttachment == attachment then
@@ -520,15 +519,21 @@ function Host:subscribeExistingWindows(callback, bootstrap, attempt)
     return { detach = function() end }
   end
   self:_record("bootstrapApplicationQueries")
+  local generation = self.generation
   for _, app in ipairs(self.hs.application.runningApplications()) do
+    if not self.started or self.generation ~= generation then break end
     pcall(self._attachApp, self, app, callback)
+    if not self.started or self.generation ~= generation then break end
     -- Enumeration remains complete even for a conflicting candidate; _ready
     -- applies the retained app-identity guard before it can admit a window.
     -- Failure for one app is non-destructive for its peers.
     if members then
       local ok, windows = pcall(app.allWindows, app)
       if ok and type(windows) == "table" then
-        for _, window in ipairs(windows) do self:_ready(window, "bootstrap", callback, members) end
+        for _, window in ipairs(windows) do
+          if not self.started or self.generation ~= generation then break end
+          self:_ready(window, "bootstrap", callback, members)
+        end
       end
     end
   end
@@ -545,7 +550,7 @@ function Host:probeReadiness(id, callback)
     local admitted = callback(metadata, record.handle, record.lease, record.appLease)
     -- Admission does not change MRU. Observe again only after the independent
     -- fullscreen readiness transaction, guarding against intervening focus.
-    if admitted and spaceType == "fullscreen" then self:observeFocus(id) end
+    if admitted == true and spaceType == "fullscreen" then self:observeFocus(id) end
   else callback(nil, nil, record and record.lease, record and record.appLease) end
   return { detach = function() end }
 end
@@ -562,6 +567,35 @@ function Host:setContext(context)
   self.context = context
   if sameScope and self.validityTarget then self.validityTarget.context = context
   else self:_cancelValidity() end
+end
+
+-- Native lifetime authority is independent of management (WIN-001/LIFE-003).
+function Host:appCurrent(pid, lease)
+  local app = self.appResources[pid]
+  return self.started and app and app.active and app.lease == lease
+end
+
+function Host:current(id, lease, appLease, pid)
+  local record, app = self.handles[id], self.appResources[pid]
+  return self.started and record and record.active and record.lease == lease
+    and record.pid == pid and record.appLease == appLease and app and app.active and app.lease == appLease
+end
+
+function Host:focusedManagedLease(id, presentationLease)
+  local record = self.handles[id]
+  local app = record and self.appResources[record.pid]
+  if record and app and self:current(id, record.lease, record.appLease, record.pid)
+    and self.managedObservers[id] and self.presentationId == id
+    and self.presentationLease == presentationLease and self.presentationWindow == record.handle
+    and self.presentationApp == app.app then return record.lease end
+end
+
+function Host:enableManaged(id, lease)
+  local record = self.handles[id]
+  if record and record.lease == lease and record.active and record.subscription then
+    self.managedObservers[id] = { record = record, attachment = record.windowAttachment }
+    self:_trackValidity()
+  end
 end
 
 function Host:releaseWindow(id, lease)

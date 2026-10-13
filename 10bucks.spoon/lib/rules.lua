@@ -31,14 +31,6 @@ local function copyApplication(application)
   return { pid = application.pid, bundleID = application.bundleID, name = application.name }
 end
 
-local function managedDecision(value)
-  if value == nil then return false end
-  if type(value) ~= "table" or value.action ~= "manage" then
-    return nil, "prior managed decision must be manage"
-  end
-  return true
-end
-
 local function decision(metadata)
   if metadata.origin == "focus" then return { action = "defer", reason = "focus-is-not-readiness" } end
   for _, field in ipairs({ "selfProcess", "role", "subrole", "modal", "movable", "resizable" }) do
@@ -57,10 +49,8 @@ local function decision(metadata)
   return { action = "manage" }
 end
 
-function Rules.ready(input, priorManagedDecision)
+function Rules.ready(input)
   if not plain(input) or type(input) ~= "table" then return nil, "readiness metadata must be plain Lua data" end
-  local prior, priorError = managedDecision(priorManagedDecision)
-  if priorError then return nil, priorError end
   if not onlyKeys(input, {
     id = true, application = true, title = true, displayId = true, spaceId = true,
     role = true, subrole = true, modal = true, movable = true, resizable = true,
@@ -101,14 +91,73 @@ function Rules.ready(input, priorManagedDecision)
     minimized = input.minimized, appHidden = input.appHidden,
     createdAfterStart = input.origin == "created",
   }
-  -- A committed manage decision is stable across independent lifecycle
-  -- readiness (for example, native-fullscreen exit). Focus remains only an
-  -- observation boundary and can never turn the prior decision into admission.
-  local result = prior and metadata.origin ~= "focus" and { action = "manage" } or decision(metadata)
+  local result = decision(metadata)
   return {
     type = "WindowReady", id = metadata.id, application = metadata.application, title = metadata.title,
     displayId = metadata.displayId, spaceId = metadata.spaceId, metadata = metadata, decision = result,
   }
+end
+
+-- RULE-001/002: user rules only narrow generic eligibility. An unavailable
+-- specified field blocks later rules only when this rule could still match.
+function Rules.filter(metadata, rules, generic)
+  if generic.action ~= "manage" then return generic end
+  for _, rule in ipairs(rules) do
+    local mismatch, unknown = false, false
+    for field, expected in pairs(rule.match) do
+      local actual
+      if field == "bundleID" then actual = metadata.application.bundleID else actual = metadata.title end
+      if actual == nil then unknown = true
+      elseif (field == "titlePrefix" and actual:sub(1, #expected) ~= expected)
+        or (field ~= "titlePrefix" and actual ~= expected) then mismatch = true end
+    end
+    if not mismatch then
+      if unknown then return { action = "defer", reason = "unknown-rule-field" } end
+      return { action = rule.action }
+    end
+  end
+  return { action = "manage" }
+end
+
+-- LIFE-003/STATE-001: the Host-scoped composition owner replaces its map only
+-- with this reducer's output. Leases, not numeric IDs, authorize reuse/removal.
+function Rules.reduce(records, event)
+  assert(plain(records) and type(records) == "table" and plain(event) and type(event) == "table", "rule state/events must be plain data")
+  local prior = records[event.id]
+  if event.type == "WindowReady" then
+    assert(validId(event.id), "rule decision requires window identity")
+    if prior then return records end -- conflicting identity remains uncertainty
+    local action = event.decision.action
+    if action == "defer" then return records end
+    assert(action == "manage" or action == "exclude", "unsupported rule action")
+    assert(validId(event.resource) and validId(event.appResource) and validId(event.application.pid), "rule decision requires lifetime identities")
+  elseif event.type == "WindowDestroyed" then
+    if not prior or prior.resource ~= event.resource then return records end
+  elseif event.type ~= "ApplicationTerminated" then
+    return records
+  end
+  local nextRecords = {}
+  for id, record in pairs(records) do nextRecords[id] = record end
+  if event.type == "WindowReady" then
+    local action = event.decision.action
+    nextRecords[event.id] = { resource = event.resource, appResource = event.appResource,
+      pid = event.application.pid, action = action }
+  elseif event.type == "WindowDestroyed" then
+    if not prior or prior.resource ~= event.resource then return records end
+    nextRecords[event.id] = nil
+  elseif event.type == "ApplicationTerminated" then
+    for id, record in pairs(records) do
+      if record.pid == event.pid and record.appResource == event.resource then nextRecords[id] = nil end
+    end
+  else
+    return records
+  end
+  return nextRecords
+end
+
+function Rules.action(records, id, resource, appResource, pid)
+  local record = records[id]
+  if record and record.resource == resource and record.appResource == appResource and record.pid == pid then return record.action end
 end
 
 return Rules
