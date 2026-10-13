@@ -15,24 +15,38 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = "10bucks-functional-sip-base-20261011"
 
 
+def evidence_complete(result, *, configured_rules=False):
+    return (isinstance(result, dict) and type(result.get('dropped')) is int and result['dropped'] == 0
+            and isinstance(result.get('trace'), list) and len(result['trace']) > 0
+            and result.get('error') is None and result.get('cleanup', {}).get('ok') is True
+            and (not configured_rules or (result.get('cleanup', {}).get('ruleResourcesCleared') is True
+                and result.get('cleanup', {}).get('ruleWrappersRestored') is True)))
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=["desktop-creation-race", "columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching", "desktop-creation"])
+    parser.add_argument("scenario", choices=["rules-benchmark", "desktop-switching-benchmark", "desktop-creation-benchmark", "configured-rules", "desktop-creation-race", "columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching", "desktop-creation"])
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--demo", action="store_true", help="2s pauses between actions; not a latency benchmark")
     parser.add_argument("--bar-capture", action="store_true", help="capture native bar outside/hover/return pixels for independent visual review")
     parser.add_argument("--keep-open", action="store_true", help="debug only: preserve live guest and controller after failure")
     parser.add_argument("--reuse-debug", metavar="VM", help="reuse running owned debug guest; reset HS modules, no reboot")
-    parser.add_argument('--desktop-benchmark', choices=['warm', 'cold'],
-                        help='desktop-only bounded batch: 10 warm switches or one cold-runtime switch')
     parser.add_argument('--desktop-fullscreen', action='store_true',
                         help='desktop-only separate owned-fixture fullscreen indexing/retention subcase')
+    parser.add_argument('--benchmark-mode', choices=['warm', 'cold'])
     args = parser.parse_args()
-    if args.desktop_fullscreen and (args.scenario not in ('desktop-switching','desktop-creation') or args.desktop_benchmark):
+    benchmark_name = {'rules-benchmark':'rules', 'desktop-switching-benchmark':'desktop_switching',
+                      'desktop-creation-benchmark':'desktop_creation'}.get(args.scenario)
+    rules_benchmark = benchmark_name == 'rules'
+    desktop_benchmark = benchmark_name in ('desktop_switching', 'desktop_creation')
+    if desktop_benchmark: args.scenario = benchmark_name.replace('_', '-')
+    if bool(benchmark_name) != bool(args.benchmark_mode) or (rules_benchmark and (args.demo or args.bar_capture)):
+        parser.error('rules-benchmark requires --benchmark-mode warm|cold, without demo/bar capture')
+    if args.desktop_fullscreen and (args.scenario not in ('desktop-switching','desktop-creation') or desktop_benchmark):
         parser.error('--desktop-fullscreen requires desktop-switching without --desktop-benchmark')
-    if args.desktop_benchmark and args.scenario not in ('desktop-switching','desktop-creation'):
+    if desktop_benchmark and args.scenario not in ('desktop-switching','desktop-creation'):
         parser.error('--desktop-benchmark requires desktop-switching')
-    if args.scenario == 'desktop-switching' and (args.demo or args.bar_capture):
+    if args.scenario in ('desktop-switching', 'configured-rules') and (args.demo or args.bar_capture):
         parser.error('desktop-switching cannot combine demo/bar pauses with its watchdog')
     if args.demo and args.scenario=='stack-columns-membership':
         parser.error('--demo cannot fit the combined scenario watchdog; run without --demo')
@@ -68,12 +82,12 @@ def main():
     (results / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     sys.path.insert(0, str(snapshot / 'functional-tests'))
     scenario_file=args.scenario.replace('-', '_') + '.py'
-    spec = importlib.util.spec_from_file_location("frozen_scenario", snapshot / "functional-tests/scenarios" / scenario_file)
+    spec = importlib.util.spec_from_file_location("frozen_scenario", snapshot / ('functional-tests/benchmarks/' + benchmark_name + '.py' if benchmark_name else 'functional-tests/scenarios/' + scenario_file))
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     from scenarios.columns_close_recovery import Frame, Observation
-    scenario = module.run
+    scenario = module.run if not desktop_benchmark else None
     bar_spec = importlib.util.spec_from_file_location("frozen_bar_gate", snapshot / "functional-tests/bar_capture.py")
     bar_module = importlib.util.module_from_spec(bar_spec)
     bar_spec.loader.exec_module(bar_module)
@@ -152,13 +166,16 @@ def main():
             temp = results / "action.json.tmp"
             temp.write_text(json.dumps(action))
             temp.replace(results / "action.json")
-            status = wait_status(lambda s: s.get("actionSequence") == self.action_sequence and not s.get("pending"))
+            status = wait_status(lambda s: s.get("actionSequence") == self.action_sequence and not s.get("pending"), 50 if rules_benchmark else 5)
             if status.get("actionAccepted") is not True:
                 raise RuntimeError("action rejected: " + str(status.get("actionError")))
             print(f"{operation} {alias or ''}", flush=True)
 
         def create(self, alias):
             self.action("create", alias)
+
+        def fixture_action(self, operation, alias):
+            self.action(operation, alias)
 
         def close(self, alias):
             self.action("close", alias)
@@ -179,7 +196,10 @@ def main():
             self.action('hotkeyBurst', commands=list(commands))
 
         def benchmark_record(self, value):
-            (results / 'desktop-benchmark.json').write_text(json.dumps(value, indent=2) + '\n')
+            (results / ('rules-benchmark-analysis.json' if rules_benchmark else 'desktop-benchmark.json')).write_text(json.dumps(value, indent=2) + '\n')
+
+        def benchmark_result(self):
+            return read('rules-benchmark.json')
 
         def observe(self):
             deadline = time.monotonic() + remaining(0.14)
@@ -272,14 +292,16 @@ def main():
         (results / "environment.json").write_text(json.dumps(preflight, indent=2))
         control = f"/tmp/tenbucks-ft-{nonce}"
         ssh(f"mkdir -m 700 {control}")
-        hs('ft=dofile("' + guest_root + '/functional-tests/guest.lua"); return hs.json.encode(ft.start({'
+        hs('ft=dofile("' + guest_root + ('/functional-tests/benchmarks/guest.lua' if rules_benchmark else '/functional-tests/benchmarks/desktop_guest.lua' if desktop_benchmark else '/functional-tests/guest.lua') + '"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
-           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization") else "columns"}",desktopSwitching={str(args.scenario in ("desktop-switching","desktop-creation","desktop-creation-race")).lower()},desktopCreation={str(args.scenario in ("desktop-creation","desktop-creation-race")).lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
+           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization") else "columns"}",configuredRules={str(args.scenario == "configured-rules").lower()},desktopSwitching={str(args.scenario in ("configured-rules","desktop-switching","desktop-creation","desktop-creation-race")).lower()},desktopCreation={str(args.scenario in ("desktop-creation","desktop-creation-race")).lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
         driver = Driver()
-        if args.desktop_fullscreen:
+        if rules_benchmark:
+            module.run(driver, mode=args.benchmark_mode)
+        elif args.desktop_fullscreen:
             module.fullscreen(driver)
-        elif args.desktop_benchmark:
-            module.benchmark(driver, mode=args.desktop_benchmark)
+        elif desktop_benchmark:
+            module.benchmark(driver, mode=args.benchmark_mode)
         else:
             scenario(driver)
         if args.bar_capture:
@@ -413,7 +435,10 @@ def main():
             print(f"Debug guest kept running: TENBUCKS_VM={vm} ./vm/hs 'return hs.json.encode(ft.status())'", flush=True)
             (results / "debug-owner.json").write_text(json.dumps({"vm": vm, "tartPid": process.pid,
                 "run": nonce, "source": str(snapshot), "acceptance": False}, indent=2))
-        success = passed and error is None and not (final or {}).get("error") and (args.reuse_debug or (cleanup.get("vmStopped") and cleanup.get("tartExited"))) and cleanup.get("guest", {}).get("ok") is True
+        guest_result = read('guest-result.json')
+        evidence_ok = evidence_complete(guest_result, configured_rules=args.scenario == 'configured-rules')
+        cleanup['completeEvidence'] = evidence_ok
+        success = evidence_ok and passed and error is None and not (final or {}).get("error") and (args.reuse_debug or (cleanup.get("vmStopped") and cleanup.get("tartExited"))) and cleanup.get("guest", {}).get("ok") is True
         summary = {"pass": bool(success), "scenarioPassed": passed, "error": error,
                    "cleanup": cleanup, "vm": vm, "cloneCreated": cloned, "demo": args.demo, "debugReuse": bool(args.reuse_debug),
                    "barEvidenceCaptured": bool(args.bar_capture and (results / "bar-evidence.json").exists()),

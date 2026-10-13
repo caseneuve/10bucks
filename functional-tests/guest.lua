@@ -11,7 +11,7 @@
 -- Initial readiness requires fixtureReady/candidateReady, columns, unknownMembers=0.
 -- Overall 60s including cleanup (55s starts containment, 60s finalizes); host 100s
 -- outer bound. Event-loop/AX stalls require lead's independent VM containment.
--- guest-result.json contains bounded 600-sample trace and separate cleanup diagnostics.
+-- guest-result.json contains bounded 1200-sample trace and separate cleanup diagnostics.
 -- cleanSeedTerminal=true ONLY for runner-proved exclusively owned fresh clone:
 -- exactly one app-local Terminal standard window/no foreign standard windows;
 -- documented graceful kill(), then wait for process absence AND original AX false.
@@ -143,6 +143,21 @@ local function nativeDesktop()
     end
     return result
 end
+local function normalizedTitle(title)
+    if title=='10bucks fixture B' then return 'excluded' end
+    if type(title)=='string' and (title:match('^10bucks fixture [A-E]$') or title:match('^10bucks managed [A-E]$')) then return 'managed' end
+    return 'unknown'
+end
+local function titleToken(title)
+    if type(title)~='string' then return 'unknown' end
+    local alias=title:match('^10bucks fixture ([A-E])$')
+    if alias then return 'fixture-'..alias end
+    alias=title:match('^10bucks managed ([A-E])$')
+    return alias and 'managed-'..alias or 'unknown'
+end
+local function tupleKey(id,resource,appResource,pid)
+    return table.concat({tostring(id),tostring(resource),tostring(appResource),tostring(pid)},':')
+end
 local function candidateSnapshot()
     local c=s.candidate and s.candidate.core
     local managed, unknown, diagnostics={},0,{}
@@ -258,8 +273,25 @@ local function join(alias,number,pid)
         and ax:attributeValue('AXSubrole')=='AXStandardWindow'
         and ax:isAttributeSettable('AXPosition')==true
         and ax:isAttributeSettable('AXSize')==true,'fixture_not_standard')
+    local identity
+    if s.configuredRules and s.phase~='cleanup' then
+        -- Fixture acknowledgement may precede bounded Host readiness. Retry
+        -- this same ack within the existing request deadline; publish no partial
+        -- alias until exact active Host/app/decision authority is independently ready.
+        local host=s.candidate.host
+        local hostRecord=host and host.handles[number]
+        local appRecord=hostRecord and host.appResources[pid]
+        local policy=s.ruleRecords
+        local record=policy[number]
+        if not hostRecord or not hostRecord.active or hostRecord.handle~=matched
+            or hostRecord.pid~=pid or not appRecord or not appRecord.active or appRecord.app~=app
+            or appRecord.lease~=hostRecord.appLease or not record
+            or host~=s.ruleHost or record.pid~=pid or record.resource~=hostRecord.lease
+            or record.appResource~=hostRecord.appLease then return false end
+        identity={id=number,resource=hostRecord.lease,appResource=hostRecord.appLease,pid=pid,app=app}
+    end
     s.windows[alias]=matched; s.axes[alias]=ax; s.byId[number]=alias; s.ownerPids[alias]=pid
-    for _, row in ipairs((s.debugById or {})[number] or {}) do row.alias=alias end
+    if identity then s.aliasResources[alias]=identity end
     s.observers=s.observers or {}
     if not s.observers[pid] then
         s.observers[pid]=hs.axuielement.observer.new(pid)
@@ -289,9 +321,15 @@ local function drain()
     assert(ack.pid==s.pid and ack.operation==expected and ack.accepted==true,'ack_mismatch')
     assert(not pending or not pending.alias or ack.alias==pending.alias,'ack_alias_mismatch')
     assert(claimsAbsent(),'ack_before_cleanup')
-    if pending and pending.operation=='create' then
+    if pending and (pending.operation=='create' or pending.operation=='createExcluded') then
         assert(type(ack.windowNumber)=='number','missing_native_number')
-        if not join(pending.alias,ack.windowNumber) then return end
+        -- During cleanup the candidate is already stopped: consume the verified
+        -- fixture ack without requesting now-impossible policy/observer joins.
+        if s.phase~='cleanup' and not join(pending.alias,ack.windowNumber) then return end
+    end
+    if pending and (pending.operation=='create' or pending.operation=='createExcluded') and s.configuredRules then
+        assert(type(ack.creationFrame)=='table','independent_creation_frame_required')
+        s.creationFrames[pending.alias]=copy(ack.creationFrame)
     end
     s.lastAck={sequence=ack.sequence,operation=expected,alias=pending and pending.alias,processed_at=now()}
     s.pending=nil
@@ -330,6 +368,94 @@ local function sample()
             diagnostics.fixtureNative[alias]={fullscreen=w:isFullScreen()==true,spaces=owners}
         end
     end
+    if s.configuredRules then
+        diagnostics.configuredRules={baseline=copy(s.creationFrames),effects={},titles={},history={},actions={},evaluations={},titleTokens={},commandResults=copy(s.ruleCommandResults or {}),excludedSafetyTargets={},lifetimeMismatch=false,instrumented=s.effectHost==s.candidate.host and s.effectWrappers~=nil
+            and s.effectHost.focus==s.effectWrappers.focus and s.effectHost.execute==s.effectWrappers.execute
+            and s.effectHost._trackValidity==s.effectWrappers._trackValidity
+            and s.effectHost._checkWindowValidity==s.effectWrappers._checkWindowValidity
+            and s.effectHost._record==s.effectWrappers._record
+            and s.effectHost.nativeValidity==s.validityFactoryWrapper
+            and s.ruleHost==s.candidate.host and s.rulesModule.filter==s.ruleWrappers.filter
+            and s.rulesModule.reduce==s.ruleWrappers.reduce}
+        local policy=s.ruleRecords
+        for alias,identity in pairs(s.aliasResources) do
+            local record=policy[identity.id]
+            if record and record.pid==s.ownerPids[alias]
+                and record.resource==identity.resource and record.appResource==identity.appResource then
+                diagnostics.configuredRules.actions[alias]=record.action
+            end
+            if not s.destroyed[alias] and s.axes[alias]:isValid()==true then
+                local host=s.candidate.host
+                local window=host.handles[identity.id]
+                local app=host.appResources[identity.pid]
+                local nativeApp=s.windows[alias]:application()
+                if host~=s.ruleHost or not record or record.pid~=identity.pid
+                    or record.resource~=identity.resource or record.appResource~=identity.appResource
+                    or not window or not window.active or window.lease~=identity.resource
+                    or window.appLease~=identity.appResource or window.pid~=identity.pid
+                    or window.handle~=s.windows[alias] or window.element~=s.axes[alias]
+                    or not app or not app.active or app.lease~=identity.appResource
+                    or app.app~=identity.app or nativeApp~=identity.app
+                    or not nativeApp or nativeApp:pid()~=identity.pid then
+                    diagnostics.configuredRules.lifetimeMismatch=true
+                end
+            end
+            if s.safetyTargets[tupleKey(identity.id,identity.resource,identity.appResource,identity.pid)] then
+                local action=record and record.action
+                if action=='exclude' or alias=='B' or alias=='D' or alias=='E' then
+                    table.insert(diagnostics.configuredRules.excludedSafetyTargets,alias)
+                end
+            end
+        end
+        local d=diagnostics.configuredRules
+        d.commits={}
+        for alias,w in pairs(s.windows) do
+            local identity=s.aliasResources[alias]
+            local effectKey=identity and tupleKey(identity.id,identity.resource,identity.appResource,identity.pid)
+            d.effects[alias]=copy(s.ruleEffects[effectKey] or {frame=0,focus=0})
+            d.commits[alias]=identity and s.commitCounts[effectKey] or 0
+            d.evaluations[alias]=identity and s.filterCounts[tupleKey(identity.id,identity.resource,identity.appResource,identity.pid)] or 0
+            if s.axes[alias]:isValid()==true then
+                local title=w:title()
+                d.titles[alias]=normalizedTitle(title)
+                d.titleTokens[alias]=titleToken(title)
+            end
+        end
+        for _,entry in ipairs(s.candidate.focusHistory:snapshot()) do
+            local alias=s.byId[entry.windowId]
+            local identity=alias and s.aliasResources[alias]
+            local record=policy[entry.windowId]
+            d.history[#d.history+1]=identity and record and record.resource==identity.resource
+                and record.appResource==identity.appResource
+                and record.pid==s.ownerPids[alias] and record.action=='manage' and alias or 'unknown'
+        end
+        local actual=s.candidate.actualPresentation
+        d.actualTitle=normalizedTitle(actual.title)
+        d.actualTitleToken=titleToken(actual.title)
+        local identity=focusedAlias and s.aliasResources[focusedAlias]
+        local host=s.candidate.host
+        -- Preserve strict join while exposing individual primitive match facts.
+        -- Failed frozen runs lacked these facts: never guess which conjunct failed.
+        d.presentationJoin={nativeAlias=focusedAlias or 'unknown',
+            id=identity~=nil and actual.id==identity.id,
+            pid=identity~=nil and actual.applicationPid==s.ownerPids[focusedAlias],
+            windowResource=identity~=nil and actual.windowResource==identity.resource,
+            appResource=identity~=nil and actual.appResource==identity.appResource,
+            presentationResource=actual.presentationResource~=nil and actual.presentationResource==host.presentationLease,
+            nativeHandle=focusedAlias~=nil and host.presentationWindow==s.windows[focusedAlias],
+            hostId=identity~=nil and host.presentationId==identity.id,
+            hostPid=focusedAlias~=nil and host.presentationPid==s.ownerPids[focusedAlias],
+            actualHasWindowResource=actual.windowResource~=nil,
+            actualHasAppResource=actual.appResource~=nil}
+        local join=d.presentationJoin
+        -- Presentation has its own exact lifetime authority. A pre-readiness
+        -- provisional window lease may be promoted/released while this same
+        -- focused native source and presentation token remain valid. Policy
+        -- identity is checked independently above; never alias from ID alone.
+        d.actualAlias=identity and join.id and join.pid and join.appResource
+            and join.presentationResource and join.nativeHandle and join.hostId and join.hostPid
+            and focusedAlias or 'unknown'
+    end
     diagnostics.ghosttyAXInvalid=s.axes.C and s.ownerPids.C==s.ghosttyPid and s.axes.C:isValid()==false or false
     diagnostics.ghosttyCloseAt=s.ghosttyCloseAt
     timings.snapshot=now()-snapshotStarted
@@ -349,12 +475,12 @@ local function sample()
     s.sampleId=s.sampleId+1
     s.latest={sample_id=s.sampleId,sampled_at=sampledAt,frames=frames,closed=closed,
         focused=focusedAlias,managed=managed,commands_received=copy(s.receipts),
-        unknownMembers=unknown,diagnostics=diagnostics,nativeDebug=copy(s.nativeDebug),
+        unknownMembers=unknown,diagnostics=diagnostics,
         timings=timings,bar=barFacts}
     s.latest.observed_at=now() -- guest publication clock; host must not restamp
     atomic(s.outputDir..'/observation.json',s.latest)
     s.trace[#s.trace+1]=copy(s.latest)
-    if #s.trace>600 then table.remove(s.trace,1); s.dropped=s.dropped+1 end
+    if #s.trace>1200 then table.remove(s.trace,1); s.dropped=s.dropped+1 end
 end
 local function finalize()
     if s.timer then s.timer:stop(); s.timer=nil end
@@ -375,6 +501,19 @@ local function finalize()
         for name,method in pairs(s.spaceMethods) do s.spaceModule[name]=method end
         s.cleanup.spaceWrappersRestored=true
     end
+    if s.effectHost then
+        for name,method in pairs(s.effectMethods) do s.effectHost[name]=method end
+        s.effectHost.nativeValidity=s.originalValidityFactory
+        s.cleanup.ruleWrappersRestored=s.effectHost.nativeValidity==s.originalValidityFactory
+        for name,method in pairs(s.effectMethods) do
+            s.cleanup.ruleWrappersRestored=s.cleanup.ruleWrappersRestored and s.effectHost[name]==method
+        end
+    end
+    if s.rulesModule then
+        for name,method in pairs(s.ruleMethods) do s.rulesModule[name]=method end
+        s.cleanup.ruleWrappersRestored=s.cleanup.ruleWrappersRestored==true
+            and s.rulesModule.filter==s.ruleMethods.filter and s.rulesModule.reduce==s.ruleMethods.reduce
+    end
     s.cleanup.bindWrapperRestored=hs.hotkey.bind==s.originalBind
     s.cleanup.taskStopped=not s.task or not s.task:isRunning()
     s.cleanup.normalExit=s.exitCode==0
@@ -393,14 +532,27 @@ local function finalize()
     s.cleanup.ghosttyNormal=not s.ghosttyLaunchSubmitted or
         (s.cleanup.ghosttyExited and s.ghosttyExit==0 and not s.ghosttyLaunchForced
          and s.cleanup.ghosttyLaunchStopped)
+    if s.configuredRules then
+        local function empty(owner,names)
+            if not owner then return false end
+            for _,name in ipairs(names) do if type(owner[name])~='table' or next(owner[name])~=nil then return false end end
+            return true
+        end
+        local h,w=s.stoppedHost,s.stoppedWindows
+        s.cleanup.ruleResourcesCleared=empty(h,{'handles','appResources','managedObservers','owned','readiness'})
+            and empty(w,{'cache','subscriptions','probeSubscriptions','probing'})
+            and h==s.ruleHost and not h.started and not w.started
+            and h.validityTimer==nil and h.discoveryTimer==nil and h.validityTarget==nil
+    end
     local syntheticReleased=s.syntheticKeys==nil or s.cleanup.syntheticKeyReleaseSubmitted==true
-    s.cleanup.ok=syntheticReleased and s.cleanup.nativeWorkerDrained and s.cleanup.ghosttyNormal and s.cleanup.candidateStopped and observerStopped and s.cleanup.bindWrapperRestored
+    s.cleanup.ok=(not s.configuredRules or (s.cleanup.ruleWrappersRestored==true and s.cleanup.ruleResourcesCleared==true)) and syntheticReleased and s.cleanup.nativeWorkerDrained and s.cleanup.ghosttyNormal and s.cleanup.candidateStopped and observerStopped and s.cleanup.bindWrapperRestored
         and s.cleanup.taskStopped and s.cleanup.normalExit and s.cleanup.callbackReceived
         and s.cleanup.claimsAbsent and s.cleanup.quitAcknowledged and not s.cleanup.forced
     if not s.cleanup.ok then s.cleanup.error=s.cleanup.error or 'cleanup_incomplete' end
     s.running=false
     local result={error=s.error,cleanup=s.cleanup,trace=s.trace,dropped=s.dropped,
-        workArea=s.workArea,settings=s.settings,failedOperation=s.failedOperation,baseline=s.baselineFacts}
+        workArea=s.workArea,settings=s.settings,failedOperation=s.failedOperation,baseline=s.baselineFacts,
+        controllerFailures=s.controllerFailures or {}}
     local ok=pcall(atomic,s.outputDir..'/guest-result.json',result)
     if not ok then s.cleanup.error='result_write_failed'; s.cleanup.ok=false end
 
@@ -411,7 +563,9 @@ local function cleanupTick()
     s.cleanup.syntheticKeyReleaseSubmitted=releaseSyntheticKeys()
     if not s.cleanup.candidateStopAttempted then
         s.cleanup.candidateStopAttempted=true
-        s.stoppedWorker=s.candidate and s.candidate.host and s.candidate.host.validityWorker
+        s.stoppedHost=s.candidate and s.candidate.host
+        s.stoppedWindows=s.candidate and s.candidate.windows
+        s.stoppedWorker=s.stoppedHost and s.stoppedHost.validityWorker
         local stopped,stopError=true,nil
         if s.candidate then
             stopped,stopError=pcall(function()
@@ -450,6 +604,7 @@ local function cleanupTick()
 end
 local bootstrap, baseline
 local function tick()
+    s.controllerStage='tick.'..s.phase
     if now()-s.started>=55 and s.phase~='cleanup' then failure('overall_timeout') end
     if s.phase=='ghosttyBaseline' then
         if hs.application.applicationForPID(s.ghosttySeedPid)==nil then
@@ -508,7 +663,7 @@ local function tick()
         elseif s.axes[p.alias]:isValid()==false then s.ghosttyPending=nil end
         if s.ghosttyPending and now()>p.deadline then failure('ghostty_action_timeout'); return end
     end
-    if s.pending or not s.ready then drain() end
+    if s.pending or not s.ready then s.controllerStage='tick.drain'; drain() end
     if s.pending and now()>s.pending.deadline then failure('request_or_join_timeout'); return end
     if not s.ready and now()>s.readyDeadline then failure('ready_timeout'); return end
     if s.keyPending then
@@ -530,28 +685,44 @@ local function tick()
         if s.initialLayout=='stack' then s.phase='active'
         else s.phase='columns'; key('cycleLayout') end
     end
+    s.controllerStage='tick.sample'
     sample()
 end
 bootstrap=function()
     s.candidate=dofile(s.sourceRoot..'/10bucks.spoon/init.lua').new()
-    s.candidate:configure({builtInDisplayUUID=s.screen:getUUID(),canaryInstrumentation=true})
-    local submit=s.candidate._submitEvent
-    s.nativeDebug={ready=0,normalizedReady=0,metadataMissing=0}
-    s.candidate._submitEvent=function(candidate,event,...)
-        if event.type=='WindowReady' then
-            s.nativeDebug.normalizedReady=s.nativeDebug.normalizedReady+1
-            s.nativeDebug.lastReady={action=event.decision and event.decision.action,
-                reason=event.decision and event.decision.reason,
-                activeSpace=event.spaceId==candidate.context.regularSpaceId,origin=event.metadata and event.metadata.origin,
-                fixture=event.application and event.application.bundleID=='dev.10bucks.functional-fixture',
-                role=event.metadata and event.metadata.role,subrole=event.metadata and event.metadata.subrole}
-            s.nativeDebug.readyEvents=s.nativeDebug.readyEvents or {}
-            s.nativeDebug.readyEvents[#s.nativeDebug.readyEvents+1]=s.nativeDebug.lastReady
+    local config={builtInDisplayUUID=s.screen:getUUID(),canaryInstrumentation=true}
+    if s.configuredRules then
+        s.filterCounts={}; s.commitCounts={}; s.aliasResources={}; s.safetyTargets={}; s.ruleRecords={}
+        config.rules={
+            {match={bundleID='dev.10bucks.functional-fixture',title='10bucks fixture B'},action='exclude'},
+            {match={bundleID='dev.10bucks.functional-fixture',title='10bucks fixture D'},action='exclude'},
+            {match={bundleID='dev.10bucks.functional-fixture'},action='manage'},
+        }
+        local rules=require('lib.rules')
+        s.rulesModule=rules; s.ruleMethods={filter=rules.filter,reduce=rules.reduce}
+        rules.filter=function(metadata,...)
+            local host=assert(s.candidate.host,'exact_host_resource_required')
+            s.ruleHost=s.ruleHost or host
+            assert(host==s.ruleHost,'host_identity_changed')
+            local record=assert(host.handles[metadata.id],'exact_host_resource_required')
+            local key=tupleKey(metadata.id,record.lease,record.appLease,record.pid)
+            s.filterCounts[key]=(s.filterCounts[key] or 0)+1
+            local result=s.ruleMethods.filter(metadata,...)
+            return result
         end
-        local accepted=submit(candidate,event,...)
-        if event.type=='WindowReady' then s.nativeDebug.lastAccepted=accepted end
-        return accepted
+        rules.reduce=function(records,event)
+            local result=s.ruleMethods.reduce(records,event)
+            if event.type=='WindowReady' and result[event.id] and not records[event.id] then
+                local record=result[event.id]
+                local key=tupleKey(event.id,record.resource,record.appResource,record.pid)
+                s.commitCounts[key]=(s.commitCounts[key] or 0)+1
+            end
+            s.ruleRecords=copy(result) -- observation only; never feeds production
+            return result
+        end
+        s.ruleWrappers={filter=rules.filter,reduce=rules.reduce}
     end
+    s.candidate:configure(config)
     if s.desktopSwitching then
         local Spaces=require('lib.macos.spaces')
         s.spaceMethods={}; s.spaceModule=Spaces
@@ -592,6 +763,10 @@ bootstrap=function()
             s.receipts[name]=(s.receipts[name] or 0)+1
             s.keyEvents[#s.keyEvents+1]={kind='callback',name=name,at=now(),phase=s.desktopCreation and s.candidate.workspace and s.candidate.workspace:state().switch.inFlight and s.candidate.workspace:state().switch.inFlight.phase or nil}
             local accepted,reason=pressed(...)
+            if s.configuredRules then
+                s.ruleCommandResults=s.ruleCommandResults or {}
+                s.ruleCommandResults[name]={count=s.receipts[name],accepted=accepted==true,rejected=accepted==false}
+            end
             if s.desktopCreation then s.keyEvents[#s.keyEvents+1]={kind='result',name=name,at=now(),accepted=accepted~=false,reason=reason} end
             return accepted,reason
         end,...)
@@ -600,62 +775,84 @@ bootstrap=function()
     hs.hotkey.bind=s.originalBind
     assert(ok,err)
     local host=s.candidate.host
-    local ready=host._ready
-    s.debugById={}
-    local activeReady
-    host._ready=function(h,window,origin,...)
-        s.nativeDebug.ready=s.nativeDebug.ready+1
-        s.nativeDebug.readyAttempts=s.nativeDebug.readyAttempts or {}
-        local id=window and window:id()
-        local row={alias=s.byId[id] or 'unjoined',origin=origin,at=now()}
-        s.nativeDebug.readyAttempts[#s.nativeDebug.readyAttempts+1]=row
-        if id then
-            s.debugById[id]=s.debugById[id] or {}
-            s.debugById[id][#s.debugById[id]+1]=row
+    if s.configuredRules then
+        s.effectHost=host; s.effectMethods={focus=host.focus,execute=host.execute,_trackValidity=host._trackValidity,_checkWindowValidity=host._checkWindowValidity,_record=host._record}
+        host._trackValidity=function(h,...)
+            local result=s.effectMethods._trackValidity(h,...)
+            local target=h.validityTarget
+            if target then
+                local record=h.handles[target.id]
+                if record then s.safetyTargets[tupleKey(target.id,record.lease,record.appLease,record.pid)]=true end
+            end
+            return result
         end
-        local prior=activeReady; activeReady=row
-        local result=ready(h,window,origin,...)
-        activeReady=prior
-        return result
-    end
-    local owner=host._owner
-    host._owner=function(h,id,...)
-        local space,kind=owner(h,id,...)
-        s.nativeDebug.ownerReads=(s.nativeDebug.ownerReads or 0)+1
-        local row={alias=s.byId[id] or 'unjoined',known=space~=nil,
-            active=space==s.candidate.context.regularSpaceId,kind=kind,at=now()}
-        s.nativeDebug.ownerAttempts=s.nativeDebug.ownerAttempts or {}
-        s.nativeDebug.ownerAttempts[#s.nativeDebug.ownerAttempts+1]=row
-        s.debugById[id]=s.debugById[id] or {}; table.insert(s.debugById[id],row)
-        if activeReady then activeReady.owner=row end
-        return space,kind
-    end
-    for _, method in ipairs({'_acceptApp','_remember'}) do
-        local original=host[method]
-        host[method]=function(h,...)
-            local value=original(h,...)
-            if activeReady then activeReady[method]=value~=nil end
-            return value
+        local function safety(id,record)
+            if record then s.safetyTargets[tupleKey(id,record.lease,record.appLease,record.pid)]=true end
         end
-    end
-    local metadata=host._metadata
-    host._metadata=function(h,...)
-        local value=metadata(h,...)
-        if activeReady then activeReady.metadata=value~=nil end
-        if not value then s.nativeDebug.metadataMissing=s.nativeDebug.metadataMissing+1
-        else s.nativeDebug.lastMetadata={role=value.role,subrole=value.subrole,
-            modal=value.modal,movable=value.movable,resizable=value.resizable,
-            minimized=value.minimized,appHidden=value.appHidden,origin=value.origin} end
-        return value
+        local validityQueryContext
+        host._record=function(h,kind,...)
+            -- Production records this only at the actual AX isValid boundary,
+            -- after its managed/exact/active/reentry/element guards have passed.
+            if kind=='targetedValidityQueries' and validityQueryContext then
+                safety(validityQueryContext.id,validityQueryContext.record)
+            end
+            return s.effectMethods._record(h,kind,...)
+        end
+        host._checkWindowValidity=function(h,id,record,...)
+            local previous=validityQueryContext
+            validityQueryContext={id=id,record=record}
+            local ok,result=pcall(s.effectMethods._checkWindowValidity,h,id,record,...)
+            validityQueryContext=previous
+            if not ok then error(result,0) end
+            return result
+        end
+        s.validityFactory=host.nativeValidity or require('lib.macos.ax_validity')
+        s.originalValidityFactory=host.nativeValidity
+        host.nativeValidity={create=function(...)
+            local worker=s.validityFactory.create(...)
+            -- Native workers may be userdata: wrap the port, never assign into it.
+            local proxy={}
+            proxy.set=function(_,element,...)
+                if element~=nil then
+                    for id,record in pairs(host.handles) do
+                        if record.element==element then safety(id,record) end
+                    end
+                end
+                return worker:set(element,...)
+            end
+            proxy.poll=function(_,...) return worker:poll(...) end
+            proxy.stop=function(_,...) return worker:stop(...) end
+            proxy.status=function(_,...) return worker:status(...) end
+            return proxy
+        end}
+        s.validityFactoryWrapper=host.nativeValidity
+        s.ruleEffects={}
+        local function effect(id,kind)
+            local record=assert(host.handles[id],'effect_exact_resource_required')
+            local key=tupleKey(id,record.lease,record.appLease,record.pid)
+            local row=s.ruleEffects[key] or {frame=0,focus=0}
+            s.ruleEffects[key]=row; row[kind]=row[kind]+1
+        end
+        host.focus=function(h,w,...) effect(w:id(),'focus'); return s.effectMethods.focus(h,w,...) end
+        host.execute=function(h,adapter,intents,current,...)
+            for _,intent in ipairs(intents) do
+                if intent.kind=='frame' and (not current or current(intent)) then effect(intent.windowId,'frame') end
+            end
+            return s.effectMethods.execute(h,adapter,intents,current,...)
+        end
+        s.effectWrappers={focus=host.focus,execute=host.execute,_trackValidity=host._trackValidity,
+            _checkWindowValidity=host._checkWindowValidity,_record=host._record}
     end
     local _,unknown=candidateSnapshot()
     assert(s.candidate.context and s.candidate.context.regularSpaceId~=nil
         and not s.candidate.suspended,'regular_space_required')
     assert(s.candidate.core and unknown==0,'initial_managed_scope_not_empty')
     local owner=s
-    s.task=hs.task.new(s.executable,function(code) owner.exitCode=code end,
-        {'--run',s.run,'--control-dir',s.dir})
-    assert(s.task and s.task:start(),'fixture_start_failed'); s.pid=s.task:pid()
+    local Session=dofile(s.sourceRoot..'/functional-tests/fixture/session.lua')
+    s.fixtureSession=Session.new({sourceRoot=s.sourceRoot,executable=s.executable,controlDir=s.dir,run=s.run,
+        onExit=function(code) owner.exitCode=code end,
+        onOwned=function(fixture) owner.fixtureSession=fixture;owner.task=fixture.task end})
+    s.task=s.fixtureSession.task; s.pid=s.fixtureSession.pid
 end
 baseline=function(clean)
     s.operation='enumerate_baseline'
@@ -734,7 +931,7 @@ function M.start(o)
     local screens=hs.screen.allScreens(); assert(#screens==1,'sole_screen_required')
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
-        desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
+        configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
         initialLayout=o.initialLayout or 'columns',ghosttyEnabled=o.ghostty==true,ownedDisposable=o.ownedDisposable==true,cleanSeedTerminal=o.cleanSeedTerminal==true,originalPointer=copy(hs.mouse.absolutePosition()),
         sequence=0,actionSequence=0,windows={},axes={},byId={},ownerPids={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}
@@ -789,13 +986,30 @@ function M.start(o)
         failure(captureFailure(startupError))
     end
     s.timer=hs.timer.doEvery(0.05,function()
-        local success=pcall(function()
+        local success,controllerError=pcall(function()
+            s.controllerStage='takeAction'
             if s.phase~='cleanup' then takeAction() end
             tick()
+            s.controllerStage='publishStatus'
             publishStatus()
         end)
         hs.hotkey.bind=s.originalBind
         if not success then
+            -- Sanitized, bounded source/line/assertion classification only. Never
+            -- serialize arbitrary native AX/private error text into diagnostics.
+            local message=tostring(controllerError)
+            local code='unclassified_exception'
+            for _,known in ipairs({'exact_host_resource_required','host_handle_mismatch','host_identity_changed',
+                'effect_exact_resource_required','ack_mismatch','ack_alias_mismatch','ack_before_cleanup',
+                'missing_native_number','independent_creation_frame_required','invalid_join','ambiguous_join'}) do
+                if message:find(known,1,true) then code=known; break end
+            end
+            local file,line=message:match('([^/\\]+%.lua):(%d+):')
+            s.controllerFailures=s.controllerFailures or {}
+            if #s.controllerFailures<8 then
+                s.controllerFailures[#s.controllerFailures+1]={stage=s.controllerStage,phase=s.phase,
+                    code=code,file=file,line=line and tonumber(line),at=now(),pending=s.pending and s.pending.operation}
+            end
             failure('guest_controller_error')
             if now()-s.cleanupAt>=5 or now()-s.started>=60 then
                 if s.task and s.task:isRunning() then s.forced=true; s.task:terminate() end
@@ -901,10 +1115,14 @@ function M.command(op,alias,commands)
         keys(commands)
         return {accepted=true,submitted_at=now()}
     end
-    if op=='create' or op=='close' then
+    if s.configuredRules and (op=='focus' or op=='renameToExcluded' or op=='renameToManaged') then
+        assert(type(alias)=='string' and alias:match('^[A-E]$') and s.windows[alias],'owned_alias_required')
+        return publish(op,alias)
+    end
+    if op=='create' or op=='createExcluded' or op=='close' then
         if s.desktopSwitching then assert(nativeDesktop().active=='D1','fixture_requires_D1') end
         assert(type(alias)=='string' and alias:match('^[A-E]$'),'unsupported_alias')
-        if op=='create' then assert(not s.windows[alias],'alias_already_used')
+        if op=='create' or op=='createExcluded' then assert(not s.windows[alias],'alias_already_used')
         else assert(s.windows[alias],'alias_not_joined') end
         return publish(op,alias)
     end
@@ -916,14 +1134,14 @@ function M.command(op,alias,commands)
         hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved,point):post()
         return {accepted=true,operation=op,submitted_at=now()}
     end
-    if s.desktopSwitching and (op=='createDesktop' or op=='benignService' or op=='resizeLeft' or op=='resizeRight'
+    if (s.desktopSwitching or s.configuredRules) and (op=='reflow' or op=='createDesktop' or op=='benignService' or op=='resizeLeft' or op=='resizeRight'
         or op=='focusPreviousDesktop' or op=='focusNextDesktop' or op=='focusPreviousDesktopPosition'
         or op:match('^focusDesktop[1-9]$')) then
         assert(alias==nil,'hotkey_alias_forbidden'); key(op)
         return {accepted=true,submitted_at=now()}
     end
     assert(alias==nil and (op=='focusNext' or op=='focusPrevious' or op=='focusLeftGroup'
-        or op=='focusRightGroup' or op=='focusManagedPrevious' or op=='cycleLayout'),'unsupported_acceptance_command')
+        or op=='focusRightGroup' or op=='focusManagedPrevious' or op=='moveFocusedToOtherGroup' or op=='cycleLayout'),'unsupported_acceptance_command')
     key(op)
     return {accepted=true,operation=op,submitted_at=now()} -- receipt is ONLY callback count
 end

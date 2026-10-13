@@ -7,8 +7,9 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let directory: URL
     var sequence = 0
     var windows: [String: NSWindow] = [:]
-    var numbers: [String: Int] = [:] // aliases are never reusable, even after close
+    var numbers: [String: Int] = [:] // reuse requires an explicit closed-alias acknowledgement
     var timer: Timer?
+    var creationFrames: [String: [String: Double]] = [:]
 
     init(run: String, directory: URL) {
         self.run = run
@@ -20,6 +21,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "operation": operation, "alias": alias as Any? ?? NSNull(),
             "accepted": accepted, "pid": Int(getpid()),
             "windowNumber": alias.flatMap { numbers[$0] } as Any? ?? NSNull()]
+        if let alias = alias, let frame = creationFrames[alias] { result["creationFrame"] = frame }
         if let error = error { result["error"] = error }
         do {
             let data = try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
@@ -90,7 +92,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
             sequence = value.intValue
             let alias = object["alias"] as? String
             guard (operation == "quit" && alias == nil) ||
-                  (["create", "focus", "close"].contains(operation) && ["A", "B", "C", "D", "E"].contains(alias ?? "")) else {
+                  (["create", "createExcluded", "resetClosedAlias", "focus", "close", "renameToExcluded", "renameToManaged"].contains(operation) && ["A", "B", "C", "D", "E"].contains(alias ?? "")) else {
                 finish(operation: "invalid", alias: nil, accepted: false, error: "unsupported_operation_or_alias")
                 return
             }
@@ -101,14 +103,29 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
             let name = alias!
-            if operation == "create" {
+            if operation == "resetClosedAlias" {
+                guard windows[name] == nil && numbers[name] != nil else {
+                    finish(operation: operation, alias: name, accepted: false, error: "alias_not_closed")
+                    return
+                }
+                numbers.removeValue(forKey: name)
+                creationFrames.removeValue(forKey: name)
+                finish(operation: operation, alias: name, accepted: true)
+                return
+            }
+            if operation == "create" || operation == "createExcluded" {
                 guard numbers[name] == nil else {
                     finish(operation: operation, alias: name, accepted: false, error: "alias_already_used")
                     return
                 }
                 let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 640, height: 480),
                     styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-                window.title = "10bucks fixture \(name)"
+                // Record before publishing/ordering: the manager cannot have changed this frame.
+                let frame = window.frame
+                let top = NSScreen.screens[0].frame.maxY
+                creationFrames[name] = ["x": frame.minX, "y": top - frame.maxY,
+                    "w": frame.width, "h": frame.height]
+                window.title = operation == "createExcluded" ? "10bucks fixture B" : "10bucks fixture \(name)"
                 window.isReleasedWhenClosed = false
                 window.delegate = self
                 windows[name] = window
@@ -124,6 +141,10 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if operation == "focus" {
                     NSApp.activate(ignoringOtherApps: true) // explicit control proof ONLY
                     window.makeKeyAndOrderFront(nil)
+                } else if operation == "renameToExcluded" {
+                    window.title = "10bucks fixture B"
+                } else if operation == "renameToManaged" {
+                    window.title = "10bucks managed \(name)"
                 } else {
                     window.performClose(nil) // AppKit normal close, no survivor focus request
                 }

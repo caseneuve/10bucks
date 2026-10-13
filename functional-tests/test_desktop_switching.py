@@ -4,7 +4,8 @@ from copy import deepcopy
 import unittest
 
 from scenarios.columns_close_recovery import AcceptanceFailure, Frame, Observation
-from scenarios.desktop_switching import run, benchmark, SWITCHES, TOPOLOGY, nearest_rank, summarize_batches, fullscreen
+from scenarios.desktop_switching import run, SWITCHES, TOPOLOGY, fullscreen
+from benchmarks.desktop_switching import benchmark, nearest_rank, summarize_batches
 
 
 class Driver:

@@ -329,9 +329,9 @@ not permission to infer history/intent from native state.
 
 ```sh
 # Run three separate invocations for >=30 warmed samples (10 per batch).
-./functional-tests/run --reuse-debug VM_NAME --desktop-benchmark warm desktop-switching
+./functional-tests/run --reuse-debug VM_NAME desktop-switching-benchmark --benchmark-mode warm
 # Run five separate invocations for five first-switch cold-runtime paths.
-./functional-tests/run --reuse-debug VM_NAME --desktop-benchmark cold desktop-switching
+./functional-tests/run --reuse-debug VM_NAME desktop-switching-benchmark --benchmark-mode cold
 ```
 
 Each invocation starts a fresh candidate runtime, no fixture windows needed;
@@ -358,8 +358,8 @@ performance; an independent timestamped sender remains coordinator evidence.
 ./functional-tests/run --reuse-debug VM_NAME desktop-creation
 ./functional-tests/run --reuse-debug VM_NAME --desktop-fullscreen desktop-creation
 ./functional-tests/run --reuse-debug VM_NAME desktop-creation-race
-./functional-tests/run --reuse-debug VM_NAME --desktop-benchmark warm desktop-creation
-./functional-tests/run --reuse-debug VM_NAME --desktop-benchmark cold desktop-creation
+./functional-tests/run --reuse-debug VM_NAME desktop-creation-benchmark --benchmark-mode warm
+./functional-tests/run --reuse-debug VM_NAME desktop-creation-benchmark --benchmark-mode cold
 ```
 
 Starts with three regular desktops/D1 active. Real configurable createDesktop hotkey
@@ -381,6 +381,120 @@ test-created desktop as test setup, not manager deletion. Independent sender evi
 review counts, preserved failures and limitations: `docs/pocs/019-desktop-creation.md`.
 Guest evidence does not establish physical-host performance or atomic attribution
 against an indistinguishable external single creation after ambiguous Add.
+
+## configured-rules
+
+**Verified:** scoped fixture-VM functional acceptance, including the separated
+functional owner, is recorded in `docs/pocs/020-configured-rules.md`. This is not
+physical-host performance or broad stress certification.
+
+```sh
+./functional-tests/run --reuse-debug VM_NAME configured-rules
+```
+
+Guest-only ordered rules exclude exact fixture B before broad fixture manage;
+an exact-title rule excludes D. Starts columns. Independent pre-order NSWindow decorated
+creation frame acknowledgement establishes excluded geometry before manager access.
+Native frames/global focus remain primary; alias-only title categories, managed
+order/history and per-alias Host frame-intent/focus-request counts are secondary.
+Planned B focus is a stimulus, never corrective focus. Both title-boundary directions,
+actual destruction and new E lifetime are checked. Wrappers restore in cleanup.
+Fixed 5s/250ms/50ms/150ms/2pt gates are unchanged; demo/bar pauses rejected.
+
+Expanded checks use j/k, layout, divider, reflow and existing D2/D1 commands
+from planned excluded focus; D1's retained scope must remain identical off-Space.
+Requires exactly three regular desktops/D1 active. E creates with B's same exact
+excluded title. Removable `Rules.filter`/`Rules.reduce` wrappers observe filter
+calls and terminal commits; a private harness mirror of reducer output supplies
+alias-only actions and exact-destruction evidence. No predicates or production
+policy readmodel are required. History uses public `focusHistory:snapshot()`.
+Alias joins and evaluation/commit/effect counts require exact window lease,
+application lease and PID under the captured Host identity; recyclable IDs alone
+are not evidence. Unknown titles fail focused-title assertions; B and A
+renames occur under planned actual focus. Cumulative excluded validity targets fail. Test wrappers also intercept nonnil
+native-worker `set` and synchronous AX validity-query boundaries, including
+requests whose targets do not survive. Synchronous evidence uses the production
+`targetedValidityQueries` record immediately before AX `isValid`, after all guards;
+rejected `_checkWindowValidity` entry alone is not counted. The worker proxy forwards
+`poll`, `set`, `stop` and `status` with the original userdata receiver. Actual title tokens and exact focused
+presentation-token/native-wrapper/ID/PID/application-resource joins reject
+same-category wrong sources. Policy resource tuples are checked separately;
+`presentationJoin.windowResource` is diagnostic, not a presentation requirement,
+because provisional readiness lease promotion may preserve the exact presentation
+source/token while changing its window policy lease.
+A real `moveFocusedToOtherGroup` callback under excluded focus must reject while
+native geometry and durable retained scope remain unchanged.
+D1 durable retention excludes only its active presentation bit; that bit is checked
+against native desktop separately. Trace capacity covers 60s at 50ms, and missing
+or dropped guest evidence prevents PASS. Rules cleanup checks retained owners'
+leases/subscriptions/readiness, stopped Host/Windows identities and restored
+Host/Rules wrapper identities, plus native-worker drain. Clearing the private
+mirror is not proof of production cleanup. Functional decision/effect counters prove behavior; benchmark clocks and
+population gates belong to the separate benchmark owners.
+Adapted joins and cleanup have passed independent frozen native replay. Frame
+instrumentation counts authorized Host frame intents (stronger than writes), not
+individual native setFrame calls. Readiness failures
+are retained failures, not masked by fake tests or repair focus.
+
+### Ownership and measurement boundaries
+
+`guest.lua` and `scenarios/` own functional native outcomes. `fixture/session.lua`
+owns fixture transport/task resources only. `benchmarks/guest.lua` owns rules
+startup/admission measurements; `benchmarks/desktop_guest.lua` owns compact native
+workspace/key observation without the functional frame/title sampler. Procedures
+and population analyzers live in `benchmarks/*.py`. Runner freezing, VM transport
+and final evidence collection remain shared. Independent pending-work sender
+procedures are stress/service evidence, not post-admission benchmark proof.
+
+Rules startup records the first image preparation separately from post-ready
+admission. Desktop confirmation timestamps are taken after adapter reconciliation,
+as in the prior functional wrapper; native topology is observed independently.
+Desktop creation cleanup is test setup only: one compatible confirmed append,
+exact owned inactive empty Space, unchanged surviving native order after removal.
+Unknown additions/conflicting topology are failures, never cleanup authority.
+Preserve failed artifacts and diagnose the raw cause before another batch; do not
+repeat unchanged failures or select only passing populations.
+
+### Rules measurements
+
+Run three `rules-benchmark --benchmark-mode warm` batches and five
+`rules-benchmark --benchmark-mode cold` batches (with the normal owned-guest
+runner options). Warm omits one pair, then measures ten managed and ten excluded
+lifetimes per batch: 30 per action overall. Cold measures the first managed and
+first excluded action-class path in a fresh candidate runtime. Excluded follows
+managed, so shared infrastructure is already warm; neither is cold OS evidence.
+The guest alone writes `rules-benchmark.json`; host validation writes
+`rules-benchmark-analysis.json`. Raw warmup/measured rows remain preserved. Exact close
+must pass before both controller and fixture release an alias for reuse; old
+resource-keyed counts remain retained. The separate benchmark guest reads native outcomes after admission, without the
+functional sampler; functional stability gates remain in configured-rules acceptance.
+
+Temporary wrappers timestamp normalized Windows readiness-event entry (all
+origins, including targeted probes), filter, reducer terminal
+commit and the existing Host `frameRequests` boundary after validity/frame reads,
+with exact window-lease attribution only during the first terminal admission
+transaction, including its effect flush. Later focus/layout requests cannot overwrite
+that endpoint. This is a request, not proof of a native write. Native Host work
+before normalized adapter entry is outside this interval and remains unmeasured. Native geometry remains independent;
+its targeted post-admission confirmation is not a functional stability gate or
+a request-latency metric. The canonical managed ready→final request gate is
+p95≤100ms; this slice also measures excluded ready→commit against p95≤100ms.
+Neither is a per-row request maximum.
+Warmup pairs remain saved and data-validated but are outside warm latency
+populations. Measured individual exceedances remain in their action-stratified
+population. Each batch gates its measured population; report the full combined
+30-per-action warm and five-per-action first-runtime populations as well.
+Preserve historical pre-fix first-runtime failures separately, including the
+157.242ms admission. They are not samples of the startup-prepared implementation
+or the new measurement owner; do not pool the distinct populations or relabel
+old FAIL results.
+Synthetic benign HyperY posting→actual callback has max100ms/p95≤50ms;
+this measures ordinary service after admission, not concurrent slow-AX service or
+physical input. Independent sender/pending-work coverage remains coordinator work.
+The minimal rules observer records request ordinals and effect counts, not
+per-cycle full instrumentation/timer snapshots or complete native-query/write/timer
+accounting.
+Missing/censored samples and failed batches must not be omitted from aggregation.
 
 ## Scenario self-checks
 

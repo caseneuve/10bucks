@@ -37,8 +37,11 @@ Initializer .199ms and worker allocation .018ms do not explain the stall. OS
 security/cache attribution is unproved. Lazy loading occurred when enabling
 managed safety before effect flush. Image preparation is now moved to protected
 startup before bar/bootstrap/bindings; preparation creates no worker or timer.
-Pure ordering/failure/cancellation tests pass, but **new native confirmation is
-pending**. Earlier native passes predate this change.
+Pure ordering/failure/cancellation tests pass. Fresh post-preparation functional
+acceptance `4b5afdb77394` independently replays 81 hashes, 309 samples, 221 joins,
+34 checkpoints and 32 actions, with zero drops/errors and normal unforced cleanup.
+Its matching suffixes have minimum 250.013ms stability and maximum 105.151ms gap;
+no raw acquisition gaps exceeded 150ms.
 
 Other failed artifacts remain failed: `e71e734afdc1` has a real 185.429ms switching
 sampling gap with unknown cause; later green switching does not repair it.
@@ -47,9 +50,40 @@ empty-map serialization oracle despite native closure; `d3fca9d81279` applied an
 incorrect hard bound to an unmeasured warmup. Valid first-runtime latencies in
 those traces remain evidence, not selectively omitted.
 
-**Target closeout:** responsibility-separated functional/benchmark/stress owners,
-new-owner measurements with startup cost explicit, reviewed commits and relevant
-native cleanup. The rules story is not yet complete. Close-recovery bug
+**Verified closeout:** the functional controller contains behavioral outcomes and
+oracles only; rules and desktop benchmarks have dedicated guest observers and
+Python procedure/analyzer owners. Shared fixture ownership covers task/mailbox/ack,
+exact joins/closure and quit, not candidate lifecycle or sampling. Whole effect
+batches are forwarded unchanged. Stress is a separate independent-sender procedure,
+not inferred from post-admission synthetic callbacks.
+
+New-owner rule samples: warm `99f7eae2bdc7`, `8353ab5a5fe3`, `408148c8f865`;
+cold `7c9869ec093b`, `76832dee4ca1`, `1042ccb4ee10`, `e42cffb4d411`,
+`1b0e0e6f22c9`. Independent review verifies 647/647 hashes, 30 warm and five
+cold samples per action, exact first-terminal attribution and request ordinals,
+zero recorded errors/drops and normal cleanup/drain. Managed post-ready request
+p95/max: warm 3.949/8.639ms, cold 4.734/4.734ms. Excluded policy-commit p95/max:
+warm .0678/.0737ms, cold .0512/.0512ms. Valid image preparation measurements are
+130.573–249.000ms at startup. `7c9869` startup is 387.944ms; its preparation field
+was overwritten by a cached call and remains disqualified. Raw guest data and host
+analysis have separate files/writers. These populations use a different measurement
+owner from the earlier mixed-harness results; they do not repair old failures.
+
+Separated desktop-owner smoke checks: switching `b4f0a12f9d13` (81 hashes,
+36 samples/27 joins/three gates) and creation `baecdc18f2dc` (81 hashes,
+61 samples/48 joins/four gates) independently replay. Creation returns to the
+original three desktops/D1 and removes only its exact owned inactive test addition,
+after a fresh empty ordinary-AX test-environment scan and surviving-order check.
+That cleanup is not product deletion/SPACE-007 evidence. Its 422.146ms cleanup-time
+raw gap remains qualified. Initial `e7a1ab78ef6e` failed because literal
+`windowsForSpace` ID emptiness includes system surfaces; its failure and separate
+operator cleanup remain preserved.
+
+**Rules delivery complete within the fixture-VM and user-manual scope.** This does
+not certify physical-host latency, representative slow-app behavior or broad/
+concurrent stress. Full release performance remains hardening work. The host manual
+prefix candidate does not yet include startup preparation; runtime changes require
+separate authority. Close-recovery bug
 `todos/0001-close-recovery-returns-underlying-member.md` is explicitly deferred.
 
 ## Archived candidate status and evidence

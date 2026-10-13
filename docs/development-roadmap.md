@@ -78,24 +78,36 @@ The user explicitly retained this design rather than choosing a creation number.
 scenarios, pending focus/layout service, 30 warm/5 cold measurements and independent
 sender evidence are recorded in [`pocs/019-desktop-creation.md`](pocs/019-desktop-creation.md).
 User host acceptance does not certify full release performance or erase recorded
-failures/qualifications. The accepted creation candidate remains active and frozen;
-HyperC belongs to the user's skhd Chrome mode, which was left unchanged.
+failures/qualifications. The active manual candidate is tracked in WORK_STATE,
+not inferred from this historical checkpoint. HyperC belongs to the user's skhd
+Chrome mode, which was left unchanged.
 
-Next implementation scope is **configured rules, including exemptions**: ordered
-first-match `manage`/`exclude` over normalized metadata, evaluated at confirmed
-readiness with stable lifetime decisions. Excluded windows receive no manager
-frames/focus or managed membership/navigation/history/chooser entries; actual focus
-and title presentation remain observable. Commands remain usable from excluded
-actual focus. Keep policy in user configuration, not external-app source branches.
-`nativeFullscreenOnCreate` native effects remain step 6; chooser UI is step 4.
-Movement and deletion remain deferred.
+**Configured manage/exclude rules delivered on 2026-10-13**, product checkpoint
+`be228e9`: ordered exact bundle/title and literal title-prefix matching, stable
+reducer-owned lifetime decisions, observation-only exclusions, commands available
+under excluded actual focus, and user policy outside production code. Generic pure
+checks, fresh native acceptance, user manual exclusion and separated-owner
+30-warm/5-cold rule measurements are recorded in
+[`pocs/020-configured-rules.md`](pocs/020-configured-rules.md). Native image loading
+now occurs during explicit startup rather than first admission. Startup cost,
+preserved failures and guest/host performance qualifications remain explicit.
 
-The accepted host runtime stays frozen and active until a deliberate source/runtime
-handoff before production edits or native builds; see WORK_STATE for exact ownership
-and rollback. Do not use unchanged synchronous `hs.spaces.gotoSpace()` in hotkeys.
+Functional acceptance, benchmarking and stress/service responsibilities are
+separate; no benchmark orchestration remains in behavioral scenarios.
+`nativeFullscreenOnCreate` remains step 6, chooser UI step 4; movement/deletion
+remain deferred. User requested closing the rules story before investigating the
+reported close-recovery issue, filed as
+[`todos/0001-close-recovery-returns-underlying-member.md`](../todos/0001-close-recovery-returns-underlying-member.md).
+That bug's generic recovery-contract question must be settled deliberately; rules
+completion does not claim it fixed.
 
-Fresh-session operational entry: read `.pi/WORK_STATE.md`, then
-`.pi/handoffs/2026-10-13-configured-rules-next.md`. The ignored handoff holds exact
+The manual host runtime uses a separate frozen source copy; see WORK_STATE for
+exact ownership and rollback. Editing or building the development checkout does not
+update that running candidate. A new host load still requires its own authority. Do not use unchanged synchronous `hs.spaces.gotoSpace()` in hotkeys.
+
+Fresh-session operational entry: read `.pi/WORK_STATE.md`, then the current
+closeout handoff it names; older `.pi/handoffs/2026-10-13-configured-rules-next.md`
+runtime facts are historical. The ignored handoff holds exact
 live host/VM ownership, rollback and worker protocol; this tracked roadmap holds
 the durable user-approved order. Neither authorizes host window/Space mutations
 merely by being read.
