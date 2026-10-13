@@ -95,11 +95,14 @@ preserved failures and guest/host performance qualifications remain explicit.
 Functional acceptance, benchmarking and stress/service responsibilities are
 separate; no benchmark orchestration remains in behavioral scenarios.
 `nativeFullscreenOnCreate` remains step 6, chooser UI step 4; movement/deletion
-remain deferred. User requested closing the rules story before investigating the
-reported close-recovery issue, filed as
-[`todos/0001-close-recovery-returns-underlying-member.md`](../todos/0001-close-recovery-returns-underlying-member.md).
-That bug's generic recovery-contract question must be settled deliberately; rules
-completion does not claim it fixed.
+remain deferred.
+
+**Next delivery: cached managed-window chooser.** The user's updated scheduling
+decision on 2026-10-13 is to deliver chooser first, then fix the reported bugs:
+[`0001 close recovery`](../todos/0001-close-recovery-returns-underlying-member.md)
+and [`0002 sole-column movement rebalance`](../todos/0002-move-sole-column-member-rebalances-peer.md).
+Both remain open; their recovery/movement contract decisions must be settled
+deliberately. Do not fold either fix into the chooser slice.
 
 The manual host runtime uses a separate frozen source copy; see WORK_STATE for
 exact ownership and rollback. Editing or building the development checkout does not
