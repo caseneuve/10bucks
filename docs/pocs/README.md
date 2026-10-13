@@ -92,6 +92,14 @@ single composed reducer/adapter, complete authoritative regular/fullscreen-sourc
 VM scenarios, retained failures, narrow benchmark and independent-service evidence.
 It does not retroactively repair POC002's failed budgets or certify host performance.
 
+## Desktop creation
+
+[`019-desktop-creation.md`](019-desktop-creation.md) records the asynchronous
+single-runtime creation extension, native regular/fullscreen/external-race scenarios,
+review fixes, narrow benchmarks and retained failures. Guest results do not prove
+physical-host performance or atomic attribution of an indistinguishable external
+single addition after an ambiguous add result.
+
 ## POC-003 — Overlay bar and native handoff
 
 **Status: narrow hover/return and Mission Control observation passed; fullscreen transition flash unresolved.** [`003-overlay-bar-handoff.md`](003-overlay-bar-handoff.md) records the approved 90-second probe, human visual feedback, aggregate trace, and verified cleanup. It supports overlay plus temporary hidden-only pointer tracking, not complete bar acceptance.

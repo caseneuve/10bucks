@@ -14,6 +14,7 @@ local actions = {
   resizeRight = { type = "ResizeRatioDelta", delta = 0.05 },
   resetRatio = "ResetRatio",
   reflow = "Reflow",
+  createDesktop = "CreateRegularDesktop",
   focusPreviousDesktop = "FocusPreviousRegular",
   focusNextDesktop = { type = "FocusRelativeRegular", delta = 1 },
   focusPreviousDesktopPosition = { type = "FocusRelativeRegular", delta = -1 },

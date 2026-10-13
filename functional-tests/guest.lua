@@ -126,6 +126,14 @@ local function nativeDesktop()
             end
         end
     end
+    if s.desktopCreation then
+        for _,item in ipairs(display.Spaces) do
+            if item.type==0 and not s.desktopAliases[item.ManagedSpaceID] then
+                s.createdNativeIds[#s.createdNativeIds+1]=item.ManagedSpaceID
+                s.desktopAliases[item.ManagedSpaceID]='D'..tostring(3+#s.createdNativeIds)
+            end
+        end
+    end
     local result={active=desktopAlias(display['Current Space'].ManagedSpaceID),order={},types={},regular={},count=#display.Spaces}
     for _,item in ipairs(display.Spaces) do
         local kind=item.type==0 and 'user' or item.type==4 and 'fullscreen' or 'unknown'
@@ -350,6 +358,8 @@ local function sample()
 end
 local function finalize()
     if s.timer then s.timer:stop(); s.timer=nil end
+    if s.raceTimer then s.raceTimer:stop(); s.raceTimer=nil end
+    if s.serviceTimer then s.serviceTimer:stop();s.serviceTimer=nil end
     local observerStopped=true
     for _,observer in pairs(s.observers or {}) do
         local ok,result=pcall(function() observer:stop(); return not observer:isRunning() end)
@@ -552,6 +562,10 @@ bootstrap=function()
         for _,name in ipairs({'execute','_receipt','observe'}) do s.spaceMethods[name]=Spaces[name] end
         Spaces.execute=function(adapter,intent,...)
             row(intent.kind,intent)
+            if intent.kind=='selectCreatedRegularSpace' and s.serviceDuringSelection then
+                s.serviceDuringSelection=false
+                keys({'focusPrevious','focusNext'})
+            end
             return s.spaceMethods.execute(adapter,intent,...)
         end
         Spaces._receipt=function(adapter,op,kind,...)
@@ -560,7 +574,8 @@ bootstrap=function()
         end
         Spaces.observe=function(adapter,context,...)
             local result=s.spaceMethods.observe(adapter,context,...)
-            if result.generation then row(result.workspaceEventType == 'RegularSwitchContextRebased' and 'pressContextRebased' or 'confirmed',result) end
+            if result.generation then row(result.workspaceEventType == 'RegularSwitchContextRebased' and 'pressContextRebased'
+                or result.workspaceEventType == 'RegularCreateTopologyObserved' and 'createdTopology' or 'confirmed',result) end
             return result
         end
     end
@@ -575,8 +590,10 @@ bootstrap=function()
         local name=assert(names[chord(mods,k)],'unexpected_startup_binding')
         return s.originalBind(mods,k,function(...)
             s.receipts[name]=(s.receipts[name] or 0)+1
-            s.keyEvents[#s.keyEvents+1]={kind='callback',name=name,at=now()}
-            return pressed(...)
+            s.keyEvents[#s.keyEvents+1]={kind='callback',name=name,at=now(),phase=s.desktopCreation and s.candidate.workspace and s.candidate.workspace:state().switch.inFlight and s.candidate.workspace:state().switch.inFlight.phase or nil}
+            local accepted,reason=pressed(...)
+            if s.desktopCreation then s.keyEvents[#s.keyEvents+1]={kind='result',name=name,at=now(),accepted=accepted~=false,reason=reason} end
+            return accepted,reason
         end,...)
     end
     local ok,err=pcall(function() s.candidate:start() end)
@@ -691,11 +708,11 @@ local function takeAction()
         and data.sequence==s.actionSequence+1
     if not ok then s.actionAccepted=false; s.actionError='invalid_action_sequence'; return end
     s.actionSequence=data.sequence
-    local success=pcall(function()
+    local success,actionFailure=pcall(function()
         if data.operation=='stop' then M.stop()
         else M.command(data.operation,data.alias,data.commands) end
     end)
-    s.actionAccepted=success; s.actionError=not success and 'action_rejected' or nil
+    s.actionAccepted=success; s.actionError=not success and tostring(actionFailure) or nil
 end
 local function publishStatus()
     atomic(s.outputDir..'/status.json',M.status())
@@ -717,7 +734,7 @@ function M.start(o)
     local screens=hs.screen.allScreens(); assert(#screens==1,'sole_screen_required')
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
-        desktopSwitching=o.desktopSwitching==true,desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
+        desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
         initialLayout=o.initialLayout or 'columns',ghosttyEnabled=o.ghostty==true,ownedDisposable=o.ownedDisposable==true,cleanSeedTerminal=o.cleanSeedTerminal==true,originalPointer=copy(hs.mouse.absolutePosition()),
         sequence=0,actionSequence=0,windows={},axes={},byId={},ownerPids={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}
@@ -846,11 +863,39 @@ function M.command(op,alias,commands)
         s.windows.A:setFullScreen(entering)
         return {accepted=true,submitted_at=now()}
     end
+    if op=='createDesktopService' then
+        assert(s.desktopCreation and alias==nil,'creation_service_only')
+        s.serviceDuringSelection=true
+        key('createDesktop')
+        s.serviceTimer=hs.timer.doAfter(.32,function()
+            keys({'focusPrevious','focusNext','cycleLayout','cycleLayout'})
+        end)
+        return {accepted=true,submitted_at=now()}
+    end
+    if op=='createDesktopRace' then
+        assert(s.desktopCreation and alias==nil,'creation_race_only')
+        key('createDesktop')
+        s.raceTimer=hs.timer.doAfter(.35,function()
+            assert(hs.spaces.addSpaceToScreen(s.screen,false),'external_test_creation_failed')
+        end)
+        return {accepted=true,submitted_at=now()}
+    end
+    if op=='removeCreatedDesktop' then
+        assert(s.desktopCreation and alias==nil,'creation_cleanup_only')
+        local d=nativeDisplay();local active=d['Current Space'].ManagedSpaceID
+        local id=s.createdNativeIds[#s.createdNativeIds]
+        assert(id and id~=active,'created_desktop_must_be_inactive')
+        local present=false;for _,v in ipairs(d.Spaces)do if v.ManagedSpaceID==id and v.type==0 then present=true end end
+        assert(present,'created_desktop_absent')
+        assert(next(s.windows)==nil,'test_created_desktop_cleanup_requires_no_fixture_windows')
+        assert(hs.spaces.removeSpace(id),'test_cleanup_remove_failed')
+        return {accepted=true,submitted_at=now()}
+    end
     if op=='hotkeyBurst' then
         assert(s.desktopSwitching and alias==nil and type(commands)=='table'
-            and (#commands==2 or #commands==3), 'invalid_hotkey_burst')
+            and (#commands>=2 and #commands<=(s.desktopCreation and 10 or 3)), 'invalid_hotkey_burst')
         for _,name in ipairs(commands) do
-            assert(name=='benignService' or name=='focusPreviousDesktop' or name=='focusNextDesktop'
+            assert(name=='focusPrevious' or name=='focusNext' or name=='cycleLayout' or name=='createDesktop' or name=='benignService' or name=='focusPreviousDesktop' or name=='focusNextDesktop'
                 or name=='focusPreviousDesktopPosition' or name:match('^focusDesktop[1-9]$'), 'invalid_burst_command')
         end
         keys(commands)
@@ -871,7 +916,7 @@ function M.command(op,alias,commands)
         hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved,point):post()
         return {accepted=true,operation=op,submitted_at=now()}
     end
-    if s.desktopSwitching and (op=='benignService' or op=='resizeLeft' or op=='resizeRight'
+    if s.desktopSwitching and (op=='createDesktop' or op=='benignService' or op=='resizeLeft' or op=='resizeRight'
         or op=='focusPreviousDesktop' or op=='focusNextDesktop' or op=='focusPreviousDesktopPosition'
         or op:match('^focusDesktop[1-9]$')) then
         assert(alias==nil,'hotkey_alias_forbidden'); key(op)

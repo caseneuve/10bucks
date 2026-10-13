@@ -11,7 +11,7 @@ local function fixture()
       performAction = function() presses = presses + 1; if hsPress then return hsPress() end; return {} end }
   end
   local list = element("mc.spaces.list", { element("A"), element("F"), element("B") })
-  local group = element("mc", { element("mc.display", { element("mc.spaces", { list }) }, 7) })
+  local group = element("mc", { element("mc.display", { element("mc.spaces", { list, element("mc.spaces.add") }) }, 7) })
   local dockApp, posted = {}, {}
   local hs = { eventtap = { event = { newKeyEvent = function(mods, key, down)
     assert(#mods == 0 and key == "escape")
@@ -33,6 +33,34 @@ local function fixture()
     function(value) visible = value end, function(callback) hsPress = callback end, posted, function(callback) onReceipt = callback end
 end
 return {
+  ["SPACE-003 STATE-002 CMD-006: create once then select actual identity after committed topology"] = function()
+    local a,intent,timers,events,context,presses,setCurrent,setNow=fixture()
+    intent.kind="createRegularSpace";intent.creating=true;intent.destinationId=nil
+    local current={};for k,v in pairs(intent)do current[k]=v end;setCurrent(current)
+    local inspected=0
+    a.dependencies.contextChanged=function()inspected=inspected+1 end
+    a:execute(intent);timers[2].callback()
+    assert(presses()==1 and events[1].type=="RegularCreatePressed")
+    current.phase="adding";timers[#timers].callback();assert(inspected==1 and presses()==1)
+    context.regularSpaceIds={"A","B","C"};context.fullSpaceIds={"A","F","B","C"}
+    local fact=a:observe(context);assert(fact.workspaceEventType=="RegularCreateTopologyObserved" and fact.destinationId==nil)
+    local select={};for k,v in pairs(intent)do select[k]=v end
+    select.destinationId="C";select.kind="selectCreatedRegularSpace";select.selectionFullSpaceIds=context.fullSpaceIds;select.selectionRegularSpaceIds=context.regularSpaceIds
+    current={};for k,v in pairs(select)do current[k]=v end;current.phase="selecting";setCurrent(current)
+    setNow(2.1);assert(a:execute(select));assert(a.operation.readinessDeadline==4.1 and a.operation.deadline==5)
+    timers[#timers].callback()
+    -- Faked list lacks new C: must fail without a guessed press or mutation retry.
+    assert(presses()==1 and not a.operation and events[#events].type=="RegularSwitchFailed")
+  end,
+  ["SPACE-003 CMD-006: ambiguous add is never retried; stop and late callback cannot mutate"] = function()
+    local a,intent,timers,events,_,presses,_,_,_,setPress=fixture()
+    intent.kind="createRegularSpace";intent.creating=true;intent.destinationId=nil
+    setPress(function()error("ambiguous add")end)
+    a.dependencies.contextChanged=function()end
+    a:execute(intent);timers[2].callback();assert(presses()==1 and a.operation)
+    a:stop();for _,timer in ipairs(timers)do timer.callback()end
+    assert(presses()==1 and #events==1 and not a.operation)
+  end,
   ["FS-005: own opened fullscreen MC supplies selective rebase but dismissed reopened MC does not"] = function()
     for _, dismissed in ipairs({ false, true }) do
       local a, intent, timers, events, context, presses, setCurrent = fixture()

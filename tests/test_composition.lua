@@ -141,7 +141,14 @@ local function workspaceSetup()
       end
       buttons[#buttons + 1] = button
     end
-    f.mc = node('mc', { node('mc.display', { node('mc.spaces', { node('mc.spaces.list', buttons) }) }, 1) })
+    local add = node('mc.spaces.add', {})
+    add.performAction = function(self, action)
+      assert(action == 'AXPress' and f.ten.workspace:state().switch.inFlight.phase == 'adding')
+      f.adds = (f.adds or 0) + 1
+      if f.onAdd then f.onAdd() end
+      return self
+    end
+    f.mc = node('mc', { node('mc.display', { node('mc.spaces', { node('mc.spaces.list', buttons), add }) }, 1) })
   end
   function f:fire(delay)
     for _, timer in ipairs(self.timers) do
@@ -169,6 +176,33 @@ local function workspaceSetup()
 end
 
 return {
+  ["CMD-006: structural pending permits only active regular managed previous target"] = function()
+    local f,ten=workspaceSetup();assert(ten:_submitCommand({type='CreateRegularDesktop'}))
+    local original=ten.focusHistory.previous;local focused=0
+    ten._focusManagedPrevious=function()focused=focused+1;return true end
+    ten.focusHistory.previous=function()return {spaceId='next-space',windowId=9}end
+    assert(not ten:_submitCommand({type='FocusManagedPrevious'}));assert(focused==0)
+    ten.focusHistory.previous=function()return {spaceId='space',windowId=9}end
+    assert(ten:_submitCommand({type='FocusManagedPrevious'}));assert(focused==1)
+    ten.focusHistory.previous=original;ten:stop()
+  end,
+  ["SPACE-003 CMD-006: composed attempted creation timeout and stale receipt preserve real topology"] = function()
+    local f,ten=workspaceSetup()
+    assert(ten:_submitCommand({type='CreateRegularDesktop'}));local first=ten.workspace:state().switch.inFlight
+    assert(not ten:_submitCommand({type='CreateRegularDesktop'}))
+    assert(not ten:_submitCommand({type='FocusRegularPosition',position=2}))
+    assert(ten:_submitCommand({type='FocusNext'}))
+    f:fire(.3);assert(f.adds==1 and ten.workspace:state().switch.inFlight.phase=='adding')
+    f:fire(5);assert(not ten.workspace:state().switch.inFlight and not ten.spaces.operation)
+    f.mc=nil
+    f.topology[#f.topology+1]={ManagedSpaceID='late-created',type=0};f.contextWatcher.callback()
+    assert(#ten.workspace:state().regularSpaceIds==4 and not ten.workspace:state().switch.inFlight)
+    assert(ten:_submitCommand({type='CreateRegularDesktop'}))
+    local second=ten.workspace:state().switch.inFlight;assert(second.generation==first.generation+1)
+    assert(ten.workspace:submit({type='RegularSwitchTimedOut',generation=first.generation,sourceId=first.sourceId,sourceType=first.sourceType}))
+    assert(ten.workspace:state().switch.inFlight.generation==second.generation)
+    ten:stop();assert(not ten.workspace and not ten.spaces)
+  end,
   ["STATE-002 CMD-005: frame callback desktop command waits for completed outer Core flush"] = function()
     local f, ten = workspaceSetup()
     local inside, submitted, completed, opened = false, false, false, false

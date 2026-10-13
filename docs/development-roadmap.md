@@ -71,7 +71,16 @@ manual host feedback are recorded in
 Its explicit evidence/performance qualifications remain; user acceptance does not
 retroactively repair POC002 failures or certify full release performance.
 
-Next implementation scope is **desktop creation only**: a separate configurable
+**Desktop creation reviewed VM checkpoint prepared on 2026-10-13:** a separate
+configurable HyperC default appends one regular desktop and focuses its actual new
+native identity; digits remain focus-only. Regular/fullscreen-source/external-race
+scenarios, pending focus/layout service, 30 warm/5 cold measurements and independent
+sender evidence are recorded in [`pocs/019-desktop-creation.md`](pocs/019-desktop-creation.md).
+This is host-test readiness, not user host acceptance or release certification.
+The host currently runs verified legacy after authorized development handoff;
+loading the frozen creation candidate requires separate authorization.
+
+Creation scope remains **desktop creation only**: a separate configurable
 command creates exactly one next contiguous native regular desktop and focuses it.
 Numbered shortcuts remain focus-only and never create missing positions. Confirm
 actual topology and activation, serialize structural mutations, and verify keyboard

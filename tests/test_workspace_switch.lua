@@ -38,6 +38,73 @@ local function departed()
   return m
 end
 return {
+  ["SPACE-003 CMD-006 STATE-002: one structural generation through topology and activation"] = function()
+    local m, batches = runtime()
+    submit(m, { type = "CreateRegularDesktop" })
+    assert(batches[#batches][1].kind == "createRegularSpace")
+    local op = m:state().switch.inFlight; assert(op.creating and not op.destinationId)
+    for _, e in ipairs({ {type="CreateRegularDesktop"}, {type="FocusRegularPosition",position=2},
+      {type="FocusRelativeRegular",delta=1}, {type="FocusPreviousRegular"} }) do
+      submit(m,e); assert(m:state().switch.inFlight.generation==op.generation and not m:state().switch.desiredSpaceId)
+    end
+    submit(m, operation(m,"RegularCreatePressed"))
+    local e=fact(2,"A",{"A","B","C","D"});for k,v in pairs(operation(m,"RegularCreateTopologyObserved"))do e[k]=v end
+    submit(m,e);assert(m:state().switch.inFlight.destinationId=="D" and batches[#batches][1].kind=="selectCreatedRegularSpace")
+    assert(m:state().lastConfirmedRegularSpaceId=="A")
+    submit(m,operation(m,"RegularSwitchPressed"))
+    e=fact(3,"D",{"A","B","C","D"});for k,v in pairs(operation(m,"RegularTopologyObserved"))do e[k]=v end
+    submit(m,e);assert(not m:state().switch.inFlight and m:state().previousRegularSpaceId=="A")
+  end,
+  ["SPACE-003 CMD-006: appended topology with changed source retains matching terminal tuple"] = function()
+    local m,batches=runtime();submit(m,{type="CreateRegularDesktop"});submit(m,operation(m,"RegularCreatePressed"))
+    local e=fact(2,"B",{"A","B","C","D"});for k,v in pairs(operation(m,"RegularCreateTopologyObserved"))do e[k]=v end
+    submit(m,e);assert(m:state().switch.inFlight.invalidated and not m:state().switch.inFlight.destinationId)
+    assert(#batches[#batches]==1 and batches[#batches][1].kind=="cancelRegularSwitch")
+    submit(m,operation(m,"RegularSwitchTimedOut"));assert(not m:state().switch.inFlight)
+    submit(m,{type="CreateRegularDesktop"});assert(m:state().switch.inFlight.generation==2)
+  end,
+  ["SPACE-003 CMD-006: fullscreen-rebased append source conflict clears barrier"] = function()
+    local m=runtime(topology(1,"F","fullscreen"));submit(m,{type="CreateRegularDesktop"})
+    local rebased=topology(2,"A");for k,v in pairs(operation(m,"RegularSwitchContextRebased"))do rebased[k]=v end
+    submit(m,rebased);assert(m:state().switch.inFlight.pressSourceId=="A")
+    submit(m,operation(m,"RegularCreatePressed"))
+    local e=fact(3,"B",{"A","B","C","D"},{"A","F","G","B","C","D"})
+    for k,v in pairs(operation(m,"RegularCreateTopologyObserved"))do e[k]=v end
+    submit(m,e);assert(m:state().switch.inFlight.invalidated and not m:state().switch.inFlight.destinationId)
+    submit(m,operation(m,"RegularSwitchTimedOut"));assert(not m:state().switch.inFlight)
+  end,
+  ["SPACE-003 CMD-006: type reclassification invalidates unchanged full identity list"] = function()
+    local m=runtime(fact(1,"A",{"A","B"},{"A","F","B"}))
+    submit(m,{type="CreateRegularDesktop"});submit(m,operation(m,"RegularCreatePressed"))
+    submit(m,fact(2,"A",{"A","F","B"},{"A","F","B"}))
+    assert(m:state().switch.inFlight.invalidated)
+    submit(m,operation(m,"RegularSwitchTimedOut"));assert(not m:state().switch.inFlight)
+  end,
+  ["SPACE-003 CMD-006: reclassification after selection press revokes and never confirms"] = function()
+    local m=runtime(fact(1,"A",{"A","B"},{"A","F","B"}));submit(m,{type="CreateRegularDesktop"})
+    submit(m,operation(m,"RegularCreatePressed"))
+    local e=fact(2,"A",{"A","B","C"},{"A","F","B","C"});for k,v in pairs(operation(m,"RegularCreateTopologyObserved"))do e[k]=v end
+    submit(m,e);submit(m,operation(m,"RegularSwitchPressed"))
+    e=fact(3,"C",{"A","F","B","C"},{"A","F","B","C"});for k,v in pairs(operation(m,"RegularTopologyObserved"))do e[k]=v end
+    submit(m,e);assert(m:state().switch.inFlight.invalidated)
+    submit(m,operation(m,"RegularSwitchTimedOut"));assert(not m:state().switch.inFlight)
+  end,
+  ["SPACE-003 CMD-006: shutdown suppresses expired receipts and late reality remains external"] = function()
+    local m=runtime();submit(m,{type="CreateRegularDesktop"});submit(m,operation(m,"RegularCreatePressed"))
+    local expired=operation(m,"RegularSwitchTimedOut")
+    submit(m,{type="WorkspaceSwitchStopped"});assert(not m:state().switch.inFlight)
+    submit(m,expired);submit(m,fact(2,"D",{"A","B","C","D"}))
+    assert(not m:state().switch.inFlight and m:state().activeRegularSpaceId=="D" and m:state().stopped)
+    submit(m,{type="CreateRegularDesktop"});assert(not m:state().switch.inFlight)
+  end,
+  ["SPACE-003 CMD-006: incompatible external additions invalidate without attribution or retry"] = function()
+    local m,batches=runtime();submit(m,{type="CreateRegularDesktop"});submit(m,operation(m,"RegularCreatePressed"))
+    submit(m,fact(2,"A",{"A","B","C","X","Y"}))
+    assert(m:state().switch.inFlight.invalidated and batches[#batches][1].kind=="cancelRegularSwitch")
+    local expired=operation(m,"RegularSwitchTimedOut");submit(m,expired)
+    assert(not m:state().switch.inFlight and batches[#batches][1].kind=="resnapshotRegularTopology")
+    submit(m,expired);assert(not m:state().switch.inFlight and #batches[#batches]==0)
+  end,
   ["SPACE-005: fullscreen previous is departed regular with backup toggle and no fullscreen numbering"] = function()
     local m = departed()
     assert(m:state().previousRegularSpaceId == "A" and m:state().previousBeforeFullscreen == "B")

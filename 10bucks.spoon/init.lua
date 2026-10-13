@@ -422,7 +422,13 @@ function Tenbucks:_focusManagedPrevious()
 end
 
 function Tenbucks:_submitCommand(command)
-  if command.type == "FocusRegularPosition" or command.type == "FocusRelativeRegular" or command.type == "FocusPreviousRegular" then
+  local operation = self.workspace and self.workspace:state().switch.inFlight
+  if operation and operation.creating and (command.type == "CreateRegularDesktop" or command.type == "FocusRegularPosition"
+    or command.type == "FocusRelativeRegular" or command.type == "FocusPreviousRegular") then
+    return false, "desktop-creation-pending"
+  end
+  if command.type == "CreateRegularDesktop" and operation then return false, "desktop-switch-pending" end
+  if command.type == "FocusRegularPosition" or command.type == "FocusRelativeRegular" or command.type == "FocusPreviousRegular" or command.type == "CreateRegularDesktop" then
     return self:_withEffectBatch(function()
       self.focusHistory:cancel()
       for _, core in pairs(self.cores or {}) do self:_submitCore(core, { type = "FocusRequestCancelled", spaceId = core.spaceId }) end
@@ -431,7 +437,15 @@ function Tenbucks:_submitCommand(command)
     end)
   end
   if command.type == "FocusManagedPrevious" then
-    if self.workspace and self.workspace:state().switch.inFlight then return false, "desktop-switch-pending" end
+    if operation then
+      if not operation.creating then return false, "desktop-switch-pending" end
+      local target = self.focusHistory:previous(function(candidate) return self:_targetIsManaged(candidate) end)
+      local targetCore = target and self.cores[target.spaceId]
+      local window = targetCore and targetCore:state().manager.windows[target.windowId]
+      if not target or targetCore ~= self.core or self.suspended or not window or window.lifecycle.nativeFullscreen then
+        return false, "desktop-creation-pending"
+      end
+    end
     return self:_withEffectBatch(function() return self:_focusManagedPrevious() end)
   end
   if self.suspended or not self.core then return false, "native-fullscreen-has-no-regular-layout" end
@@ -512,6 +526,7 @@ function Tenbucks:_beginContext(context)
     end })
   self.spaces = Spaces.new(hs, { current = function() return self.workspace and self.workspace:state().switch.inFlight end,
     snapshot = function() return Context.snapshot(hs, self.config.builtInDisplayUUID) end,
+    contextChanged = function(context) return self:_contextChanged(context) end,
     submit = function(event)
       if self.workspace then self:_withEffectBatch(function() assert(self.workspace:submit(event)) end) end
     end })

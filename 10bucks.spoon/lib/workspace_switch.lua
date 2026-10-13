@@ -19,6 +19,18 @@ local function same(a, b)
   for i, v in ipairs(a) do if b[i] ~= v then return false end end
   return true
 end
+-- A topology delta is compatibility evidence, not atomic causal attribution.
+function WorkspaceSwitch.createdDestination(before, after)
+  if not same(before.regularSpaceIds, { table.unpack(after.regularSpaceIds, 1, #before.regularSpaceIds) })
+    or #after.regularSpaceIds ~= #before.regularSpaceIds + 1
+    or #after.fullSpaceIds ~= #before.fullSpaceIds + 1 then return nil end
+  local destination = after.regularSpaceIds[#after.regularSpaceIds]
+  local old, filtered = {}, {}
+  for _, space in ipairs(before.fullSpaceIds) do old[space] = true end
+  if old[destination] then return nil end
+  for _, space in ipairs(after.fullSpaceIds) do if space ~= destination then filtered[#filtered + 1] = space end end
+  return same(before.fullSpaceIds, filtered) and destination or nil
+end
 local function snapshot(v)
   local regular, full = dense(v.regularSpaceIds), dense(v.fullSpaceIds)
   if not id(v.displayId) or not integer(v.revision) or not regular or not full
@@ -61,16 +73,16 @@ function WorkspaceSwitch.validate(state)
   if type(s) ~= "table" or not integer(s.nextGeneration)
     or (s.desiredSpaceId ~= nil and not regular[s.desiredSpaceId]) then return false, "malformed switch intent" end
   local op = s.inFlight
-  if op and (not id(op.sourceId) or type(op.sourceType) ~= "string" or not id(op.destinationId)
+  if op and (not id(op.sourceId) or type(op.sourceType) ~= "string" or (not id(op.destinationId) and not op.creating)
     or not integer(op.generation) or op.generation < 1 or op.generation > s.nextGeneration
     or not integer(op.revision) or not dense(op.fullSpaceIds) or not dense(op.regularSpaceIds)
-    or (op.phase ~= "requested" and op.phase ~= "pressed") or type(op.invalidated) ~= "boolean") then
+    or (op.phase ~= "requested" and op.phase ~= "pressed" and op.phase ~= "adding" and op.phase ~= "selecting") or type(op.invalidated) ~= "boolean") then
     return false, "malformed switch operation"
   end
   if op then
     local captured = { displayId = state.displayId, revision = op.revision, nativeSpaceId = op.sourceId,
       nativeSpaceType = op.sourceType, regularSpaceIds = op.regularSpaceIds, fullSpaceIds = op.fullSpaceIds }
-    if not snapshot(captured) or not dense(op.regularSpaceIds)[op.destinationId] or op.revision > state.revision then
+    if not snapshot(captured) or (not op.creating and not dense(op.regularSpaceIds)[op.destinationId]) or op.revision > state.revision then
       return false, "malformed captured operation topology"
     end
     if op.pressSourceId ~= nil or op.pressSourceType ~= nil then
@@ -119,13 +131,23 @@ function WorkspaceSwitch.reduce(state, event)
   local s, kind = state.switch, event.type
   if kind == "WorkspaceSwitchStopped" then
     state.stopped = true; s.inFlight = nil; s.desiredSpaceId = nil
-  elseif kind == "RegularTopologyObserved" or kind == "RegularSwitchContextRebased" then
+  elseif kind == "RegularTopologyObserved" or kind == "RegularSwitchContextRebased" or kind == "RegularCreateTopologyObserved" then
     assert(snapshot(event) and event.displayId == state.displayId, "requires complete topology for this display")
     if event.revision <= state.revision then return state end
     local op, regular = s.inFlight, dense(event.regularSpaceIds)
+    local created = op and op.creating and op.phase == "adding" and not op.invalidated
+      and event.type == "RegularCreateTopologyObserved" and matching(op, event)
+      and event.nativeSpaceId == (op.pressSourceId or op.sourceId)
+      and event.nativeSpaceType == (op.pressSourceType or op.sourceType)
+      and WorkspaceSwitch.createdDestination(op, event)
+    if created then
+      op.destinationId = created; op.phase = "selecting"
+      op.selectionFullSpaceIds = event.fullSpaceIds; op.selectionRegularSpaceIds = event.regularSpaceIds
+    end
     local confirmed = matching(op, event) and not op.invalidated and op.phase == "pressed"
       and event.nativeSpaceType == "user" and event.nativeSpaceId == op.destinationId
-      and regular[op.destinationId]
+      and regular[op.destinationId] and (not op.creating or (same(event.fullSpaceIds, op.selectionFullSpaceIds)
+        and same(event.regularSpaceIds, op.selectionRegularSpaceIds)))
     if kind == "RegularSwitchContextRebased" and matching(op, event) and not op.invalidated
       and op.phase == "requested" and op.sourceType == "fullscreen" and not op.pressSourceId
       and dense(event.fullSpaceIds)[op.sourceId] and same(event.fullSpaceIds, op.fullSpaceIds)
@@ -135,10 +157,15 @@ function WorkspaceSwitch.reduce(state, event)
     local sourceUnchanged = op and event.nativeSpaceId == (op.pressSourceId or op.sourceId)
       and event.nativeSpaceType == (op.pressSourceType or op.sourceType)
     local destinationObserved = op and event.nativeSpaceId == op.destinationId and event.nativeSpaceType == "user"
-    local invalid = op and (not regular[op.destinationId]
-      or (op.phase == "requested" and (not same(event.fullSpaceIds, op.fullSpaceIds)
-        or not same(event.regularSpaceIds, op.regularSpaceIds) or not sourceUnchanged))
-      or (op.phase == "pressed" and not sourceUnchanged and not destinationObserved))
+    local expectedFull = op and (op.selectionFullSpaceIds or op.fullSpaceIds)
+    local expectedRegular = op and (op.selectionRegularSpaceIds or op.regularSpaceIds)
+    local invalid = op and ((op.destinationId and not regular[op.destinationId])
+      or ((op.phase == "requested" or op.phase == "selecting") and (not same(event.fullSpaceIds, expectedFull)
+        or not same(event.regularSpaceIds, expectedRegular) or not sourceUnchanged))
+      or (op.phase == "adding" and (not sourceUnchanged or ((not same(event.fullSpaceIds, op.fullSpaceIds)
+        or not same(event.regularSpaceIds, op.regularSpaceIds)) and not WorkspaceSwitch.createdDestination(op, event))))
+      or (op.phase == "pressed" and ((op.creating and (not same(event.fullSpaceIds, expectedFull) or not same(event.regularSpaceIds, expectedRegular)))
+        or not sourceUnchanged and not destinationObserved)))
     if op and not confirmed and invalid then
       op.invalidated = true -- retain barrier until adapter acknowledges cancellation/failure
     end
@@ -157,6 +184,15 @@ function WorkspaceSwitch.reduce(state, event)
     if confirmed then s.inFlight = nil; begin(state) end
   elseif state.stopped then
     return state
+  elseif kind == "CreateRegularDesktop" then
+    if not s.inFlight and not s.desiredSpaceId then
+      s.nextGeneration = s.nextGeneration + 1
+      s.inFlight = { creating = true, sourceId = state.nativeSpaceId, sourceType = state.nativeSpaceType,
+        generation = s.nextGeneration, revision = state.revision, fullSpaceIds = state.fullSpaceIds,
+        regularSpaceIds = state.regularSpaceIds, phase = "requested", invalidated = false }
+    end
+  elseif s.inFlight and s.inFlight.creating and (kind == "FocusRegularPosition" or kind == "FocusRelativeRegular" or kind == "FocusPreviousRegular") then
+    return state
   elseif kind == "FocusRegularPosition" then
     assert(integer(event.position) and event.position >= 1 and event.position <= 9, "requires position 1..9")
     request(state, state.regularSpaceIds[event.position])
@@ -169,6 +205,8 @@ function WorkspaceSwitch.reduce(state, event)
     end
   elseif kind == "FocusPreviousRegular" then
     request(state, state.previousRegularSpaceId)
+  elseif kind == "RegularCreatePressed" then
+    if matching(s.inFlight, event) and s.inFlight.creating and not s.inFlight.invalidated then s.inFlight.phase = "adding" end
   elseif kind == "RegularSwitchPressed" then
     if matching(s.inFlight, event) and not s.inFlight.invalidated then s.inFlight.phase = "pressed" end
   elseif kind == "RegularSwitchCancelled" then
@@ -183,12 +221,13 @@ function WorkspaceSwitch.reduce(state, event)
 end
 local function operationIntent(kind, state, op)
   return { kind = kind, displayId = state.displayId, sourceId = op.sourceId, sourceType = op.sourceType,
-    destinationId = op.destinationId, generation = op.generation, revision = op.revision,
-    fullSpaceIds = op.fullSpaceIds, regularSpaceIds = op.regularSpaceIds }
+    destinationId = op.destinationId, generation = op.generation, revision = op.revision, creating = op.creating,
+    fullSpaceIds = op.fullSpaceIds, regularSpaceIds = op.regularSpaceIds,
+    selectionFullSpaceIds = op.selectionFullSpaceIds, selectionRegularSpaceIds = op.selectionRegularSpaceIds }
 end
 function WorkspaceSwitch.deriveIntents(state, event, _, previous)
   local intents, op, before = {}, state.switch.inFlight, previous.switch.inFlight
-  if (event.type == "RegularTopologyObserved" or event.type == "RegularSwitchContextRebased") and state.revision > previous.revision then
+  if (event.type == "RegularTopologyObserved" or event.type == "RegularSwitchContextRebased" or event.type == "RegularCreateTopologyObserved") and state.revision > previous.revision then
     local remaining = dense(state.regularSpaceIds)
     for _, space in ipairs(previous.regularSpaceIds) do
       if not remaining[space] then intents[#intents + 1] = { kind = "RegularSpaceRemoved", spaceId = space, revision = state.revision } end
@@ -198,7 +237,10 @@ function WorkspaceSwitch.deriveIntents(state, event, _, previous)
     intents[#intents + 1] = operationIntent("cancelRegularSwitch", state, before)
   end
   if op and (not before or op.generation ~= before.generation) then
-    intents[#intents + 1] = operationIntent("switchRegularSpace", state, op)
+    intents[#intents + 1] = operationIntent(op.creating and "createRegularSpace" or "switchRegularSpace", state, op)
+  end
+  if op and before and op.creating and not op.invalidated and before.phase == "adding" and op.phase == "selecting" then
+    intents[#intents + 1] = operationIntent("selectCreatedRegularSpace", state, op)
   end
   if (event.type == "RegularSwitchTimedOut" or event.type == "RegularSwitchFailed") and matching(before, event) and not op then
     intents[#intents + 1] = { kind = "resnapshotRegularTopology", displayId = state.displayId }

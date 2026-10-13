@@ -1,4 +1,5 @@
 -- Timer-yielding POC002 mechanism; no gotoSpace busy wait or durable state.
+local Workspace = require("lib.workspace_switch")
 local Spaces = {}
 Spaces.__index = Spaces
 local function copy(v)
@@ -51,7 +52,7 @@ function Spaces:_later(op, delay, callback)
     local ok = pcall(callback)
     if not ok and self:_live(op) then
       -- An exception during AXPress is ambiguous: retain the barrier to timeout.
-      if not op.pressed then self:_finish(op, "RegularSwitchFailed") end
+      if not op.pressed and not op.addAttempted then self:_finish(op, "RegularSwitchFailed") end
     end
   end)
   if self:_live(op) then op.timers[#op.timers + 1] = timer else timer:stop() end
@@ -77,27 +78,31 @@ function Spaces:_attempt(op)
     if element:attributeValue("AXIdentifier") == "mc.display"
       and element:attributeValue("AXDisplayID") == op.screenId then display = element; break end
   end
-  local list = child(child(display, "mc.spaces"), "mc.spaces.list")
-  if not list then self:_later(op, .05, function() self:_attempt(op) end); return end
+  local container = child(display, "mc.spaces")
+  local list = child(container, "mc.spaces.list")
+  local adding = op.intent.creating and not op.addAttempted
+  local addButton = adding and child(container, "mc.spaces.add")
+  if not list or (adding and not addButton) then self:_later(op, .05, function() self:_attempt(op) end); return end
   local observed = self.dependencies.snapshot()
   local intent = op.intent
   local current = self.dependencies.current()
   if not self:_live(op) then return end
   if not tuple(current, intent) or current.invalidated then self:_finish(op, "RegularSwitchCancelled"); return end
   if observed.displayId ~= intent.displayId or observed.nativeSpaceId ~= (current.pressSourceId or intent.sourceId)
-    or observed.nativeSpaceType ~= (current.pressSourceType or intent.sourceType) or not same(observed.fullSpaceIds, intent.fullSpaceIds)
-    or not same(observed.regularSpaceIds, intent.regularSpaceIds) then
+    or observed.nativeSpaceType ~= (current.pressSourceType or intent.sourceType) or not same(observed.fullSpaceIds, intent.selectionFullSpaceIds or intent.fullSpaceIds)
+    or not same(observed.regularSpaceIds, intent.selectionRegularSpaceIds or intent.regularSpaceIds) then
     self:_finish(op, "RegularSwitchFailed"); return
   end
   local index
   for i, space in ipairs(observed.fullSpaceIds) do if space == intent.destinationId then index = i end end
   local children = list:attributeValue("AXChildren") or {}
-  if not index or #children ~= #observed.fullSpaceIds then self:_finish(op, "RegularSwitchFailed"); return end
+  if (not adding and not index) or #children ~= #observed.fullSpaceIds then self:_finish(op, "RegularSwitchFailed"); return end
   if not self:_live(op) or not self:_authority(op) then
     self:_finish(op, "RegularSwitchCancelled"); return
   end
-  op.pressed = true -- at most one press, even on ambiguous exception/rejection
-  self:_receipt(op, "RegularSwitchPressed") -- commit attempted phase before native reentry
+  op.pressed = true -- at most one press per phase, even on ambiguous exception/rejection
+  if adding then op.addAttempted = true end
+  self:_receipt(op, adding and "RegularCreatePressed" or "RegularSwitchPressed") -- commit attempted phase before native reentry
   if not self:_live(op) then return end
   if op.cancelled or not self:_authority(op) or op.boundaryRevoked or self:_missionControl() ~= op.group then
     -- The phase receipt may reenter composition, but no native action has yet
@@ -110,7 +115,21 @@ function Spaces:_attempt(op)
   end
   -- No reducer/user callback between final authority check, AXPress and the
   -- proved paired Dock-targeted Escape. Never send a global or delayed Escape.
-  local ok, accepted = pcall(children[index].performAction, children[index], "AXPress")
+  local target = adding and addButton or children[index]
+  local ok, accepted = pcall(target.performAction, target, "AXPress")
+  if adding then
+    op.addReturned = true
+    -- Bounded reality discovery, never a retry of the mutation.
+    local function inspect()
+      if not self:_live(op) or not self:_authority(op) then return end
+      self.dependencies.contextChanged(self.dependencies.snapshot())
+      local current = self.dependencies.current()
+      if self:_live(op) and current and current.phase == "adding" then self:_later(op, .05, inspect) end
+    end
+    self:_later(op, .05, inspect)
+    if not ok or not accepted then self.lastError = "Desktop creation outcome uncertain; no mutation retry." end
+    return
+  end
   self.lastPress = { accepted = ok and accepted ~= nil and accepted ~= false,
     live = self:_live(op), revoked = op.boundaryRevoked == true, sameGroup = self:_missionControl() == op.group }
   if ok and accepted and self:_live(op) and not op.cancelled and self:_authority(op)
@@ -130,13 +149,25 @@ function Spaces:execute(intent)
     local op = self.operation
     if op and tuple(op.intent, intent) then
       op.cancelled = true
-      if not op.pressed then self:_finish(op, "RegularSwitchCancelled") end
+      if not op.pressed and not op.addAttempted then self:_finish(op, "RegularSwitchCancelled") end
       -- Postpress cancellation cannot recall the OS effect. Keep timeout and
       -- observation ownership; never claim a speculative drained acknowledgement.
     end
     return true
   end
-  assert(intent.kind == "switchRegularSpace", "unknown Space effect")
+  if intent.kind == "selectCreatedRegularSpace" then
+    local op = self.operation
+    if not op or not op.addAttempted or not op.addReturned or op.intent.generation ~= intent.generation
+      or op.cancelled or not self:_live(op) then return false, "creation no longer owned" end
+    if not tuple(self.dependencies.current(), intent) or self.dependencies.current().phase ~= "selecting" then
+      return false, "stale creation selection"
+    end
+    op.intent = copy(intent); op.pressed = false
+    op.readinessDeadline = math.min(op.deadline, self.hs.timer.absoluteTime() / 1e9 + 2)
+    self:_later(op, .05, function() self:_attempt(op) end)
+    return true
+  end
+  assert(intent.kind == "switchRegularSpace" or intent.kind == "createRegularSpace", "unknown Space effect")
   if self.operation then return false, "native switch still pending" end
   local op = { intent = copy(intent), timers = {}, pressed = false }
   self.operation = op
@@ -154,6 +185,7 @@ function Spaces:execute(intent)
     if not self:_live(op) then return end
     assert(self:_authority(op), "stale switch authority")
     op.readinessDeadline = self.hs.timer.absoluteTime() / 1e9 + 2
+    op.deadline = self.hs.timer.absoluteTime() / 1e9 + 5
     self:_later(op, 5, function() self:_finish(op, "RegularSwitchTimedOut") end)
     if not self:_live(op) then return end
     local function open()
@@ -205,12 +237,22 @@ function Spaces:observe(context)
       return result
     end
   end
+  if op and op.intent.creating and op.addAttempted and op.addReturned and not op.cancelled
+    and self:_authority(op) and self.dependencies.current().phase == "adding"
+    and context.displayId == op.intent.displayId and Workspace.createdDestination(op.intent, context) then
+    local result = copy(context)
+    result.workspaceEventType = "RegularCreateTopologyObserved"
+    for _, key in ipairs({ "generation", "sourceId", "sourceType", "destinationId" }) do result[key] = op.intent[key] end
+    return result
+  end
   if not op or not op.pressed or context.displayId ~= op.intent.displayId
     or context.nativeSpaceType ~= "user" or context.nativeSpaceId ~= op.intent.destinationId then return context end
   local ok, visible = pcall(self._missionControl, self)
   if not ok or visible then return context end
   local current = self.dependencies.current()
   local invalidated = not tuple(current, op.intent) or current.invalidated
+    or (op.intent.creating and (not same(context.fullSpaceIds, op.intent.selectionFullSpaceIds)
+      or not same(context.regularSpaceIds, op.intent.selectionRegularSpaceIds)))
   local result = copy(context)
   for _, key in ipairs({ "generation", "sourceId", "sourceType", "destinationId" }) do result[key] = op.intent[key] end
   self:_clear(op)
@@ -234,7 +276,7 @@ function Spaces:dockBoundary()
   if op and op.opened then
     op.sawBoundary = true
     op.boundaryRevoked = true
-    if not op.pressed then self:_finish(op, "RegularSwitchFailed") end
+    if not op.pressed and not op.addAttempted then self:_finish(op, "RegularSwitchFailed") end
   end
 end
 function Spaces:_cleanupStatus(op)

@@ -15,6 +15,7 @@ Config.defaults = {
     resizeRight = { { "cmd", "alt", "ctrl", "shift" }, "]" },
     resetRatio = { { "cmd", "alt", "ctrl", "shift" }, "=" },
     reflow = { { "cmd", "alt", "ctrl", "shift" }, "r" },
+    createDesktop = { { "cmd", "alt", "ctrl", "shift" }, "c" },
     focusDesktop1 = { { "cmd", "alt", "ctrl", "shift" }, "1" },
     focusDesktop2 = { { "cmd", "alt", "ctrl", "shift" }, "2" },
     focusDesktop3 = { { "cmd", "alt", "ctrl", "shift" }, "3" },

@@ -2,11 +2,13 @@ local Config = require("lib.config")
 local Bindings = require("lib.bindings")
 
 return {
-  ["SPACE-001 SPACE-004 SPACE-005 CMD-001: 24 defaults preserve existing commands and copy desktop fields"] = function()
+  ["SPACE-001 SPACE-003 SPACE-004 SPACE-005 CMD-001: 25 defaults preserve existing commands and copy desktop fields"] = function()
     local callbacks, events = {}, {}
     local hs = { hotkey = { bind = function(_, key, callback) callbacks[key] = callback; return { delete = function() end } end } }
     local bound = Bindings.bind(hs, function(event) events[#events + 1] = event end, Config.build().hotkeys)
-    assert(#bound == 24)
+    assert(#bound == 25)
+    callbacks.c(); assert(events[#events].type == "CreateRegularDesktop")
+    assert(Config.build({ hotkeys = { createDesktop = false } }).hotkeys.createDesktop == false)
     for i = 1, 9 do callbacks[tostring(i)](); assert(events[#events].type == "FocusRegularPosition" and events[#events].position == i) end
     events[#events].position = 999; callbacks["9"](); assert(events[#events].position == 9)
     callbacks["0"](); assert(events[#events].type == "FocusPreviousRegular")

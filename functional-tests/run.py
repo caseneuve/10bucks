@@ -17,7 +17,7 @@ BASE = "10bucks-functional-sip-base-20261011"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=["columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching"])
+    parser.add_argument("scenario", choices=["desktop-creation-race", "columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching", "desktop-creation"])
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--demo", action="store_true", help="2s pauses between actions; not a latency benchmark")
     parser.add_argument("--bar-capture", action="store_true", help="capture native bar outside/hover/return pixels for independent visual review")
@@ -28,9 +28,9 @@ def main():
     parser.add_argument('--desktop-fullscreen', action='store_true',
                         help='desktop-only separate owned-fixture fullscreen indexing/retention subcase')
     args = parser.parse_args()
-    if args.desktop_fullscreen and (args.scenario != 'desktop-switching' or args.desktop_benchmark):
+    if args.desktop_fullscreen and (args.scenario not in ('desktop-switching','desktop-creation') or args.desktop_benchmark):
         parser.error('--desktop-fullscreen requires desktop-switching without --desktop-benchmark')
-    if args.desktop_benchmark and args.scenario != 'desktop-switching':
+    if args.desktop_benchmark and args.scenario not in ('desktop-switching','desktop-creation'):
         parser.error('--desktop-benchmark requires desktop-switching')
     if args.scenario == 'desktop-switching' and (args.demo or args.bar_capture):
         parser.error('desktop-switching cannot combine demo/bar pauses with its watchdog')
@@ -100,8 +100,13 @@ def main():
         r = subprocess.run([str(snapshot / "vm/hs"), code], env=env,
                            capture_output=True, text=True, timeout=remaining(timeout))
         if r.returncode:
-            raise RuntimeError("guest Hammerspoon request failed")
-        return json.loads(r.stdout.strip().splitlines()[-1])
+            (results / 'ipc-request-failure.txt').write_text(r.stdout + '\nSTDERR:\n' + r.stderr)
+            raise RuntimeError("guest Hammerspoon request failed; raw output preserved")
+        try:
+            return json.loads(r.stdout.strip().splitlines()[-1])
+        except (json.JSONDecodeError, IndexError) as exc:
+            (results / 'ipc-parse-failure.txt').write_text(r.stdout + '\nSTDERR:\n' + r.stderr)
+            raise RuntimeError('guest IPC JSON parse failed; raw transport output preserved') from exc
 
     def read(name):
         try:
@@ -269,7 +274,7 @@ def main():
         ssh(f"mkdir -m 700 {control}")
         hs('ft=dofile("' + guest_root + '/functional-tests/guest.lua"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
-           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization") else "columns"}",desktopSwitching={str(args.scenario=="desktop-switching").lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
+           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization") else "columns"}",desktopSwitching={str(args.scenario in ("desktop-switching","desktop-creation","desktop-creation-race")).lower()},desktopCreation={str(args.scenario in ("desktop-creation","desktop-creation-race")).lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
         driver = Driver()
         if args.desktop_fullscreen:
             module.fullscreen(driver)
@@ -364,7 +369,7 @@ def main():
                 except BaseException:
                     cleanup["diagnosticCaptured"] = False
             try:
-                hs('if ft then return hs.json.encode(ft.stop()) end', 3)
+                hs('if ft then ft.stop() end; return hs.json.encode({stopSubmitted=true})', 3)
                 deadline = min(execution_deadline - 7, time.monotonic() + 5)
                 final = None
                 while time.monotonic() < deadline:
@@ -375,8 +380,9 @@ def main():
                 if not final or final.get("running") is not False:
                     raise RuntimeError("guest cleanup deadline exceeded")
                 cleanup["guest"] = final.get("cleanup", {})
-            except BaseException:
+            except BaseException as exc:
                 cleanup["guestStopConfirmed"] = False
+                cleanup["guestStopError"] = str(exc) or type(exc).__name__
             if args.reuse_debug:
                 cleanup["debugGuestRetained"] = True
             try:

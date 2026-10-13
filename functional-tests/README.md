@@ -352,6 +352,36 @@ in-process posted-event measurement does **not** prove responsiveness to input
 posted while Hammerspoon is blocked, physical-input or representative-host
 performance; an independent timestamped sender remains coordinator evidence.
 
+## desktop-creation
+
+```sh
+./functional-tests/run --reuse-debug VM_NAME desktop-creation
+./functional-tests/run --reuse-debug VM_NAME --desktop-fullscreen desktop-creation
+./functional-tests/run --reuse-debug VM_NAME desktop-creation-race
+./functional-tests/run --reuse-debug VM_NAME --desktop-benchmark warm desktop-creation
+./functional-tests/run --reuse-debug VM_NAME --desktop-benchmark cold desktop-creation
+```
+
+Starts with three regular desktops/D1 active. Real configurable createDesktop hotkey
+(default HyperC) adds exactly one next regular desktop and focuses its independently
+observed native identity. Digits remain focus-only. Regular scenario retains ABC
+columns/stack/order/selections/.55ratio, verifies repeated-create and desktop-navigation
+rejections, same-Space j/k callbacks, numbered/history return and missing9 no mutation.
+Fullscreen subcase retains A's saved slot and excludes fullscreen from numbering.
+Race subcase performs one external guest setup creation while the owned operation
+is pending; verifies actual two additions revoke authority, timeout clears intent,
+no duplicate owned add/guessed selection. Uncertain MC cleanup remains visible and
+requires explicit guest operator dismissal; process cleanup is not topology cleanup.
+All fixed completion/sampling/geometry gates remain unchanged. Race uses separate
+5s topology and timeout-settlement checkpoints, not a single5s stable timeout gate.
+
+Warm batches measure ten samples after one warmup; run three batches, plus five
+cold fresh-runtime batches. Each benchmark returns D1 and removes exact owned empty
+test-created desktop as test setup, not manager deletion. Independent sender evidence,
+review counts, preserved failures and limitations: `docs/pocs/019-desktop-creation.md`.
+Guest evidence does not establish physical-host performance or atomic attribution
+against an indistinguishable external single creation after ambiguous Add.
+
 ## Scenario self-checks
 
 ```sh

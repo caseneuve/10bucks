@@ -1,4 +1,5 @@
--- Keyboard-first layout, focus, and existing regular-desktop commands.
+-- Keyboard-first layout, focus, and regular-desktop commands.
+-- Digits focus existing positions only. createDesktop appends one desktop and focuses it.
 -- Before switching from stable, copy the built-in display UUID from the approved
 -- switch preflight into this value. Do not commit a machine-specific UUID.
 local hyper = { "cmd", "alt", "ctrl", "shift" }
@@ -17,6 +18,7 @@ return {
     resizeRight = { hyper, "]" },
     resetRatio = { hyper, "=" },
     reflow = { hyper, "r" },
+    createDesktop = { hyper, "c" }, -- configurable; false disables this binding
     focusDesktop1 = { hyper, "1" },
     focusDesktop2 = { hyper, "2" },
     focusDesktop3 = { hyper, "3" },
