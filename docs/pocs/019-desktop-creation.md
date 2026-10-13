@@ -4,8 +4,10 @@
 
 **Verified:** one explicit create command implemented through the existing workspace
 reducer/Spaces adapter; native guest regular/fullscreen/race cases and relevant
-measurements recorded. Independent source/native reviews completed; reviewed VM checkpoint ready for a separately authorized manual host trial. Not physical
-host acceptance, complete release performance or atomic native-mutation attribution.
+measurements recorded. Independent source/native reviews completed; **User accepted desktop creation on 2026-10-13**, runtime `f384ec7`, after the
+HyperD manual host trial. One appended regular desktop, then focus; no selectable
+creation number. Not complete release performance or atomic native-mutation
+attribution.
 
 ## Decision / API basis
 

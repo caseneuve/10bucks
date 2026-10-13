@@ -71,28 +71,31 @@ manual host feedback are recorded in
 Its explicit evidence/performance qualifications remain; user acceptance does not
 retroactively repair POC002 failures or certify full release performance.
 
-**Desktop creation reviewed VM checkpoint prepared on 2026-10-13:** a separate
-configurable HyperD default appends one regular desktop and focuses its actual new
-native identity; digits remain focus-only. Regular/fullscreen-source/external-race
+**Desktop creation accepted by the user on 2026-10-13**, runtime `f384ec7`:
+a separate configurable HyperD default appends one regular desktop at the end of
+current native regular-Space order and focuses it; digits remain focus-only.
+The user explicitly retained this design rather than choosing a creation number. Regular/fullscreen-source/external-race
 scenarios, pending focus/layout service, 30 warm/5 cold measurements and independent
 sender evidence are recorded in [`pocs/019-desktop-creation.md`](pocs/019-desktop-creation.md).
-This is host-test readiness, not user host acceptance or release certification.
-The host currently runs verified legacy after authorized development handoff;
-loading the frozen creation candidate requires separate authorization.
+User host acceptance does not certify full release performance or erase recorded
+failures/qualifications. The accepted creation candidate remains active and frozen;
+HyperC belongs to the user's skhd Chrome mode, which was left unchanged.
 
-Creation scope remains **desktop creation only**: a separate configurable
-command creates exactly one next contiguous native regular desktop and focuses it.
-Numbered shortcuts remain focus-only and never create missing positions. Confirm
-actual topology and activation, serialize structural mutations, and verify keyboard
-responsiveness with an authoritative VM scenario. Reuse recorded native evidence;
-prove only unresolved creation assumptions. Movement and deletion remain deferred.
+Next implementation scope is **configured rules, including exemptions**: ordered
+first-match `manage`/`exclude` over normalized metadata, evaluated at confirmed
+readiness with stable lifetime decisions. Excluded windows receive no manager
+frames/focus or managed membership/navigation/history/chooser entries; actual focus
+and title presentation remain observable. Commands remain usable from excluded
+actual focus. Keep policy in user configuration, not external-app source branches.
+`nativeFullscreenOnCreate` native effects remain step 6; chooser UI is step 4.
+Movement and deletion remain deferred.
 
 The accepted host runtime stays frozen and active until a deliberate source/runtime
 handoff before production edits or native builds; see WORK_STATE for exact ownership
 and rollback. Do not use unchanged synchronous `hs.spaces.gotoSpace()` in hotkeys.
 
 Fresh-session operational entry: read `.pi/WORK_STATE.md`, then
-`.pi/handoffs/2026-10-12-desktop-creation-next.md`. The ignored handoff holds exact
+`.pi/handoffs/2026-10-13-configured-rules-next.md`. The ignored handoff holds exact
 live host/VM ownership, rollback and worker protocol; this tracked roadmap holds
 the durable user-approved order. Neither authorizes host window/Space mutations
 merely by being read.
