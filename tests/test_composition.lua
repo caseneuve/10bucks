@@ -175,7 +175,113 @@ local function workspaceSetup()
   return f, ten
 end
 
+local function chooserUI()
+  local n = { visible = false, value = "" }
+  function n:queryChangedCallback(cb) self.changed = cb; return self end
+  function n:query(value) if value == nil then return self.value end; self.value = value; self.changed(value); return self end
+  function n:choices(rows) self.rows = rows; return self end
+  function n:show() self.visible = true end
+  function n:isVisible() return self.visible end
+  function n:hide() self.visible = false end
+  function n:delete() assert(not self.visible); self.deleted = true; self.complete = nil end
+  hs.chooser = { new = function(cb) n.complete = cb; return n end }
+  hs.alert = { show = function(message) n.rejection = message end }
+  return n
+end
+
 return {
+  ["CHOOSE-001 CHOOSE-002 CHOOSE-003: accepted rows update without invocation queries and stop disposes UI"] = function()
+    local f = fakeHs(); local ten = load(f):start(); local ui = chooserUI()
+    local scans, queries = f.scans, f.focusedWindowQueries
+    assert(ten:_submitCommand({ type = "OpenWindowChooser" }))
+    assert(#ui.rows == 1 and ui.rows[1].text == "Window" and ui.rows[1].subText == "App")
+    assert(f.scans == scans and f.focusedWindowQueries == queries)
+    local stale = ui.rows[1]
+    ten:_submitEvent({ type = "WindowTitleChanged", id = 9, resource = -1, title = "Wrong" })
+    assert(ui.rows[1].text == "Window")
+    f.window.title = function() return "Changed" end
+    f.windowWatcher.callback(nil, "AXTitleChanged")
+    assert(ui.rows[1].text == "Changed")
+    ten:_submitEvent({ type = "WindowTitleChanged", id = 9, presentationResource = 1, title = "Presentation" })
+    assert(ui.rows[1].text == "Changed")
+    f.windowWatcher.callback(nil, "AXUIElementDestroyed")
+    assert(#ui.rows == 0)
+    ten.host:_ready(f.window, "created", ten.host.windowCallback)
+    assert(#ui.rows == 1 and ui.rows[1].windowId == stale.windowId)
+    local focuses = f.focuses
+    ui.complete(stale); assert(f.focuses == focuses and ui.rejection:find("stale-chooser-target", 1, true))
+    ui.complete({ windowId = 9 }); assert(f.focuses == focuses)
+    local last = ui.rows[1]
+    ten:stop(); assert(ui.deleted and not ui.visible and not ui.complete and not ten.windowChooser)
+    assert(not ten:_chooseWindow(last))
+    ten:start(); local restarted = chooserUI()
+    ten:_submitCommand({ type = "OpenWindowChooser" })
+    assert(restarted ~= ui and #restarted.rows == 1 and not ui.complete)
+    focuses = f.focuses
+    restarted.complete(restarted.rows[1])
+    assert(f.focuses == focuses + 1 and not restarted.rejection)
+    ten:stop(); assert(restarted.deleted and not restarted.visible and not restarted.complete)
+  end,
+  ["CHOOSE-001 WIN-001: excluded lifetime has no chooser row"] = function()
+    local f = fakeHs(); local ten = load(f):configure({ builtInDisplayUUID = "built-in", rules = {
+      { match = {}, action = "exclude" },
+    } }):start(); local ui = chooserUI()
+    ten:_submitCommand({ type = "OpenWindowChooser" }); assert(#ui.rows == 0)
+    f.windowWatcher.callback(nil, "AXTitleChanged"); assert(#ui.rows == 0)
+    ten:stop()
+  end,
+  ["CHOOSE-001 CHOOSE-003: unplaced fullscreen title and termination retain then remove row"] = function()
+    local f = fakeHs(); f.fullscreen = true; f.owners = { "fullscreen-space" }
+    hs.spaces.spaceType = function(id) return id == "fullscreen-space" and "fullscreen" or "user" end
+    local ten = load(f):start(); local ui = chooserUI()
+    ten.host:_ready(f.window, "targetedReadiness", ten.host.windowCallback)
+    ten:_submitCommand({ type = "OpenWindowChooser" }); assert(#ui.rows == 1)
+    local focuses = f.focuses
+    ui.complete(ui.rows[1]); assert(f.focuses == focuses and not ten.focusHistory:pending())
+    f.window.title = function() return "Fullscreen title" end
+    f.windowWatcher.callback(nil, "AXTitleChanged"); assert(ui.rows[1].text == "Fullscreen title")
+    f.life.callback(nil, hs.application.watcher.terminated, f.window:application())
+    assert(#ui.rows == 0); ten:stop()
+  end,
+  ["CHOOSE-003 FOCUS-006: unavailable selection preserves pending authority and retained rows"] = function()
+    local f = fakeHs(); local ten = load(f):start(); local ui = chooserUI()
+    ten:_submitCommand({ type = "OpenWindowChooser" }); local choice = ui.rows[1]
+    for _, event in ipairs({ { type = "WindowMinimized", id = 9 },
+      { type = "ApplicationHidden", pid = 8 }, { type = "WindowEnteredNativeFullscreen", id = 9 } }) do
+      if event.id then event.resource = choice.lease end
+      ten:_submitEvent(event)
+      ten.focusHistory:request({ windowId = 9, spaceId = "space" })
+      local focuses = f.focuses
+      assert(not ten:_chooseWindow(choice))
+      assert(f.focuses == focuses and ten.focusHistory:pending().windowId == 9 and #ui.rows == 1)
+    end
+    ten:stop()
+  end,
+  ["CHOOSE-003 FOCUS-006: current-resource cross-scope selection commits latest target without reordering"] = function()
+    local f = fakeHs(); local ten = load(f):start(); local ui = chooserUI()
+    ten:_submitCommand({ type = "OpenWindowChooser" }); local first = ui.rows[1]
+    local focusCount = 0
+    local handle = { id = function() return 10 end, focus = function() focusCount = focusCount + 1 end,
+      frame = function() return { x = 0, y = 0, w = 1, h = 1 } end, setFrame = function() end }
+    local ready = { type = "WindowReady", id = 10, resource = 1010, appResource = 88,
+      displayId = "built-in", spaceId = "next-space", title = "Second", application = { pid = 8, name = "App" } }
+    ten:_submitEvent(ready, handle)
+    assert(#ui.rows == 2 and ui.rows[1].windowId == first.windowId)
+    local second = ui.rows[2]
+    assert(ten:_chooseWindow(second) and focusCount == 1)
+    assert(ten.focusHistory:pending().windowId == 10)
+    assert(ten:_chooseWindow(first) and ten.focusHistory:pending().windowId == 9)
+    assert(not ten.cores["next-space"]:state().manager.focus.desiredBySpace["next-space"].pending)
+    ui.complete(nil); assert(ten.focusHistory:pending().windowId == 9)
+    ready.spaceId = "space"; ten:_submitEvent(ready, handle)
+    assert(#ui.rows == 2 and ui.rows[2].windowId == 10)
+    assert(ten:_chooseWindow(second)) -- Old row's resource resolves its current route.
+    ready.spaceId = "next-space"; ten:_submitEvent(ready, handle)
+    ten:_retireSpace("next-space")
+    local focuses = f.focuses
+    assert(not ten:_chooseWindow(second) and f.focuses == focuses and #ui.rows == 2)
+    ten:stop()
+  end,
   ["LIFE-004 PERF-001: native image preparation retries failures and loads once without creating workers"] = function()
     local original = package.loadlib
     local loads, creates, initializers = 0, 0, 0

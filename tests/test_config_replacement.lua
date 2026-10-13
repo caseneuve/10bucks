@@ -30,11 +30,14 @@ return {
     local cycle = {}; cycle[1] = cycle
     assert(not pcall(Config.build, { rules = cycle }))
   end,
-  ["SPACE-001 SPACE-003 SPACE-004 SPACE-005 CMD-001: 25 defaults preserve existing commands and copy desktop fields"] = function()
+  ["SPACE-001 SPACE-003 SPACE-004 SPACE-005 CMD-001: chooser and desktop defaults preserve existing commands and copy desktop fields"] = function()
     local callbacks, events = {}, {}
     local hs = { hotkey = { bind = function(_, key, callback) callbacks[key] = callback; return { delete = function() end } end } }
     local bound = Bindings.bind(hs, function(event) events[#events + 1] = event end, Config.build().hotkeys)
-    assert(#bound == 25)
+    local count = 0; for _, binding in pairs(Config.build().hotkeys) do if binding ~= false then count = count + 1 end end
+    assert(#bound == count)
+    callbacks.w(); assert(events[#events].type == "OpenWindowChooser")
+    assert(Config.build({ hotkeys = { chooseWindow = false } }).hotkeys.chooseWindow == false)
     assert(callbacks.c == nil) -- reserved by the user's external launcher, not 10bucks
     callbacks.d(); assert(events[#events].type == "CreateRegularDesktop")
     assert(Config.build({ hotkeys = { createDesktop = false } }).hotkeys.createDesktop == false)
@@ -96,7 +99,7 @@ return {
   ["Canary A bindings dispatch only validated commands and delete every binding"] = function()
     local calls, deleted, command = {}, 0, nil
     local hs = { hotkey = { bind = function(_, _, callback) calls[#calls + 1] = callback; return { delete = function() deleted = deleted + 1 end } end } }
-    local config = Config.build({ hotkeys = { cycleLayout = false, focusLeftGroup = false, focusRightGroup = false, focusPrevious = false, focusNext = { { "cmd" }, "j" }, focusManagedPrevious = false, moveFocusedToOtherGroup = false, swapGroups = false, resizeLeft = false, resizeRight = false, resetRatio = false, reflow = false } })
+    local config = Config.build({ hotkeys = { cycleLayout = false, focusLeftGroup = false, focusRightGroup = false, focusPrevious = false, focusNext = { { "cmd" }, "j" }, focusManagedPrevious = false, chooseWindow = false, moveFocusedToOtherGroup = false, swapGroups = false, resizeLeft = false, resizeRight = false, resetRatio = false, reflow = false } })
     for name in pairs(config.hotkeys) do if name:find("Desktop", 1, true) then config.hotkeys[name] = false end end
     local bound = Bindings.bind(hs, function(value) command = value end, config.hotkeys)
     assert(#bound == 1); calls[1](); assert(command.type == "FocusNext"); Bindings.delete(bound); assert(deleted == 1)

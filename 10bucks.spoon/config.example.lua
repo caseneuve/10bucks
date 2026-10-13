@@ -15,6 +15,7 @@ return {
     focusPrevious = { hyper, "k" },
     focusNext = { hyper, "j" },
     focusManagedPrevious = { hyper, "'" },
+    chooseWindow = { hyper, "w" }, -- discovered managed rows; restoration/fullscreen selection deferred
     moveFocusedToOtherGroup = { hyper, "o" },
     swapGroups = { hyper, "g" },
     resizeLeft = { hyper, "[" },

@@ -21,6 +21,8 @@ local NativeBar = require("lib.macos.bar")
 local Runtime = require("lib.runtime")
 local WorkspaceSwitch = require("lib.workspace_switch")
 local Spaces = require("lib.macos.spaces")
+local WindowChooser = require("lib.window_chooser")
+local NativeChooser = require("lib.macos.chooser")
 
 local Tenbucks = {}
 Tenbucks.__index = Tenbucks
@@ -29,7 +31,7 @@ Tenbucks.defaultHotkeys = Config.defaults.hotkeys
 
 function Tenbucks.new(nativeValidity)
   return setmetatable({ nativeValidity = nativeValidity, hotkeyBindings = {}, getenv = os.getenv,
-    focusHistory = FocusHistory.new(), actualPresentation = {}, handleRegistry = HandleRegistry.new() }, Tenbucks):configure({})
+    focusHistory = FocusHistory.new(), chooserRows = {}, actualPresentation = {}, handleRegistry = HandleRegistry.new() }, Tenbucks):configure({})
 end
 
 function Tenbucks:_record(kind)
@@ -264,6 +266,19 @@ function Tenbucks:_coreForManagedWindow(windowId, lease)
   end
 end
 
+function Tenbucks:_updateChooser(event)
+  self.chooserRows = WindowChooser.reduce(self.chooserRows, event)
+  if self.windowChooser then self.windowChooser:refresh() end
+end
+
+function Tenbucks:_cacheReady(event)
+  local route = self.handleRegistry:target(event.id, event.resource)
+  if route and (type(route.lease) == "number" or type(route.lease) == "string") and self:_targetIsManaged(route) then
+    self:_updateChooser({ type = "Upsert", row = { windowId = event.id, lease = route.lease,
+      pid = event.application.pid, text = event.title or "", subText = event.application.name or "" } })
+  end
+end
+
 function Tenbucks:_afterCoreEvent(event, eventCore)
   if event.type == "WindowDestroyed" then
     self.focusHistory:remove(event.id)
@@ -319,6 +334,7 @@ function Tenbucks:_deliverEvent(event, handle)
         for _, id in ipairs(removed) do self.focusHistory:remove(id) end
         self.focusHistory:removeApplication(event.pid)
         self.handleRegistry:forgetPid(event.pid, event.resource)
+        self:_updateChooser({ type = "RemoveApplication", pid = event.pid })
       end
     end)
     self:_publishBar()
@@ -345,6 +361,7 @@ function Tenbucks:_deliverEvent(event, handle)
       if not window.lifecycle.nativeFullscreen then self:_submitCore(owner, { type = "WindowEnteredNativeFullscreen", id = event.id }) end
     end
     rememberReady()
+    self:_cacheReady(event)
     self:_publishBar(); return true
   end
 
@@ -367,6 +384,7 @@ function Tenbucks:_deliverEvent(event, handle)
         self:_submitCore(destination, { type = "WindowExitedNativeFullscreen", id = event.id })
       end
       rememberReady()
+      self:_cacheReady(event)
     end)
     self:_publishBar(); return true
   end
@@ -383,10 +401,14 @@ function Tenbucks:_deliverEvent(event, handle)
       if eventCore then self:_submitCore(eventCore, event) end
       self:_afterCoreEvent(event, eventCore)
       self.handleRegistry:forget(event.id, nil, event.resource)
+      self:_updateChooser({ type = "Remove", windowId = event.id, lease = event.resource })
     end)
   else
     if eventCore then self:_submitCore(eventCore, event) end
     self:_afterCoreEvent(event, eventCore)
+    if event.type == "WindowTitleChanged" and self.handleRegistry:matches(event.id, event.resource) then
+      self:_updateChooser({ type = "Title", windowId = event.id, lease = event.resource, title = event.title })
+    end
   end
   self:_publishBar()
   return true
@@ -395,6 +417,10 @@ end
 function Tenbucks:_focusManagedPrevious()
   local target = self.focusHistory:previous(function(candidate) return self:_targetIsManaged(candidate) end)
   if not target then return false, "no-previous-managed-window" end
+  return self:_focusManagedTarget(target)
+end
+
+function Tenbucks:_focusManagedTarget(target)
   local targetCore = self.cores[target.spaceId]
   local window = targetCore and targetCore:state().manager.windows[target.windowId]
   if window and (window.lifecycle.minimized or window.lifecycle.appHidden) then
@@ -425,7 +451,33 @@ function Tenbucks:_focusManagedPrevious()
   return true
 end
 
+function Tenbucks:_chooseWindow(choice)
+  if not self.started or (type(choice.lease) ~= "number" and type(choice.lease) ~= "string") then
+    return false, "stale-chooser-target"
+  end
+  local target = self.handleRegistry:target(choice.windowId, choice.lease)
+  if not target or not self:_targetIsManaged(target) then return false, "stale-chooser-target" end
+  local core, window = self:_coreForManagedWindow(target.windowId, target.lease)
+  if not window or not Model.isAvailable(window) or self.focusHistory:unplacedTarget(target.windowId) then
+    return false, "chooser-restoration-deferred"
+  end
+  local operation = self.workspace and self.workspace:state().switch.inFlight
+  if operation then
+    if not operation.creating then return false, "desktop-switch-pending" end
+    if core ~= self.core or self.suspended then return false, "desktop-creation-pending" end
+  end
+  return self:_withEffectBatch(function() return self:_focusManagedTarget(target) end)
+end
+
 function Tenbucks:_submitCommand(command)
+  if command.type == "OpenWindowChooser" then
+    if not self.started then return false, "not-started" end
+    if not self.windowChooser then
+      self.windowChooser = NativeChooser.new(hs, function(query) return WindowChooser.filter(self.chooserRows, query) end,
+        function(choice) return self:_chooseWindow(choice) end)
+    end
+    self.windowChooser:show(); return true
+  end
   local operation = self.workspace and self.workspace:state().switch.inFlight
   if operation and operation.creating and (command.type == "CreateRegularDesktop" or command.type == "FocusRegularPosition"
     or command.type == "FocusRelativeRegular" or command.type == "FocusPreviousRegular") then
@@ -691,6 +743,8 @@ function Tenbucks:stop()
   if self.bar then self.bar:stop(); self.bar = nil end
   self.originContext = nil
   self.canaryObservedVersion = nil
+  if self.windowChooser then self.windowChooser:stop(); self.windowChooser = nil end
+  self.chooserRows = {}
   self.focusHistory = FocusHistory.new()
   self.actualPresentation = {}
   self.handleRegistry:clear()

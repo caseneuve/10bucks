@@ -8,6 +8,7 @@ local actions = {
   focusPrevious = "FocusPrevious",
   focusNext = "FocusNext",
   focusManagedPrevious = "FocusManagedPrevious",
+  chooseWindow = "OpenWindowChooser",
   moveFocusedToOtherGroup = "MoveFocusedToOther",
   swapGroups = "SwapGroups",
   resizeLeft = { type = "ResizeRatioDelta", delta = -0.05 },
