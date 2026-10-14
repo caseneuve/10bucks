@@ -1,6 +1,6 @@
 ---
 title: Close recovery returns an underlying member instead of the originating focused window
-status: in_progress
+status: done
 priority: high
 type: bug
 labels: []
@@ -68,6 +68,12 @@ cover activation of another app's existing window before creation. Do not suppre
 legitimate focus or invent opener authority. User's desired recovery remains A;
 no repeat preference question. Prior implementation/native fixture success is scoped,
 not completed real-workflow acceptance. No new host effects authorized by report.
+
+## User acceptance — 2026-10-14
+
+User confirms the corrected HyperReturn launcher and loaded source-recency recovery
+work in the actual workflow: “excellent, works”. BUG0001 closed. Productbb21137,
+launcher correction recorded27ca064; no further native actions performed for closure.
 
 ## Launcher correction — 2026-10-14
 
