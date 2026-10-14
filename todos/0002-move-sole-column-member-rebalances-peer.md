@@ -70,9 +70,17 @@ checkpoint acquisition; no stability claim covers minimize/restore animation.
 Hidden/fullscreen overlapping conditions and unknown-focus rejection are pure
 regression coverage; unchanged actual-focus authority also inspected in source.
 Existing configured-rules native excluded-focus rejection remains applicable;
-it was not rerun for quota. No host deployment, cold-start, pixel or performance
-claim. Review reports remain in `.pi/bug0002-review*.md`.
+it was not rerun for quota. No cold-start, pixel or performance claim. Review
+reports remain in `.pi/bug0002-review*.md`.
+
+**Host delivery / user acceptance:** implementation committed as `f42c953`.
+User subsequently authorized host loading; frozen candidate
+`.pi/host-candidates/move-f42c953-20261014T2205/` loaded alone after the previous
+candidate stopped and its worker drained. Verified 26 enabled bindings, unchanged
+configuration/rules and loaded columns source identity. User then confirmed
+“great” and requested ticket closure. Status remains `done` (delivered), not
+`closed` (abandoned/superseded).
 
 ## Notes
 
-Implementation authorized by the user on 2026-10-14/15; host reload/window actions remain unauthorized. Approved defaults: prepend a moved sole member and preserve other destination order; choose the last available non-selected destination member; reject unchanged if no replacement exists, including only two members. Ordinary moves from a multi-member source still append. Availability uses independent minimized/app-hidden/native-fullscreen conditions. COL-006 deliberately revised before implementation. No app-specific policy. Read `.pi/WORK_STATE.md` for current frozen host and operational authority.
+Implementation and subsequent host load authorized by the user on 2026-10-14; no further host actions implied by ticket closure. Approved defaults: prepend a moved sole member and preserve other destination order; choose the last available non-selected destination member; reject unchanged if no replacement exists, including only two members. Ordinary moves from a multi-member source still append. Availability uses independent minimized/app-hidden/native-fullscreen conditions. COL-006 deliberately revised before implementation. No app-specific policy. Read `.pi/WORK_STATE.md` for current frozen host and operational authority.
