@@ -29,8 +29,8 @@ Tenbucks.__index = Tenbucks
 Tenbucks.name, Tenbucks.version = "10bucks", "Canary A"
 Tenbucks.defaultHotkeys = Config.defaults.hotkeys
 
-function Tenbucks.new(nativeValidity)
-  return setmetatable({ nativeValidity = nativeValidity, hotkeyBindings = {}, getenv = os.getenv,
+function Tenbucks.new(nativeValidity, nativeDiscovery)
+  return setmetatable({ nativeValidity = nativeValidity, nativeDiscovery = nativeDiscovery, hotkeyBindings = {}, getenv = os.getenv,
     focusHistory = FocusHistory.new(), chooserRows = {}, actualPresentation = {}, handleRegistry = HandleRegistry.new() }, Tenbucks):configure({})
 end
 
@@ -522,7 +522,7 @@ function Tenbucks:_startHost(context)
   local host, adapter
   local records = {} -- Host-scoped primitive state; Rules.reduce is its only writer.
   local ok, err = pcall(function()
-    host = Host.new(hs, context, self.instrumentation, self.handleRegistry, self.nativeValidity):start()
+    host = Host.new(hs, context, self.instrumentation, self.handleRegistry, self.nativeValidity, self.nativeDiscovery):start()
     local native = {
       subscribeApplications = function(callback) return host:subscribeApplications(callback) end,
       subscribeExistingWindows = function(callback, bootstrap) return host:subscribeExistingWindows(callback, bootstrap) end,
@@ -693,6 +693,8 @@ function Tenbucks:start()
     -- injected worker factories may omit this optional preparation operation.
     local validity = self.nativeValidity or require("lib.macos.ax_validity")
     if validity.prepare then validity.prepare() end
+    local discovery = self.nativeDiscovery or require("lib.macos.regular_discovery")
+    if discovery.prepare then discovery.prepare() end
     if not self.starting then return end
     local style = hs.host and hs.host.interfaceStyle and hs.host.interfaceStyle() or nil
     self.darkAppearance = style == "Dark" -- appearance-change notification remains Hypothesis; no polling.

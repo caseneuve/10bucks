@@ -48,6 +48,7 @@ local function fakeHs(options)
   _G.hs = { processInfo = { processID = 1 }, screen = { allScreens = function() return { screen } end },
     spaces = { activeSpaceOnScreen = function() return f.activeSpace or "space" end, spaceType = function() return "user" end,
       data_managedDisplaySpaces = function() local active = f.activeSpace or "space"; return { { ["Display Identifier"] = "built-in", ["Current Space"] = { ManagedSpaceID = active }, Spaces = f.topology or { { ManagedSpaceID = "space", type = 0 }, { ManagedSpaceID = "next-space", type = 0 } } } } end,
+      allSpaces = function() return { ["built-in"] = { "space" } } end,
       windowsForSpace = function() return f.members end, windowSpaces = function() return f.owners end,
       watcher = { new = contextWatcher } },
     axuielement = { applicationElement = function(x) assert(x == dock); return dockElement end,
@@ -77,13 +78,18 @@ local function fakeHs(options)
   return f, element
 end
 
+local function discoveryFake()
+  return { inventory = function() return { { windowId = 9, pid = 8, layer = 0 } } end,
+    create = function() return { poll = function() return { done = true, results = {} } end, cancel = function() end } end }
+end
+
 local function validityFake()
   return {create=function()return {set=function()end,poll=function()return {} end,stop=function()end}end}
 end
 
 local function load(f)
   package.loaded["init"] = nil
-  local ten = dofile("10bucks.spoon/init.lua").new(validityFake())
+  local ten = dofile("10bucks.spoon/init.lua").new(validityFake(), discoveryFake())
   ten:configure({ builtInDisplayUUID = "built-in" })
   return ten
 end
@@ -98,7 +104,7 @@ local function loadConfiguredFile(f, config)
   local Config = require("lib.config")
   local original = Config.loadFile
   Config.loadFile = function(path) assert(path == "test-config.lua"); return config end
-  local ten = dofile("10bucks.spoon/init.lua").new(validityFake())
+  local ten = dofile("10bucks.spoon/init.lua").new(validityFake(), discoveryFake())
   local ok, err = pcall(function() ten:configureFile("test-config.lua"):bindHotkeys():start() end)
   Config.loadFile = original
   assert(ok, err)
@@ -190,6 +196,34 @@ local function chooserUI()
 end
 
 return {
+  ["CHOOSE-001 CHOOSE-002 DISC-001: best-effort chooser opens confirmed cache while pending or incomplete"] = function()
+    local f = fakeHs(); f.members = { 9, 10 }
+    local ten = load(f)
+    local done, cancelled = false, false
+    local job = { poll = function() return { done = done, results = {} } end,
+      cancel = function() cancelled = true end }
+    ten.nativeDiscovery = {
+      inventory = function() return { { windowId = 9, pid = 8, layer = 0 }, { windowId = 10, pid = 8, layer = 0 } } end,
+      create = function() return job end,
+    }
+    local callback
+    hs.timer.doAfter = function(_, fn) callback = fn; return { stop = function() end } end
+    ten:start()
+    local ui = chooserUI()
+    assert(ten.host:discoveryStatus().pending and not ten.host:discoveryStatus().complete)
+    local scans, queries, frames, focuses = f.scans, f.focusedWindowQueries, f.frames, f.focuses
+    assert(ten:_submitCommand({ type = "OpenWindowChooser" }) and ui.visible)
+    assert(#ui.rows == 1 and ui.rows[1].windowId == 9 and not ui.rejection)
+    assert(f.scans == scans and f.focusedWindowQueries == queries and f.frames == frames and f.focuses == focuses)
+    ui:hide(); done = true; callback()
+    local status = ten.host:discoveryStatus()
+    assert(not status.pending and not status.complete and status.unresolvedCount == 1 and cancelled)
+    assert(ten:_submitCommand({ type = "OpenWindowChooser" }) and ui.visible)
+    assert(#ui.rows == 1 and ui.rows[1].windowId == 9 and not ui.rejection)
+    assert(not ten.core:state().manager.windows[10])
+    assert(f.scans == scans and f.focusedWindowQueries == queries and f.frames == frames and f.focuses == focuses)
+    ten:stop()
+  end,
   ["CHOOSE-001 CHOOSE-002 CHOOSE-003: accepted rows update without invocation queries and stop disposes UI"] = function()
     local f = fakeHs(); local ten = load(f):start(); local ui = chooserUI()
     local scans, queries = f.scans, f.focusedWindowQueries
@@ -845,7 +879,7 @@ return {
       hs.axuielement.windowElement=function(w)return elements[w]end
       local factory={create=function()return {set=function(_,_,t)token=t end,
         poll=function()return rows or {} end,stop=function()end}end}
-      local ten=dofile('10bucks.spoon/init.lua').new(factory):configure({builtInDisplayUUID='built-in'}):start()
+      local ten=dofile('10bucks.spoon/init.lua').new(factory, discoveryFake()):configure({builtInDisplayUUID='built-in'}):start()
       ten.core:submit({type='CycleLayout'})
       for i=2,count do
         local w={};for k,v in pairs(f.window)do w[k]=v end

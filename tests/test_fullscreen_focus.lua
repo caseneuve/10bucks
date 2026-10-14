@@ -38,6 +38,7 @@ local function setup()
   _G.hs = { processInfo = { processID = 99 }, screen = { allScreens = function() return { screen } end, watcher = { new = function(callback) return watcher(callback) end } },
     spaces = { activeSpaceOnScreen = function() return f.activeSpace end,
       data_managedDisplaySpaces = function() return { { ["Display Identifier"] = "built-in", ["Current Space"] = { ManagedSpaceID = f.activeSpace }, Spaces = { { ManagedSpaceID = "regular", type = 0 }, { ManagedSpaceID = "full", type = 4 } } } } end,
+      allSpaces = function() return { ["built-in"] = { "regular", "full" } } end,
       spaceType = function(id) return id == "full" and "fullscreen" or "user" end,
       windowsForSpace = function(space) local ids = {}; for id in ipairs(windows) do if owner(id) == space then ids[#ids + 1] = id end end; return ids end,
       windowSpaces = function(id) return { owner(id) } end,
@@ -74,7 +75,11 @@ local function setup()
     timer = { secondsSinceEpoch = function() return 1 end, doAfter = function() return barTimer() end, doEvery = function() return barTimer() end },
     hotkey = { bind = function() return { delete = function() end } end },
   }
-  local ten = dofile("10bucks.spoon/init.lua").new({create=function()return {set=function()end,poll=function()return {}end,stop=function()end}end}):configure({ builtInDisplayUUID = "built-in" }):start()
+  local discovery = { inventory = function()
+    local rows = {}; for id in ipairs(windows) do rows[#rows + 1] = { windowId = id, pid = 41, layer = 0 } end
+    return rows
+  end, create = function() error("all fixture windows exposed") end }
+  local ten = dofile("10bucks.spoon/init.lua").new({create=function()return {set=function()end,poll=function()return {}end,stop=function()end}end}, discovery):configure({ builtInDisplayUUID = "built-in" }):start()
   f.ten, f.windows = ten, windows
   function f:activateRegular()
     self.activeSpace, self.focused = "regular", windows[2]
@@ -89,9 +94,10 @@ end
 return {
   ["FS-004 FS-005 FOCUS-003: cold fullscreen is tracked without a Core, layout slot, frame, or focus request"] = function()
     local f, ten = setup()
-    assert(ten.core == nil and next(ten.cores) == nil and ten.suspended)
+    assert(ten.core == nil and ten.suspended)
     assert(ten.focusHistory:unplacedTarget(1) and #ten.focusHistory:snapshot() == 1)
-    assert(next(f.frames) == nil and #f.focuses == 0 and f.scans == 0)
+    assert(ten.cores.regular and ten.cores.regular:state().manager.windows[2])
+    assert(next(f.frames) == nil and #f.focuses == 0 and f.scans == 1)
     assert(not ten:_submitCommand({ type = "FocusNext" }))
     ten:stop()
   end,

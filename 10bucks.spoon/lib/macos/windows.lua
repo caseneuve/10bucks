@@ -150,7 +150,8 @@ function Windows:_readyTransaction(observation, generation)
   -- an existing readiness boundary with the same identity and observation.
   if (not ok or accepted == false) and not committed and entry then entry.managed = previouslyManaged end
   if not ok then error(accepted, 0) end
-  return accepted ~= false and event.decision.action == "manage"
+  if accepted == false then return false end
+  return event.decision.action == "exclude" and "excluded" or true
 end
 
 function Windows:_probe(id, generation, force)

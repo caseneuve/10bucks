@@ -292,9 +292,9 @@ Optional predicates receive immutable normalized metadata. They MUST NOT receive
 
 ## Discovery
 
-### DISC-001 — Active-first bootstrap
+### DISC-001 — Bounded regular-desktop cold bootstrap
 
-MVP bootstraps pre-existing windows on the active regular Space. Pre-existing inactive-Space windows become candidates when that Space first activates unless a POC proves earlier authoritative discovery is cheap.
+MVP performs one bounded best-effort startup discovery across regular desktops, without activating those desktops or requesting focus. Native inventory is a discovery hint, not management or liveness proof; each admission requires confirmed native ownership, eligibility and exact resource identity. Unresolved candidates remain unknown, never guessed, excluded or removed merely to claim completeness. Startup records attempt settlement separately from complete resolution. Confirmed managed chooser rows remain usable while discovery is pending or incomplete; the chooser MUST NOT add discovery warnings or block opening. Regular-desktop activation and native lifecycle events continue incremental discovery afterward, without permanent retry polling. This user-approved MVP does not guarantee every pre-existing window is resolved at cold start. Fullscreen/minimized cold-start discovery remains deferred to TODO0003; already discovered unavailable members retain their existing state.
 
 ### DISC-002 — Uncertain unavailable windows
 

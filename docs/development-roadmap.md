@@ -109,9 +109,17 @@ This does not establish host-manual readiness or deliver roadmap step 5 restorat
 name by match quality, with application-name priority on equal quality; empty
 queries retain admission order. Generic pure/native ranked-row acceptance and
 separate measurements are recorded in [`pocs/022-chooser-relevance-ranking.md`](pocs/022-chooser-relevance-ranking.md).
-The user simplified MVP to existing managed state; broader cold-start/fullscreen/
-minimized discovery remains investigation [`0003`](../todos/0003-chooser-global-unavailable-window-discovery.md),
-not a shipped global-discovery or restoration feature.
+The user deferred fullscreen/minimized cold-start discovery to investigation
+[`0003`](../todos/0003-chooser-global-unavailable-window-discovery.md). The ranking
+checkpoint did not implement regular-desktop cold-start discovery; its complete
+chooser-delivery claim was rejected by the user. The subsequent user-approved MVP
+is one bounded best-effort regular-desktop startup attempt, with confirmed rows usable
+and no discovery warnings or blocking in the chooser. Unresolved candidates remain
+unknown; ordinary desktop visits/lifecycle events continue discovery. This correction
+is recorded with passing cold-start acceptance in
+[`pocs/023-bounded-regular-desktop-bootstrap.md`](pocs/023-bounded-regular-desktop-bootstrap.md).
+Its inclusive initialization-service failure remains explicit; no complete discovery
+or fully responsive cold-initialization guarantee is claimed. Restoration is separate.
 
 **Next: reported bugs, with deliberate contract decisions.** The user's updated
 scheduling decision on 2026-10-13 is chooser first, then:

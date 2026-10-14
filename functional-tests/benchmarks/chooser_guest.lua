@@ -73,7 +73,13 @@ local function tick()
   -- Fixture readiness and manager count, not representation-specific chooser assertions.
   if s.c:canaryStatus().memberCount~=(s.index==4 and 3 or s.index) then return end
   if s.index<4 then s.index=s.index+1;s.fixture:request('create',({'A','B','C','D'})[s.index]);s.phase='create'
-  else s.index=0;s.phase='next' end
+  else
+   s.raw.discoveryAtFixtureJoin=s.c.host:discoveryStatus();s.index=0;s.phase='startupTerminal'
+  end
+ elseif s.phase=='startupTerminal' then
+  local status=s.c.host:discoveryStatus()
+  if status.pending then return end
+  s.raw.discoveryBeforeFirstMeasure=status;s.raw.startupTerminalObserved=now();write();s.phase='next'
  elseif s.phase=='next' then
   s.index=s.index+1
   if s.index>(s.raw.mode=='warm' and 11 or 1) then s.raw.status='complete';s.phase='cleanup';return end

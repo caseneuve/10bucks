@@ -33,9 +33,9 @@ local function booleanOrNil(value)
   return nil
 end
 
-function Host.new(hs, context, instrumentation, handleRegistry, nativeValidity)
+function Host.new(hs, context, instrumentation, handleRegistry, nativeValidity, nativeDiscovery)
   return setmetatable({ hs = hs, context = context, instrumentation = instrumentation, handleRegistry = handleRegistry,
-    nativeValidity = nativeValidity, validitySerial = 0, generation = 0, serial = 0, started = false, owned = {}, appResources = {}, handles = {}, managedObservers = {}, frames = {}, readiness = {} }, Host)
+    nativeDiscovery = nativeDiscovery, nativeValidity = nativeValidity, validitySerial = 0, generation = 0, serial = 0, started = false, owned = {}, appResources = {}, handles = {}, managedObservers = {}, frames = {}, readiness = {} }, Host)
 end
 
 function Host:_record(kind)
@@ -278,6 +278,7 @@ function Host:_ready(window, origin, callback, membershipSet, token)
   local ok, accepted = pcall(callback, { kind = "ready", metadata = metadata, handle = window, resource = record.lease, appResource = record.appLease })
   if token and accepted ~= "uncertain" and self.readiness[id] == token then self:_cancelReadiness(id) end
   if not ok then error(accepted, 0) end
+  if accepted == "excluded" then return "excluded" end
   return accepted == "uncertain" and "uncertain" or (accepted == false and "rejected" or "ready")
 end
 
@@ -456,8 +457,145 @@ function Host:subscribeApplications(callback)
   return self:_startOwned(watcher)
 end
 
+function Host:discoveryStatus()
+  local s = self.startupDiscovery or { pending = false, complete = false, unresolvedCount = 0, reason = "not-started" }
+  return { pending = s.pending, complete = s.complete, unresolvedCount = s.unresolvedCount, reason = s.reason }
+end
+
+function Host:_bootstrapRegular(callback)
+  local factory = self.nativeDiscovery or require("lib.macos.regular_discovery")
+  local generation, candidates, seen, missing = self.generation, {}, {}, {}
+  self.startupDiscovery = { pending = true, complete = false, unresolvedCount = 0 }
+  local topology = moduleCall(self.hs.spaces.allSpaces)
+  local inventory = moduleCall(factory.inventory)
+  if type(topology) ~= "table" or type(inventory) ~= "table" then
+    self.startupDiscovery = { pending = false, complete = false, unresolvedCount = 0, reason = "inventory-unavailable" }
+    return
+  end
+  local regular = {}
+  for _, spaces in pairs(topology) do
+    for _, space in ipairs(spaces) do
+      local kind = moduleCall(self.hs.spaces.spaceType, space)
+      if not kind then
+        self.startupDiscovery = { pending = false, complete = false, unresolvedCount = 0, reason = "ownership-unavailable" }
+        return
+      end
+      if kind == "user" then
+        local ids = moduleCall(self.hs.spaces.windowsForSpace, space)
+        if type(ids) ~= "table" then
+          self.startupDiscovery = { pending = false, complete = false, unresolvedCount = 0, reason = "ownership-unavailable" }
+          return
+        end
+        for _, id in ipairs(ids) do regular[id] = true end
+      end
+    end
+  end
+  for _, row in ipairs(inventory) do
+    if regular[row.windowId] and row.pid ~= self.hs.processInfo.processID then
+      candidates[row.windowId] = row
+    end
+  end
+  self:_record("bootstrapApplicationQueries")
+  for _, app in ipairs(self.hs.application.runningApplications()) do
+    if not self.started or generation ~= self.generation then return end
+    pcall(self._attachApp, self, app, callback)
+    local ok, windows = pcall(app.allWindows, app)
+    if ok and type(windows) == "table" then
+      for _, window in ipairs(windows) do
+        if not self.started or generation ~= self.generation then return end
+        local id = call(window, "id")
+        local candidate = candidates[id]
+        if candidate and call(app, "pid") == candidate.pid then
+          local outcome = self:_ready(window, "bootstrap", callback)
+          seen[id] = outcome == "ready" or outcome == "excluded"
+        end
+      end
+    end
+  end
+  local captured = {}
+  for id, row in pairs(candidates) do
+    if not seen[id] then
+      missing[#missing + 1] = { pid = row.pid, windowId = id }
+      captured[row.pid] = self.appResources[row.pid]
+    end
+  end
+  -- Scheduling only: normal-level hints get the finite budget first. Every
+  -- foreign regular candidate remains required, including higher-level rows.
+  table.sort(missing, function(a, b)
+    local normalA = candidates[a.windowId].layer == 0
+    local normalB = candidates[b.windowId].layer == 0
+    if normalA ~= normalB then return normalA end
+    if a.pid ~= b.pid then return a.pid < b.pid end
+    return a.windowId < b.windowId
+  end)
+  local function finish(count, reason)
+    self.startupDiscovery = { pending = false, complete = count == 0 and not reason,
+      unresolvedCount = count, reason = reason }
+  end
+  if #missing == 0 then finish(0); return end
+  local job = moduleCall(factory.create, missing)
+  if not self.started or generation ~= self.generation then
+    if job then call(job, "cancel") end
+    return
+  end
+  if not job then finish(#missing, "resolution-unavailable"); return end
+  self.discoveryJob = job
+  local clock = self.hs.timer and self.hs.timer.absoluteTime
+    and function() return self.hs.timer.absoluteTime() / 1e9 end or os.clock
+  local deadline, timer = clock() + 1, nil
+  local function current()
+    return self.started and generation == self.generation and self.discoveryJob == job
+  end
+  local function settle(count, reason)
+    if not current() then return end
+    if timer then pcall(timer.stop, timer); timer = nil end
+    call(job, "cancel")
+    if not current() then return end
+    self.discoveryJob, self.startupTimer = nil, nil
+    finish(count, reason)
+    if count == 0 and not reason then self:observeFocus() end
+  end
+  local poll
+  poll = function()
+    if not current() then return end
+    self.startupTimer, timer = nil, nil
+    local ok = pcall(function()
+      if clock() >= deadline then settle(#missing, "resolution-timeout"); return end
+      local result = job:poll()
+      if not current() then return end
+      if result and result.done then
+        local unresolved = #missing
+        for _, row in ipairs(result.results or {}) do
+          if not current() then return end
+          local candidate, app = candidates[row.windowId], captured[row.pid]
+          local window = candidate and candidate.pid == row.pid and not seen[row.windowId] and asWindow(row.ax)
+          if not current() then return end
+          if window and app and app.active and self.appResources[row.pid] == app
+            and call(window, "id") == row.windowId and call(window, "application") == app.app then
+            if not current() then return end
+            local outcome = self:_ready(window, "bootstrap", callback)
+            if outcome == "ready" or outcome == "excluded" then
+              seen[row.windowId] = true; unresolved = unresolved - 1
+            end
+          end
+        end
+        settle(unresolved, unresolved > 0 and "unresolved-candidates" or nil)
+      else
+        timer = assert(self.hs.timer.doAfter(0.01, poll), "discovery timer unavailable")
+        if current() then self.startupTimer = timer else pcall(timer.stop, timer) end
+      end
+    end)
+    if not ok then settle(#missing, "resolution-failed") end
+  end
+  poll()
+end
+
 function Host:subscribeExistingWindows(callback, bootstrap, attempt)
   self.windowCallback = callback
+  if bootstrap ~= false then
+    self:_bootstrapRegular(callback)
+    return { detach = function() end }
+  end
   local members
   if self.context.regularSpaceId then
     members = {}
@@ -518,25 +656,7 @@ function Host:subscribeExistingWindows(callback, bootstrap, attempt)
     end
     return { detach = function() end }
   end
-  self:_record("bootstrapApplicationQueries")
-  local generation = self.generation
-  for _, app in ipairs(self.hs.application.runningApplications()) do
-    if not self.started or self.generation ~= generation then break end
-    pcall(self._attachApp, self, app, callback)
-    if not self.started or self.generation ~= generation then break end
-    -- Enumeration remains complete even for a conflicting candidate; _ready
-    -- applies the retained app-identity guard before it can admit a window.
-    -- Failure for one app is non-destructive for its peers.
-    if members then
-      local ok, windows = pcall(app.allWindows, app)
-      if ok and type(windows) == "table" then
-        for _, window in ipairs(windows) do
-          if not self.started or self.generation ~= generation then break end
-          self:_ready(window, "bootstrap", callback, members)
-        end
-      end
-    end
-  end
+  self:_bootstrapRegular(callback)
   return { detach = function() end }
 end
 
@@ -622,6 +742,9 @@ function Host:stop()
   if not self.started then return self end
   self.started = false; self.generation = self.generation + 1
   self:_cancelValidity()
+  if self.startupTimer then pcall(self.startupTimer.stop, self.startupTimer); self.startupTimer = nil end
+  if self.discoveryJob then call(self.discoveryJob, "cancel"); self.discoveryJob = nil end
+  self.startupDiscovery = { pending = false, complete = false, unresolvedCount = 0, reason = "stopped" }
   local worker = self.validityWorker; self.validityWorker = nil
   if worker and not pcall(worker.stop, worker) then self.validityError = "worker_stop_failed" end
   for id in pairs(self.readiness) do self:_cancelReadiness(id) end

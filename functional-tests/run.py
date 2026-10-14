@@ -15,6 +15,19 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = "10bucks-functional-sip-base-20261011"
 
 
+def parse_ipc_response(stdout):
+    """Transport logs may follow the response; accept exactly one JSON line."""
+    responses = []
+    for line in stdout.splitlines():
+        try:
+            responses.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    if len(responses) != 1:
+        raise ValueError('expected exactly one IPC JSON response')
+    return responses[0]
+
+
 def evidence_complete(result, *, configured_rules=False, managed_window_chooser=False):
     return (isinstance(result, dict) and type(result.get('dropped')) is int and result['dropped'] == 0
             and isinstance(result.get('trace'), list) and len(result['trace']) > 0
@@ -27,7 +40,7 @@ def evidence_complete(result, *, configured_rules=False, managed_window_chooser=
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=["rules-benchmark", "desktop-switching-benchmark", "desktop-creation-benchmark", "configured-rules", "managed-window-chooser", "desktop-creation-race", "columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching", "desktop-creation"])
+    parser.add_argument("scenario", choices=["rules-benchmark", "desktop-switching-benchmark", "desktop-creation-benchmark", "configured-rules", "managed-window-chooser", "managed-window-chooser-cold-start", "desktop-creation-race", "columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching", "desktop-creation"])
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--demo", action="store_true", help="2s pauses between actions; not a latency benchmark")
     parser.add_argument("--bar-capture", action="store_true", help="capture native bar outside/hover/return pixels for independent visual review")
@@ -48,7 +61,7 @@ def main():
         parser.error('--desktop-fullscreen requires desktop-switching without --desktop-benchmark')
     if desktop_benchmark and args.scenario not in ('desktop-switching','desktop-creation'):
         parser.error('--desktop-benchmark requires desktop-switching')
-    if args.scenario in ('desktop-switching', 'configured-rules', 'managed-window-chooser') and (args.demo or args.bar_capture):
+    if args.scenario in ('desktop-switching', 'configured-rules', 'managed-window-chooser', 'managed-window-chooser-cold-start') and (args.demo or args.bar_capture):
         parser.error('desktop-switching cannot combine demo/bar pauses with its watchdog')
     if args.demo and args.scenario=='stack-columns-membership':
         parser.error('--demo cannot fit the combined scenario watchdog; run without --demo')
@@ -119,8 +132,8 @@ def main():
             (results / 'ipc-request-failure.txt').write_text(r.stdout + '\nSTDERR:\n' + r.stderr)
             raise RuntimeError("guest Hammerspoon request failed; raw output preserved")
         try:
-            return json.loads(r.stdout.strip().splitlines()[-1])
-        except (json.JSONDecodeError, IndexError) as exc:
+            return parse_ipc_response(r.stdout)
+        except ValueError as exc:
             (results / 'ipc-parse-failure.txt').write_text(r.stdout + '\nSTDERR:\n' + r.stderr)
             raise RuntimeError('guest IPC JSON parse failed; raw transport output preserved') from exc
 
@@ -299,7 +312,7 @@ def main():
         ssh(f"mkdir -m 700 {control}")
         hs('ft=dofile("' + guest_root + ('/functional-tests/benchmarks/guest.lua' if rules_benchmark else '/functional-tests/benchmarks/desktop_guest.lua' if desktop_benchmark else '/functional-tests/guest.lua') + '"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
-           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization") else "columns"}",configuredRules={str(args.scenario == "configured-rules").lower()},managedWindowChooser={str(args.scenario == "managed-window-chooser").lower()},desktopSwitching={str(args.scenario in ("managed-window-chooser","configured-rules","desktop-switching","desktop-creation","desktop-creation-race")).lower()},desktopCreation={str(args.scenario in ("desktop-creation","desktop-creation-race")).lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
+           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization") else "columns"}",configuredRules={str(args.scenario == "configured-rules").lower()},coldStart={str(args.scenario == "managed-window-chooser-cold-start").lower()},managedWindowChooser={str(args.scenario in ("managed-window-chooser","managed-window-chooser-cold-start")).lower()},desktopSwitching={str(args.scenario in ("managed-window-chooser-cold-start","managed-window-chooser","configured-rules","desktop-switching","desktop-creation","desktop-creation-race")).lower()},desktopCreation={str(args.scenario in ("desktop-creation","desktop-creation-race")).lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
         driver = Driver()
         if rules_benchmark:
             module.run(driver, mode=args.benchmark_mode)
@@ -442,7 +455,7 @@ def main():
                 "run": nonce, "source": str(snapshot), "acceptance": False}, indent=2))
         guest_result = read('guest-result.json')
         evidence_ok = evidence_complete(guest_result, configured_rules=args.scenario == 'configured-rules',
-                                        managed_window_chooser=args.scenario == 'managed-window-chooser')
+                                        managed_window_chooser=args.scenario in ('managed-window-chooser','managed-window-chooser-cold-start'))
         cleanup['completeEvidence'] = evidence_ok
         success = evidence_ok and passed and error is None and not (final or {}).get("error") and (args.reuse_debug or (cleanup.get("vmStopped") and cleanup.get("tartExited"))) and cleanup.get("guest", {}).get("ok") is True
         summary = {"pass": bool(success), "scenarioPassed": passed, "error": error,

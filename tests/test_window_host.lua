@@ -1,4 +1,15 @@
-local Host = require("lib.macos.window_host")
+local NativeHost = require("lib.macos.window_host")
+local Host = { new = function(hs, context, instrumentation, registry, validity, discovery)
+  return NativeHost.new(hs, context, instrumentation, registry, validity, discovery or {
+    inventory = function()
+      local rows = {}; for _, id in ipairs(hs.spaces.windowsForSpace(context.regularSpaceId or 9)) do
+        rows[#rows + 1] = { windowId = id, pid = 7, layer = 0 }
+      end
+      return rows
+    end,
+    create = function() return { poll = function() return { done = true, results = {} } end, cancel = function() end } end,
+  })
+end }
 local Registry = require("lib.macos.handle_registry")
 local Windows = require("lib.macos.windows")
 
@@ -18,6 +29,7 @@ local function fake()
   f.actual = { x = 0, y = 0, w = 10, h = 10 }
   f.window = { isMinimized = function() return false end, id = function() return 9 end, title = function() return "Title" end, application = function() return app end, role = function() return "AXWindow" end, subrole = function() return "AXStandardWindow" end, isFullScreen = function() return f.fullscreen end, newWatcher = function(_, callback) return windowWatcher(callback) end, frame = function() f.frameReads = (f.frameReads or 0) + 1; return f.actual end, setFrame = function(_, frame, duration) f.duration = duration; f.writes = (f.writes or 0) + 1; f.actual = frame end, focus = function() f.focusRequests = f.focusRequests + 1 end }
   f.hs = { processInfo = { processID = 1 }, window = { focusedWindow = function() f.focusedWindowQueries = f.focusedWindowQueries + 1; if f.focusedWindowError then error("focused-window read failed") end; return f.focusedWindow end }, axuielement = { windowElement = function() return element end }, spaces = { windowsForSpace = function() f.membershipQueries = f.membershipQueries + 1; return f.members end, windowSpaces = function() f.ownerQueries = f.ownerQueries + 1; return f.owners end, spaceType = function() return f.spaceType or "user" end }, application = { runningApplications = function() return { app } end, watcher = { new = function(callback) f.lifecycle = watcher(callback); return f.lifecycle end, terminated = 3, hidden = 4, unhidden = 5, launched = 2, activated = 5 } } }
+  f.hs.spaces.allSpaces = function() return { d = { 9 } } end
   return f, app, element
 end
 local function readinessFixture()
@@ -36,7 +48,127 @@ local function readinessFixture()
   return f, host, timers, events, create, app, element
 end
 
+local function discoveryFixture()
+  local f, app = fake(); f.window.isFullScreen = function() return false end
+  local b = {}; for key, value in pairs(f.window) do b[key] = value end
+  b.id = function() return 10 end
+  f.hs.spaces.allSpaces = function() return { d = { 9, 11 } } end
+  f.hs.spaces.windowsForSpace = function(space) return space == 9 and { 9 } or { 10 } end
+  f.hs.spaces.windowSpaces = function(id) return { id == 9 and 9 or 11 } end
+  local timers, events, job = {}, {}, { done = false, cancelled = false }
+  f.hs.timer = { absoluteTime = function() return (f.clock or 0) * 1e9 end,
+    doAfter = function(_, callback)
+      local timer = { callback = callback, stop = function(self) self.stopped = true end }
+      timers[#timers + 1] = timer; return timer
+    end }
+  function job:poll() return { done = self.done, results = self.results } end
+  function job:cancel() self.cancelled = true end
+  local factory = { inventory = function() return { { windowId = 9, pid = 7, layer = 0 },
+    { windowId = 10, pid = 7, layer = 8 } } end,
+    create = function(targets) assert(#targets == 1 and targets[1].windowId == 10); return job end }
+  local host = NativeHost.new(f.hs, { displayId = "d", regularSpaceId = 9 }, nil, nil, nil, factory):start()
+  host:subscribeApplications(function() end)
+  local function callback(event) events[#events + 1] = event; if f.reject then error("sink failed") end; return f.disposition end
+  local function complete()
+    job.done = true; job.results = { { pid = 7, windowId = 10, ax = { asHSWindow = function() return b end } } }
+    timers[#timers].callback()
+  end
+  return f, host, job, events, timers, complete, b, callback
+end
+
 return {
+  ["DISC-001 CHOOSE-002: finite startup admits inactive regular resource without focus or repeated enumeration"] = function()
+    local f, host, job, events, _, complete, _, callback = discoveryFixture()
+    host:subscribeExistingWindows(callback)
+    assert(host:discoveryStatus().pending and #events == 1)
+    complete()
+    assert(host:discoveryStatus().complete and events[2].metadata.spaceId == 11)
+    assert(events[2].metadata.origin == "bootstrap" and f.focusRequests == 0 and f.scans == 1)
+    assert(f.focusedWindowQueries == 1 and job.cancelled)
+    local status = host:discoveryStatus(); status.complete = false; assert(host:discoveryStatus().complete)
+    host:stop()
+  end,
+  ["DISC-001: terminal exclusion settles while unknown ownership and sink failures remain incomplete"] = function()
+    for _, mode in ipairs({ "exclude", "owner", "sink", "poll", "timer", "deadline" }) do
+      local f, host, job, _, timers, complete, _, callback = discoveryFixture()
+      host:subscribeExistingWindows(callback)
+      if mode == "exclude" then f.disposition = "excluded"
+      elseif mode == "owner" then f.hs.spaces.windowSpaces = function() return nil end
+      elseif mode == "sink" then f.reject = true
+      elseif mode == "poll" then job.poll = function() error("poll failed") end
+      elseif mode == "timer" then f.hs.timer.doAfter = function() error("allocation failed") end
+      elseif mode == "deadline" then f.clock = 2 end
+      if mode == "timer" then timers[#timers].callback() else complete() end
+      local status = host:discoveryStatus()
+      assert(not status.pending and status.complete == (mode == "exclude"), mode)
+      assert(job.cancelled and f.focusRequests == 0)
+      host:stop()
+    end
+  end,
+  ["DISC-001: finite job prioritizes normal level without discarding higher-level candidates"] = function()
+    local f, host, _, _, _, _, _, callback = discoveryFixture()
+    f.hs.spaces.windowsForSpace = function() return { 10, 12, 13, 14 } end
+    host.nativeDiscovery.inventory = function() return {
+      { windowId = 10, pid = 3, layer = 8 },
+      { windowId = 14, pid = 7, layer = 0 },
+      { windowId = 13, pid = 4, layer = 0 },
+      { windowId = 12, pid = 7, layer = 0 },
+    } end
+    local submitted
+    host.nativeDiscovery.create = function(targets)
+      submitted = targets
+      return { poll = function() return { done = true, results = {} } end, cancel = function() end }
+    end
+    host:subscribeExistingWindows(callback)
+    assert(#submitted == 4 and submitted[1].windowId == 13 and submitted[2].windowId == 12)
+    assert(submitted[3].windowId == 14 and submitted[4].windowId == 10)
+    assert(not host:discoveryStatus().complete and host:discoveryStatus().unresolvedCount == 4)
+    host:stop()
+  end,
+  ["DISC-001 LIFE-004: allocation reentry cancels returned stale job before installation"] = function()
+    local f, host, job, events, _, _, _, callback = discoveryFixture()
+    local factory = host.nativeDiscovery
+    factory.create = function()
+      host:stop(); host:start()
+      return job
+    end
+    host:subscribeExistingWindows(callback)
+    assert(job.cancelled and #events == 1 and not host:discoveryStatus().pending)
+    assert(not host:discoveryStatus().complete and f.focusRequests == 0)
+    host:stop()
+  end,
+  ["DISC-001: unknown Space type is explicitly incomplete, not an empty success"] = function()
+    local f, host, _, events, _, _, _, callback = discoveryFixture()
+    f.hs.spaces.spaceType = function() return nil end
+    host:subscribeExistingWindows(callback)
+    local status = host:discoveryStatus()
+    assert(not status.pending and not status.complete and status.reason == "ownership-unavailable")
+    assert(#events == 0 and f.focusRequests == 0)
+    host:stop()
+  end,
+  ["DISC-001 LIFE-004: reentrant stop and restart cannot finish or cancel a replacement job"] = function()
+    local f, host, job, _, _, complete, _, callback = discoveryFixture()
+    host:subscribeExistingWindows(function(event)
+      if event.metadata.id == 10 then host:stop(); host:start() end
+      return callback(event)
+    end)
+    complete()
+    assert(not host:discoveryStatus().complete and job.cancelled and f.focusRequests == 0)
+    host:stop()
+  end,
+  ["DISC-001 LIFE-004: stale app resource ID reuse and stop reject late discovery publication"] = function()
+    for _, mode in ipairs({ "stop", "terminate", "reuse" }) do
+      local f, host, job, events, _, complete, b, callback = discoveryFixture()
+      host:subscribeExistingWindows(callback)
+      if mode == "stop" then host:stop()
+      elseif mode == "terminate" then f.lifecycle.callback(nil, 3, f.window:application()); host:releaseApplication(7, host.appResources[7].lease)
+      else b.id = function() return 999 end end
+      complete()
+      assert(#events == 1 and not host:discoveryStatus().complete and f.focusRequests == 0)
+      if mode == "stop" then assert(job.cancelled) end
+      host:stop()
+    end
+  end,
   ["LIFE-004: stop during multi-application bootstrap cannot attach later applications or leak returned watcher"] = function()
     local f, app = fake()
     local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
@@ -565,11 +697,12 @@ return {
     assert(f.scans == 0 and f.membershipQueries == 0 and f.ownerQueries == 1)
     host:stop()
   end,
-  ["FS-005 PERF-002: startup on fullscreen observes apps but never bootstraps a regular layout"] = function()
+  ["DISC-001 FS-005: startup on fullscreen discovers confirmed regular windows without focus"] = function()
     local f = fake()
     local host = Host.new(f.hs, { displayId = "d", activeSpaceId = 9, spaceType = "fullscreen" }):start()
-    host:subscribeExistingWindows(function() error("no regular bootstrap expected") end)
-    assert(f.scans == 0 and f.membershipQueries == 0)
+    local admitted = 0
+    host:subscribeExistingWindows(function() admitted = admitted + 1 end)
+    assert(admitted == 1 and f.scans == 1 and f.focusRequests == 0)
     host:stop()
   end,
   ["FS-002: fullscreen exit preserves the false native result and emits one exit observation"] = function()
@@ -584,8 +717,8 @@ return {
   ["host bootstrap uses one active-Space snapshot and one app scan, deferring absent handles"] = function()
     local f, _, element = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
     host:subscribeExistingWindows(function(e) events[#events + 1] = e end)
-    assert(f.membershipQueries == 1 and f.scans == 1 and events[1].metadata.origin == "bootstrap")
-    f.members = {}; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2 and f.ownerQueries == 1)
+    assert(f.membershipQueries == 2 and f.scans == 1 and events[1].metadata.origin == "bootstrap")
+    f.members = {}; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 2 and f.ownerQueries == 2)
     f.owners = { 99 }; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 3 and events[3].metadata.spaceId == 99)
     f.owners = { 9, 10 }; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 3)
     f.owners = { 9 }; f.spaceType = "fullscreen"; f.appWatchers[1].callback(f.window, "AXWindowCreated"); assert(#events == 3)

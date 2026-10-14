@@ -1,5 +1,5 @@
 ---
-title: Investigate chooser discovery across inactive desktops, fullscreen and minimized windows
+title: Investigate deferred fullscreen and minimized chooser discovery
 status: open
 priority: medium
 type: feature
@@ -12,17 +12,22 @@ blocks: []
 
 ## Context
 
-**Deferred by user decision, 2026-10-14:** keep MVP chooser backed by the existing
-managed-window state. Broader cold-start discovery, particularly fullscreen and
-minimized windows, needs further investigation rather than speculative machinery.
+**Deferred by user decision, 2026-10-14:** fullscreen and minimized cold-start
+discovery need further investigation rather than speculative machinery. Ordinary
+regular-desktop discovery remains an active MVP correction; treating it as deferred
+was a coordinator scope error, corrected by the user. After investigating uncertain
+native surfaces, the user explicitly accepted a bounded best-effort startup attempt
+with confirmed rows usable and no discovery warnings/blocking in the chooser.
 Do not confuse discovery with the separately scheduled restoration/focus effects.
-Already discovered unavailable members need not be removed from the existing cache.
+Already discovered unavailable members remain retained in the existing cache.
 
 The user reported that cold start lists only current-desktop windows, and proposed
 subtracting the AX-exposed IDs from a complete native-window inventory to identify
 missing candidates. That set difference is deterministic given a complete inventory;
 obtaining an exact AX resource and confirming management eligibility is a separate
-problem. No best-effort completeness contract or native discovery helper was adopted.
+problem. Best-effort startup does not promise completeness: unresolved candidates remain
+unknown. Ordinary regular-desktop discovery is an active correction, not part of this
+deferral; its native mechanism and cold-start behavior must be proved before delivery.
 
 ## Acceptance Criteria
 
@@ -88,15 +93,18 @@ requested focus. Selection obeys the separately approved restoration boundary.
 - Fixed probe attempted 3,650 AX element IDs within a 100ms starting-query budget
   (100.039ms observed), with 3,647 lookup errors. AX element IDs are not WindowServer
   window IDs. Finite ranges/time budgets leave sparse and lifetime-growing IDs
-  unresolved; lookup errors are not destruction evidence. No production helper,
-  repeated scan or background protocol was added.
+  unresolved; lookup errors are not destruction evidence. That initial probe added
+  no production helper or repeated scan. The later bounded regular-desktop helper
+  is recorded in POC023; it does not prove deferred unavailable-window completeness.
 - Minimized-window cold-start resolution was **not** separately proved by this probe.
   Fullscreen selection/restoration remains distinct from merely listing a target.
 
 ### Hypotheses / remaining investigation
 
-- A raw all-window inventory may give a complete finite target set and allow exact
-  unresolved-target accounting; its behavior and cost still need a live POC.
+- A later owned-fixture raw `CGWindowListCopyWindowInfo(kCGWindowListOptionAll)`
+  probe included both active/inactive ordinary windows at about0.8ms. Intersecting
+  with regular-Space memberships excluded four extra fixture surfaces. This is
+  narrow fixture evidence, not universal completeness or fullscreen/minimized proof.
 - Even complete inventory does not establish a bounded, complete mapping from native
   window IDs to AX resources. An inventory-minus-AX set is a discovery worklist, not
   management/liveness proof. Investigate a direct mapping before adopting token scans.
@@ -116,5 +124,7 @@ requested focus. Selection obeys the separately approved restoration boundary.
 
 Cleanup was verified: normal fixture quit/ack/exit, no mailbox claims, no ordinary
 fixture windows, original three regular desktops/D1. Host frozen chooser stayed
-unchanged. Do not repeat brute-force expansion ceremonially; begin with the untested
-inventory/direct-resolution question. No bug0001/0002 fix belongs in this task.
+unchanged during these probes. Do not repeat brute-force expansion ceremonially;
+continue with deferred fullscreen/minimized resource resolution and completeness,
+using the recorded regular-desktop inventory findings. No bug0001/0002 fix belongs
+in this task.

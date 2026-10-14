@@ -3,8 +3,10 @@
 ## Status and decision
 
 **Verified:** ranked title/application-name search replaces boolean subsequence
-filtering. User-approved MVP remains existing discovered managed windows; broader
-cold-start/fullscreen/minimized discovery is deferred to
+filtering. **User-rejected scope interpretation:** this checkpoint incorrectly
+interpreted MVP as already-discovered windows only. All ordinary managed windows
+across regular desktops remain required; their cold-start discovery was not delivered
+here. Only fullscreen/minimized cold-start discovery is deferred to
 [`TODO0003`](../../todos/0003-chooser-global-unavailable-window-discovery.md).
 Existing already-discovered unavailable rows remain retained; restoration selection
 is still deferred. No global discovery helper, compiled scorer or truncation added.

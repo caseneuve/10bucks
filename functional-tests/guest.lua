@@ -114,6 +114,20 @@ local function nativeDisplay()
     end
     error('native_display_unavailable')
 end
+local bootstrap, baseline
+local function launchFixture()
+    local owner=s
+    local Session=dofile(s.sourceRoot..'/functional-tests/fixture/session.lua')
+    s.fixtureSession=Session.new({sourceRoot=s.sourceRoot,executable=s.executable,controlDir=s.dir,run=s.run,
+        observeNative=s.managedWindowChooser,
+        onExit=function(code) owner.exitCode=code end,
+        onOwned=function(fixture) owner.fixtureSession=fixture;owner.task=fixture.task end})
+    s.task=s.fixtureSession.task; s.pid=s.fixtureSession.pid
+end
+local function beginCandidate()
+    if s.coldStart then launchFixture(); s.phase='coldSetup'; s.coldStep=1; s.coldDeadline=now()+3
+    else bootstrap() end
+end
 local function nativeNumber(alias)
     for number,knownAlias in pairs(s.byId) do
         if knownAlias==alias then return number end
@@ -445,6 +459,19 @@ local function sample()
             end
         end
         diagnostics.chooser=d
+        if s.coldStart then
+            local active=desktop.active
+            if s.coldSpaces[#s.coldSpaces]~=active then s.coldSpaces[#s.coldSpaces+1]=active end
+            local exact={}
+            for _,alias in ipairs({'A','B'}) do
+                local record=s.candidate.host.handles[nativeNumber(alias)]
+                exact[alias]=record~=nil and record.active and record.handle==s.windows[alias]
+                    and record.element==s.axes[alias] and record.pid==s.ownerPids[alias]
+            end
+            diagnostics.coldStart={setupBeforeStart=s.coldStarted~=nil,setupOwners=copy(s.coldOwners),
+                startupSettled=s.coldSettled==true,discoveryStatus=copy(s.coldDiscoveryStatus.status),startupFocusRequests=s.coldStartupFocusRequests or 0,
+                postStartSpaces=copy(s.coldSpaces),exactResources=exact,workArea=copy(s.workArea)}
+        end
     end
     if s.configuredRules then
         diagnostics.configuredRules={baseline=copy(s.creationFrames),effects={},titles={},history={},actions={},evaluations={},titleTokens={},commandResults=copy(s.ruleCommandResults or {}),excludedSafetyTargets={},lifetimeMismatch=false,instrumented=s.effectHost==s.candidate.host and s.effectWrappers~=nil
@@ -635,7 +662,7 @@ local function finalize()
     s.running=false
     local result={error=s.error,cleanup=s.cleanup,trace=s.trace,dropped=s.dropped,
         workArea=s.workArea,settings=s.settings,failedOperation=s.failedOperation,baseline=s.baselineFacts,
-        controllerFailures=s.controllerFailures or {}}
+        controllerFailures=s.controllerFailures or {},coldDiscoveryStatus=s.coldDiscoveryStatus}
     local ok=pcall(atomic,s.outputDir..'/guest-result.json',result)
     if not ok then s.cleanup.error='result_write_failed'; s.cleanup.ok=false end
 
@@ -726,7 +753,6 @@ local function cleanupTick()
         finalize()
     end
 end
-local bootstrap, baseline
 local function tick()
     s.controllerStage='tick.'..s.phase
     if now()-s.started>=55 and s.phase~='cleanup' then failure('overall_timeout') end
@@ -749,11 +775,66 @@ local function tick()
         s.baselineFacts.processesExited=exited
         if exited then
             s.settings.cleanedSeedTerminal=true
-            bootstrap(); s.phase='ready'; s.readyDeadline=now()+3
+            beginCandidate(); if not s.coldStart then s.phase='ready'; s.readyDeadline=now()+3 end
         elseif now()>s.baselineDeadline then failure('seed_terminal_exit_timeout') end
         return
     end
     if s.phase=='cleanup' then cleanupTick(); return end
+    if s.phase=='coldSetup' then
+        if now()>s.coldDeadline then failure('cold_setup_timeout'); return end
+        if s.pending or not s.ready then drain(); return end
+        local function advance() s.coldStep=s.coldStep+1; s.coldDeadline=now()+3 end
+        if s.coldStep==1 then publish('create','A'); advance()
+        elseif s.coldStep==2 then
+            for id,alias in pairs(s.desktopAliases) do if alias=='D2' then hs.spaces.gotoSpace(id) end end
+            advance()
+        elseif s.coldStep==3 then if nativeDesktop().active=='D2' then publish('create','B'); advance() end
+        elseif s.coldStep==4 then
+            for id,alias in pairs(s.desktopAliases) do if alias=='D1' then hs.spaces.gotoSpace(id) end end
+            advance()
+        elseif s.coldStep==5 and nativeDesktop().active=='D1' then publish('focus','A'); advance()
+        elseif s.coldStep==6 then
+            local snapshot=hs.json.read(s.dir..'/native-observation.json')
+            local front=hs.application.frontmostApplication()
+            local age=snapshot and type(snapshot.sampled_at)=='number' and now()-snapshot.sampled_at
+            if not (snapshot and snapshot.run==s.run and snapshot.pid==s.pid
+                and age and age>=0 and age<=.15 and snapshot.isActive==true
+                and snapshot.windows and snapshot.windows.A and snapshot.windows.A.key==true
+                and snapshot.windows.A.windowNumber==nativeNumber('A')
+                and front and front:pid()==s.pid and nativeDesktop().active=='D1') then return end
+            local owners={}
+            for _,alias in ipairs({'A','B'}) do
+                local ids=hs.spaces.windowSpaces(nativeNumber(alias))
+                assert(type(ids)=='table' and #ids==1,'cold_setup_owner_missing')
+                owners[alias]=desktopAlias(ids[1])
+            end
+            assert(owners.A=='D1' and owners.B=='D2','cold_setup_owner_mismatch')
+            s.coldOwners=owners; s.coldSpaces={'D1'}; s.coldStarted=now()
+            bootstrap(); s.phase='coldDiscovery'; s.coldDeadline=now()+5
+        end
+        return
+    end
+    if s.phase=='coldDiscovery' then
+        s.coldDiscoveryStatus={status=copy(s.candidate.host:discoveryStatus()),observed_at=now(),
+            deadline=s.coldDeadline,started=s.coldStarted}
+        if now()>s.coldDeadline then failure('cold_startup_discovery_timeout'); return end
+        local active=nativeDesktop().active
+        if s.coldSpaces[#s.coldSpaces]~=active then s.coldSpaces[#s.coldSpaces+1]=active end
+        if s.keyPending then
+            local received=true
+            for name,count in pairs(s.keyPending.expected) do if (s.receipts[name] or 0)<count then received=false end end
+            if received then s.keyPending=nil end
+        end
+        local status=s.coldDiscoveryStatus.status
+        if status.pending then return end
+        if s.candidate.core:state().coordinators[s.candidate.core.spaceId].activeLayoutId~='columns' then
+            if not s.keyPending then key('cycleLayout') end
+            return
+        end
+        s.coldSettled=true
+        s.coldStartupFocusRequests=s.candidate.instrumentation:status().counts.focusRequests or 0
+        s.phase='active'
+    end
     if s.exitCode~=nil then failure('unexpected_fixture_exit'); return end
     if s.ghosttyPending then
         local p=s.ghosttyPending
@@ -860,7 +941,9 @@ bootstrap=function()
     s.candidate=dofile(s.sourceRoot..'/10bucks.spoon/init.lua').new()
     local config={builtInDisplayUUID=s.screen:getUUID(),canaryInstrumentation=true}
     if s.managedWindowChooser then
-        config.rules={{match={bundleID='dev.10bucks.functional-fixture',title='10bucks fixture B'},action='exclude'}}
+        if not s.coldStart then
+            config.rules={{match={bundleID='dev.10bucks.functional-fixture',title='10bucks fixture B'},action='exclude'}}
+        end
         s.chooserCompletions={}
         s.chooserSelectOriginal=s.candidate._chooseWindow
         s.candidate._chooseWindow=function(candidate,choice)
@@ -1030,13 +1113,7 @@ bootstrap=function()
     assert(s.candidate.context and s.candidate.context.regularSpaceId~=nil
         and not s.candidate.suspended,'regular_space_required')
     assert(s.candidate.core and unknown==0,'initial_managed_scope_not_empty')
-    local owner=s
-    local Session=dofile(s.sourceRoot..'/functional-tests/fixture/session.lua')
-    s.fixtureSession=Session.new({sourceRoot=s.sourceRoot,executable=s.executable,controlDir=s.dir,run=s.run,
-        observeNative=s.managedWindowChooser,
-        onExit=function(code) owner.exitCode=code end,
-        onOwned=function(fixture) owner.fixtureSession=fixture;owner.task=fixture.task end})
-    s.task=s.fixtureSession.task; s.pid=s.fixtureSession.pid
+    if not s.fixtureSession then launchFixture() end
 end
 baseline=function(clean)
     s.operation='enumerate_baseline'
@@ -1074,7 +1151,7 @@ baseline=function(clean)
         s.phase='baseline'; s.baselineDeadline=now()+3
     else
         assert(count==0,'baseline_not_empty')
-        bootstrap()
+        beginCandidate()
     end
 end
 local function takeAction()
@@ -1115,7 +1192,7 @@ function M.start(o)
     local screens=hs.screen.allScreens(); assert(#screens==1,'sole_screen_required')
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
-        managedWindowChooser=o.managedWindowChooser==true,configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
+        coldStart=o.coldStart==true,managedWindowChooser=o.managedWindowChooser==true,configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
         initialLayout=o.initialLayout or 'columns',ghosttyEnabled=o.ghostty==true,ownedDisposable=o.ownedDisposable==true,cleanSeedTerminal=o.cleanSeedTerminal==true,originalPointer=copy(hs.mouse.absolutePosition()),
         sequence=0,actionSequence=0,windows={},axes={},byId={},ownerPids={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}
@@ -1312,9 +1389,9 @@ function M.command(op,alias,commands)
             hs.eventtap.keyStrokes(commands[1])
             return {accepted=true,submitted_at=now()}
         end
-        if op=='chooserCmd2' or op=='chooserEnter' or op=='chooserCancel' then
+        if op=='chooserCmd1' or op=='chooserCmd2' or op=='chooserEnter' or op=='chooserCancel' then
             assert(s.candidate.windowChooser.chooser:isVisible(),'chooser_not_visible')
-            emitChord(op=='chooserCmd2' and {'cmd'} or {},op=='chooserCmd2' and '2' or op=='chooserEnter' and 'return' or 'escape')
+            emitChord(op:match('^chooserCmd') and {'cmd'} or {},op=='chooserCmd1' and '1' or op=='chooserCmd2' and '2' or op=='chooserEnter' and 'return' or 'escape')
             return {accepted=true,submitted_at=now()}
         end
         if op=='chooseWindow' then key(op);return {accepted=true,submitted_at=now()} end
@@ -1371,6 +1448,7 @@ function M.status()
     return {running=s.running,phase=s.phase,error=s.error,observation=observation,
         observed_at=now(),actionSequence=s.actionSequence,actionAccepted=s.actionAccepted,actionError=s.actionError,
         fixtureReady=s.ready==true,candidateReady=s.phase=='active',
+        coldDiscoveryStatus=copy(s.coldDiscoveryStatus),
         layout=observation and observation.diagnostics.layout,unknownMembers=observation and observation.unknownMembers,
         lastAck=copy(s.lastAck),pending=s.pending~=nil or s.keyPending~=nil or s.ghosttyPending~=nil or s.lifecycleSetup~=nil,
         ghosttyCloseAt=s.ghosttyCloseAt,

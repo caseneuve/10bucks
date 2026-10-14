@@ -101,7 +101,7 @@ def main():
         try:
             if not owned:
                 raise RuntimeError('no observer owned; existing guest untouched')
-            ipc('if chooserBench and chooserBench.status().run==' + json.dumps(nonce) + ' and chooserBench.status().running then chooserBench.stop() end; return hs.json.encode(true)')
+            ipc('if chooserBench and chooserBench.status().run==' + json.dumps(nonce) + ' and chooserBench.status().running then chooserBench.stop() end; return hs.json.encode({stopSubmitted=true})')
             until = min(deadline, time.monotonic() + 7)
             while time.monotonic() < until:
                 raw = read_raw()
