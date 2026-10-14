@@ -496,6 +496,29 @@ per-cycle full instrumentation/timer snapshots or complete native-query/write/ti
 accounting.
 Missing/censored samples and failed batches must not be omitted from aggregation.
 
+## column-movement
+
+```sh
+./functional-tests/run --reuse-debug VM_NAME column-movement
+```
+
+TODO0002 / COL-006: starts in stack, retains left selection A on first columns
+activation, then drives real HyperO for `A,B | C → C,A | B` and the symmetric
+sole-left move. Checks native global focus and split frames separately from
+ordered membership/selection and actual hotkey callback receipts. An ordinary
+multi-member-source move still appends. Background minimize of the only eligible
+replacement makes HyperO reject unchanged; restore plus explicit planned focus
+setup permits rebalance again. A final two-member move rejects unchanged.
+Independent fixture-native minimize readback and durable lifecycle must agree;
+frames and global actual focus remain separate Hammerspoon native reads. Planned
+minimize/restore setup settles within the existing 3s lifecycle boundary before
+checkpoint acquisition; no sampled stability claim covers that native animation.
+Existing 5s/250ms/50ms/150ms/2pt command/checkpoint gates, frozen manifests and
+worker/fixture cleanup remain.
+Hidden/fullscreen overlaps and unknown actual-focus rejection are Lua regression
+coverage, not additional native claims. Sampled native outcomes do not prove
+absence of every between-sample transient; atomic effect-state checks are pure.
+
 ## Scenario self-checks
 
 ```sh

@@ -138,7 +138,7 @@ Destroying or cross-Space-moving the last durable member removes that column. If
 
 ### COL-006 — Move between columns
 
-Moving a focused window to the other column appends it to the destination and focuses it. The operation MUST be rejected if it would empty the source; therefore it requires at least three durable members and at least two in the source.
+Moving the actually focused managed window to the other column focuses/selects it there. If its source has more than one durable member, the move appends it to the destination and preserves source survivor order. If it is the sole source member, the move atomically refills its source with the last available destination member in stable order other than the destination's retained selected member, then prepends the moved member to the destination while preserving all other destination order. The replacement becomes selected in the source. Minimized, app-hidden and native-fullscreen members are ineligible replacements according to independent availability conditions; they retain their slots. If no replacement exists (including only two total members), or there are not two columns, the operation MUST be rejected unchanged. Neither an empty durable column nor an intermediate empty-column frame intent may be produced.
 
 ### COL-007 — Swap columns
 

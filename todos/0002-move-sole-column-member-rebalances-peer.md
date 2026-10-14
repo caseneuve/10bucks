@@ -1,6 +1,6 @@
 ---
 title: Moving a sole column member should rebalance from the destination column
-status: open
+status: done
 priority: high
 type: bug
 labels: []
@@ -24,14 +24,14 @@ C remains actually focused and selected in the left column; A remains in the lef
 
 ## Acceptance Criteria
 
-- [ ] Deliberately revise COL-006's reject-if-source-empty contract to the requested rebalance behavior; do not silently preserve the old rejection tests.
-- [ ] For `A,B | C` with left selection A and actual focus C, Hyper+O yields exactly `C,A | B`, with C focused/selected left and B selected right.
-- [ ] Select the last eligible non-selected destination member to refill the source; do not displace the destination's retained selected member.
-- [ ] Apply the same rule symmetrically when moving the sole left-column member right.
-- [ ] Never retain an empty durable column; explicitly define the result when no replacement exists (including only two total members).
-- [ ] Define replacement eligibility for minimized, hidden and native-fullscreen members using the existing independent availability contracts.
-- [ ] Managed-target authority uses actual managed focus; excluded/unknown actual focus still rejects.
-- [ ] Generic sequence tests and targeted real-hotkey/native-focus acceptance cover ordering, selection, availability and both directions.
+- [x] Deliberately revise COL-006's reject-if-source-empty contract to the requested rebalance behavior; do not silently preserve the old rejection tests.
+- [x] For `A,B | C` with left selection A and actual focus C, Hyper+O yields exactly `C,A | B`, with C focused/selected left and B selected right.
+- [x] Select the last eligible non-selected destination member to refill the source; do not displace the destination's retained selected member.
+- [x] Apply the same rule symmetrically when moving the sole left-column member right.
+- [x] Never retain an empty durable column; explicitly define the result when no replacement exists (including only two total members).
+- [x] Define replacement eligibility for minimized, hidden and native-fullscreen members using the existing independent availability contracts.
+- [x] Managed-target authority uses actual managed focus; excluded/unknown actual focus still rejects.
+- [x] Generic sequence tests and targeted real-hotkey/native-focus acceptance cover ordering, selection, availability and both directions.
 
 ## Affected Files
 
@@ -46,6 +46,33 @@ GIVEN two columns `A,B | C`, retained left selection A and actual managed focus 
 WHEN the user presses Hyper+O
 THEN membership/order becomes `C,A | B`, C remains actually focused/selected in the left column, B fills/is selected in the right column, and no intermediate empty-column or wrong-layout frame is requested.
 
+## Delivery evidence
+
+**Verified:** 334 Lua tests and 73 Python oracle tests pass; independent reviewer
+found no production defect. Scoped reused-guest native run r7 passed all 25 actions
+with real HyperO callback receipts, independent global native focus/frames, exact
+ordered groups/selections, minimized replacement rejection, restore/rebalance,
+successful sole-source moves in both directions and two-member rejection.
+
+Artifacts: `vm/results/10bucks-run-ft-eaa07ef31097/session-2b84cad4bc45/`
+(`manifest.json`, `guest-result.json`, `host-result.json`, `assertions.jsonl`).
+Frozen reducer SHA-256: `d786e0795ce08f98c1bd6a8cff1f5e73addfbf825c1fd26e34c2c828f95bdeb4`.
+Executed product/controller/scenario hashes matched checkout. 332 guest samples,
+zero drops, no controller error; candidate/fixture stopped normally, native worker
+drained, final fresh check found no ordinary windows. Persistent guest remains
+running. Runner marks reused runs `acceptance:false` (not cold acceptance) while
+`pass:true`/`scenarioPassed:true` establish this scoped functional result.
+
+Earlier r1–r6 failures remain unchanged: incorrect oracle transitions/replacement
+expectations and sampler startup/slow AX reads, not product/platform verdicts.
+Lifecycle setup now uses the existing bounded settlement boundary before
+checkpoint acquisition; no stability claim covers minimize/restore animation.
+Hidden/fullscreen overlapping conditions and unknown-focus rejection are pure
+regression coverage; unchanged actual-focus authority also inspected in source.
+Existing configured-rules native excluded-focus rejection remains applicable;
+it was not rerun for quota. No host deployment, cold-start, pixel or performance
+claim. Review reports remain in `.pi/bug0002-review*.md`.
+
 ## Notes
 
-Todo-only request: no implementation, host reload or window actions authorized by filing this item. User's example establishes the three-member transition; larger-stack placement, unavailable replacements and no-replacement behavior require explicit resolution before implementation. No app-specific policy. Read `.pi/WORK_STATE.md` for current frozen host and operational authority.
+Implementation authorized by the user on 2026-10-14/15; host reload/window actions remain unauthorized. Approved defaults: prepend a moved sole member and preserve other destination order; choose the last available non-selected destination member; reject unchanged if no replacement exists, including only two members. Ordinary moves from a multi-member source still append. Availability uses independent minimized/app-hidden/native-fullscreen conditions. COL-006 deliberately revised before implementation. No app-specific policy. Read `.pi/WORK_STATE.md` for current frozen host and operational authority.

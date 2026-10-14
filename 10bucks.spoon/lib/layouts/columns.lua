@@ -386,7 +386,24 @@ function Columns.reduce(state, event, context)
     if not sourceIndex then return state end
     local destinationIndex = sourceIndex == 1 and 2 or 1
     local source = state.stacks[sourceIndex]
-    if #source.members < 2 then return state end
+    if #source.members == 1 then
+      local destination = state.stacks[destinationIndex]
+      local replacementIndex
+      for index = #destination.members, 1, -1 do
+        local memberId = destination.members[index]
+        if memberId ~= destination.selectedId and isAvailable(context.availableMembers, memberId) then
+          replacementIndex = index
+          break
+        end
+      end
+      if not replacementIndex then return state end
+      local stacks = copyStacks(state.stacks)
+      local replacementId = table.remove(stacks[destinationIndex].members, replacementIndex)
+      stacks[sourceIndex] = { members = { replacementId }, selectedId = replacementId }
+      table.insert(stacks[destinationIndex].members, 1, event.memberId)
+      stacks[destinationIndex].selectedId = event.memberId
+      return copyState(state, stacks, destinationIndex)
+    end
     local selectedId = event.memberId
     local selectedIndex
     for index, memberId in ipairs(source.members) do if memberId == selectedId then selectedIndex = index; break end end

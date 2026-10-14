@@ -40,7 +40,7 @@ def evidence_complete(result, *, configured_rules=False, managed_window_chooser=
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=["rules-benchmark", "desktop-switching-benchmark", "desktop-creation-benchmark", "configured-rules", "managed-window-chooser", "managed-window-chooser-cold-start", "desktop-creation-race", "close-recovery-investigation", "columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching", "desktop-creation"])
+    parser.add_argument("scenario", choices=["rules-benchmark", "desktop-switching-benchmark", "desktop-creation-benchmark", "configured-rules", "managed-window-chooser", "managed-window-chooser-cold-start", "desktop-creation-race", "close-recovery-investigation", "columns-close-recovery", "column-movement", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching", "desktop-creation"])
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--demo", action="store_true", help="2s pauses between actions; not a latency benchmark")
     parser.add_argument("--bar-capture", action="store_true", help="capture native bar outside/hover/return pixels for independent visual review")
@@ -169,7 +169,7 @@ def main():
             status = wait_status(lambda s: s.get("candidateReady") is True and s.get("fixtureReady") is True, 10)
             if status.get("unknownMembers", 0) != 0:
                 raise RuntimeError("unowned candidate membership")
-            expected_layout='stack' if args.scenario in ('stack-columns-membership','ghostty-column-normalization','close-recovery-investigation') else 'columns'
+            expected_layout='stack' if args.scenario in ('stack-columns-membership','column-movement','ghostty-column-normalization','close-recovery-investigation') else 'columns'
             if status.get("layout") != expected_layout:
                 raise RuntimeError(expected_layout + " bootstrap not confirmed")
             return Frame(**status["workArea"])
@@ -322,7 +322,7 @@ def main():
         ssh(f"mkdir -m 700 {control}")
         hs('ft=dofile("' + guest_root + ('/functional-tests/benchmarks/guest.lua' if rules_benchmark else '/functional-tests/benchmarks/desktop_guest.lua' if desktop_benchmark else '/functional-tests/guest.lua') + '"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
-           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization","close-recovery-investigation") else "columns"}",closeRecoveryInvestigation={str(investigation).lower()},configuredRules={str(args.scenario == "configured-rules").lower()},coldStart={str(args.scenario == "managed-window-chooser-cold-start").lower()},managedWindowChooser={str(args.scenario in ("managed-window-chooser","managed-window-chooser-cold-start")).lower()},desktopSwitching={str(args.scenario in ("managed-window-chooser-cold-start","managed-window-chooser","configured-rules","desktop-switching","desktop-creation","desktop-creation-race")).lower()},desktopCreation={str(args.scenario in ("desktop-creation","desktop-creation-race")).lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
+           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","column-movement","ghostty-column-normalization","close-recovery-investigation") else "columns"}",columnMovement={str(args.scenario == "column-movement").lower()},closeRecoveryInvestigation={str(investigation).lower()},configuredRules={str(args.scenario == "configured-rules").lower()},coldStart={str(args.scenario == "managed-window-chooser-cold-start").lower()},managedWindowChooser={str(args.scenario in ("managed-window-chooser","managed-window-chooser-cold-start")).lower()},desktopSwitching={str(args.scenario in ("managed-window-chooser-cold-start","managed-window-chooser","configured-rules","desktop-switching","desktop-creation","desktop-creation-race")).lower()},desktopCreation={str(args.scenario in ("desktop-creation","desktop-creation-race")).lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
         driver = Driver()
         if rules_benchmark:
             module.run(driver, mode=args.benchmark_mode)

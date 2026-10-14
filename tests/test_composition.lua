@@ -1432,9 +1432,14 @@ return {
     f.windowWatcher.callback(nil, "AXUIElementDestroyed"); assert(not ten.core:state().manager.windows[9] and not ten.host.handles[9])
     ten:stop()
   end,
-  ["composition unknown focus never admits or scans and inactive creation defers"] = function()
+  ["FOCUS-002 COL-006: unknown focus rejects managed move, never admits or scans, and inactive creation defers"] = function()
     local f, element = fakeHs(); local ten = load(f); ten:start(); local scans = f.scans
     ten.windows:_window({ kind = "focus", id = 99 }, ten.windows.generation); assert(not ten.core:state().manager.windows[99] and f.scans == scans)
+    local before = ten.core.runtime:version()
+    local accepted, reason = ten:_submitCommand({ type = "MoveFocusedToOther", memberId = 9 })
+    assert(not accepted and reason == "actual-focus-is-not-managed",
+      "an explicit managed member cannot override unknown actual focus: " .. tostring(accepted) .. "/" .. tostring(reason))
+    assert(ten.core.runtime:version() == before, "rejection must not commit durable state")
     f.windowWatcher.callback(nil, "AXUIElementDestroyed"); f.owners = { "other" }; f.appWatcher.callback(f.window, "AXWindowCreated"); assert(not ten.core:state().manager.windows[9])
     ten:stop()
   end,

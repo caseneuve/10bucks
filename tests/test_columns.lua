@@ -103,7 +103,7 @@ return {
     assert(deepEqual(state.stacks[2].members, { "two" }))
   end,
 
-  ["COL-006 WIN-002: guarded move preserves source order, appends/focuses destination, and never creates an empty placeholder"] = function()
+  ["COL-006 WIN-002: ordinary move preserves source order and appends/focuses destination"] = function()
     local state = Columns.initialState({ "one", "two", "three" }, context())
     state = Columns.reduce(state, { type = "ManagedFocusObserved", memberId = "two" }, context())
     state = Columns.reduce(state, { type = "MoveFocusedToOther", memberId = "two" }, context())
@@ -113,12 +113,56 @@ return {
     equal(state.stacks[2].selectedId, "two")
     assertValid(state, { "one", "two", "three" })
 
-    state = Columns.reduce(state, { type = "ManagedFocusObserved", memberId = "one" }, context())
-    assert(Columns.reduce(state, { type = "MoveFocusedToOther", memberId = "one" }, context()) == state)
     local pending = Columns.initialState({ "one", "two", "three" }, context())
     pending = Columns.reduce(pending, { type = "MoveFocusedToOther", memberId = "one" }, context())
     assert(deepEqual(pending.stacks[1].members, { "two" }))
     assert(deepEqual(pending.stacks[2].members, { "three", "one" }))
+  end,
+
+  ["COL-006 COL-001: sole move prepends atomically in both directions and preserves selected peer and order"] = function()
+    for _, members in ipairs({ { "A", "B", "C" }, { "A", "B", "D", "E", "C" } }) do
+      for _, selected in ipairs({ "A", members[#members - 1] }) do
+        for _, reverse in ipairs({ false, true }) do
+          local ctx = context({ availableMembers = available(table.unpack(members)) })
+          local state = Columns.initialState(members, ctx)
+          state = Columns.reduce(state, { type = "ManagedFocusObserved", memberId = selected }, ctx)
+          if reverse then state = Columns.reduce(state, { type = "SwapGroups" }, ctx) end
+          local source, destination = reverse and 1 or 2, reverse and 2 or 1
+          local before = state
+          local expected, replacement = { "C" }
+          for index = #members - 1, 1, -1 do
+            if members[index] ~= selected then replacement = members[index]; break end
+          end
+          for index = 1, #members - 1 do
+            if members[index] ~= replacement then expected[#expected + 1] = members[index] end
+          end
+          state = Columns.reduce(state, { type = "MoveFocusedToOther", memberId = "C" }, ctx)
+          assert(deepEqual(state.stacks[destination], { members = expected, selectedId = "C" }))
+          assert(deepEqual(state.stacks[source], { members = { replacement }, selectedId = replacement }))
+          equal(state.activeStack, destination)
+          equal(state.ratio, before.ratio)
+          assert(deepEqual(before.stacks[source].members, { "C" }), "input must remain unchanged")
+          assertValid(state, members, ctx)
+        end
+      end
+    end
+  end,
+
+  ["COL-006 STATE-008: unavailable slots remain ordered and no replacement rejects unchanged"] = function()
+    local ctx = context({ availableMembers = available("A", "B", "C") })
+    local state = Columns.initialState({ "A", "B", "D", "E", "C" }, ctx)
+    state = Columns.reduce(state, { type = "ManagedFocusObserved", memberId = "A" }, ctx)
+    local moved = Columns.reduce(state, { type = "MoveFocusedToOther", memberId = "C" }, ctx)
+    assert(deepEqual(moved.stacks[1].members, { "C", "A", "D", "E" }))
+    assert(deepEqual(moved.stacks[2].members, { "B" }))
+    for _, members in ipairs({ { "A", "C" }, { "A", "B", "C" }, { "C" } }) do
+      ctx = context({ availableMembers = available("A", "C") })
+      state = Columns.initialState(members, ctx)
+      if #members > 1 then
+        state = Columns.reduce(state, { type = "ManagedFocusObserved", memberId = "A" }, ctx)
+      end
+      equal(Columns.reduce(state, { type = "MoveFocusedToOther", memberId = "C" }, ctx), state)
+    end
   end,
 
   ["COL-007: swap atomically exchanges ordered stacks and selections while active content follows the opposite physical side"] = function()

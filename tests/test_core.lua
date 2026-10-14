@@ -50,6 +50,55 @@ local function frames(intents)
 end
 
 return {
+  ["COL-006 STATE-002: move effects see complete C,A|B state and split geometry"] = function()
+    local checking, observed, core
+    core = new(function(intents)
+      observed = intents
+      if not checking then return end
+      local layout = core:state().coordinators["space-1"].layouts.columns
+      equal(table.concat(layout.stacks[1].members, ","), "C,A")
+      equal(table.concat(layout.stacks[2].members, ","), "B")
+      equal(layout.stacks[1].selectedId, "C")
+      equal(layout.stacks[2].selectedId, "B")
+      equal(layout.activeStack, 1)
+      for _, intent in ipairs(intents) do
+        if intent.kind == "frame" then
+          equal(intent.frame.w, 500)
+          equal(intent.frame.x, intent.windowId == "B" and 510 or 10)
+        elseif intent.kind == "focus" then equal(intent.windowId, "C") end
+      end
+    end)
+    for _, id in ipairs({ "A", "B", "C" }) do core:submit(bootstrapReady(id)) end
+    core:submit({ type = "ActualFocusChanged", id = "A" })
+    core:submit({ type = "CycleLayout" })
+    core:submit({ type = "ActualFocusChanged", id = "C" })
+    checking = true
+    assert(core:submit({ type = "MoveFocusedToOther", memberId = "C" }))
+    equal(#frames(observed), 3)
+    equal(core:state().manager.focus.desiredBySpace["space-1"].targetId, "C")
+  end,
+
+  ["COL-006 STATE-008 LIFE-001 LIFE-002 FS-002: replacement eligibility honors independent overlapping availability"] = function()
+    for mask = 1, 7 do
+      local core = new(function() end)
+      for index, id in ipairs({ "A", "B", "D", "C" }) do core:submit(bootstrapReady(id, index)) end
+      core:submit({ type = "ActualFocusChanged", id = "A" })
+      core:submit({ type = "CycleLayout" })
+      if mask % 2 == 1 then core:submit({ type = "WindowMinimized", id = "D" }) end
+      if math.floor(mask / 2) % 2 == 1 then core:submit({ type = "ApplicationHidden", pid = 3 }) end
+      if mask >= 4 then core:submit({ type = "WindowEnteredNativeFullscreen", id = "D" }) end
+      if mask == 7 then
+        core:submit({ type = "WindowRestored", id = "D" })
+        core:submit({ type = "ApplicationUnhidden", pid = 3 })
+      end
+      core:submit({ type = "ActualFocusChanged", id = "C" })
+      assert(core:submit({ type = "MoveFocusedToOther", memberId = "C" }))
+      local layout = core:state().coordinators["space-1"].layouts.columns
+      equal(table.concat(layout.stacks[1].members, ","), "C,A,D")
+      equal(table.concat(layout.stacks[2].members, ","), "B")
+      assert(not Model.isAvailable(core:state().manager.windows.D))
+    end
+  end,
   ["STATE-008 FOCUS-006: unavailable created member cannot strand desired focus while restore preserves independent hide"] = function()
     local core = new(function() end)
     core:submit(bootstrapReady("one")); core:submit({ type = "ActualFocusChanged", id = "one" })

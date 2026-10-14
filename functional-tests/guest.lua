@@ -119,7 +119,7 @@ local function launchFixture()
     local owner=s
     local Session=dofile(s.sourceRoot..'/functional-tests/fixture/session.lua')
     s.fixtureSession=Session.new({sourceRoot=s.sourceRoot,executable=s.executable,controlDir=s.dir,run=s.run,
-        observeNative=s.managedWindowChooser,
+        observeNative=s.managedWindowChooser or s.columnMovement,
         onExit=function(code) owner.exitCode=code end,
         onOwned=function(fixture) owner.fixtureSession=fixture;owner.task=fixture.task end})
     s.task=s.fixtureSession.task; s.pid=s.fixtureSession.pid
@@ -366,6 +366,7 @@ local function drain()
     if expected=='quit' then s.quitAck=true end
 end
 local function sample()
+    if s.columnMovement and s.lifecycleSetup then return end
     local sampledAt=now()
     local timings={} -- acquisition starts before any focus/AX/native frame reads
     local frames,closed={},{}
@@ -443,6 +444,24 @@ local function sample()
             excludedFrame=copy(s.creationFrames.E),excludedEffects=copy(s.closeEffects[s.closeExcludedId] or {frame=0,focus=0}),
             excludedSafety=s.closeSafety[s.closeExcludedId]==true,orderingDropped=s.closeOrderingDropped,
             instrumented=instrumented}
+    end
+    if s.columnMovement then
+        diagnostics.movementAvailability={}
+        local windows=s.candidate.core:state().manager.windows
+        local snapshot=hs.json.read(s.dir..'/native-observation.json')
+        assert(next(s.windows)==nil or (snapshot and snapshot.run==s.run and snapshot.pid==s.pid
+            and type(snapshot.sampled_at)=='number' and now()-snapshot.sampled_at>=0
+            and now()-snapshot.sampled_at<=.15),'fixture_native_observation_missing_or_stale')
+        diagnostics.movementSnapshotAt=next(s.windows) and snapshot.sampled_at or nil
+        for alias,w in pairs(s.windows) do
+            local member=windows[w:id()]
+            local row=snapshot.windows[alias]
+            if member then
+                assert(row and row.windowNumber==nativeNumber(alias),'fixture_native_identity_missing')
+                diagnostics.movementAvailability[alias]={nativeMinimized=row.minimized,
+                    lifecycle=copy(member.lifecycle)}
+            end
+        end
     end
     if s.desktopSwitching then diagnostics.nativeDesktop=desktop end
     if s.desktopFullscreen then
@@ -611,6 +630,10 @@ local function sample()
         unknownMembers=unknown,diagnostics=diagnostics,
         timings=timings,bar=barFacts}
     s.latest.observed_at=now() -- guest publication clock; host must not restamp
+    if diagnostics.movementSnapshotAt then
+        local age=s.latest.observed_at-diagnostics.movementSnapshotAt
+        assert(age>=0 and age<=.15,'fixture_native_observation_publication_stale')
+    end
     if native then
         local age=s.latest.observed_at-native.sampled_at
         assert(age>=0 and age<=.15,'fixture_native_observation_publication_stale')
@@ -988,6 +1011,13 @@ local function tick()
             and age and age>=0 and age<=.15 and row
             and row.windowNumber==nativeNumber(setup.alias) and row[setup.field]==setup.wanted) then
             setup.stableSince=nil; return
+        end
+        if s.columnMovement then
+            -- Settle the native action before starting checkpoint acquisition.
+            -- This read may wait for macOS animation; it is not a focus effect.
+            hs.window.focusedWindow()
+            setup.stableSince=setup.stableSince or now()
+            if now()-setup.stableSince<.25 then return end
         end
         if setup.field=='fullscreen' then
             local owners=hs.spaces.windowSpaces(nativeNumber(setup.alias))
@@ -1371,7 +1401,7 @@ function M.start(o)
     local screens=hs.screen.allScreens(); assert(#screens==1,'sole_screen_required')
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
-        closeInvestigation=o.closeRecoveryInvestigation==true,coldStart=o.coldStart==true,managedWindowChooser=o.managedWindowChooser==true,configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
+        columnMovement=o.columnMovement==true,closeInvestigation=o.closeRecoveryInvestigation==true,coldStart=o.coldStart==true,managedWindowChooser=o.managedWindowChooser==true,configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
         initialLayout=o.initialLayout or 'columns',ghosttyEnabled=o.ghostty==true,ownedDisposable=o.ownedDisposable==true,cleanSeedTerminal=o.cleanSeedTerminal==true,originalPointer=copy(hs.mouse.absolutePosition()),
         sequence=0,actionSequence=0,windows={},axes={},byId={},ownerPids={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}
@@ -1558,6 +1588,15 @@ function M.command(op,alias,commands)
         keys(commands)
         return {accepted=true,submitted_at=now()}
     end
+    if s.columnMovement and (op=='minimize' or op=='unminimize') then
+        assert(alias and s.windows[alias] and not s.destroyed[alias],'owned_alias_required')
+        local snapshot=assert(hs.json.read(s.dir..'/native-observation.json'))
+        local started=now()
+        s.lifecycleSetup={alias=alias,field='minimized',wanted=op=='minimize',
+            afterSequence=snapshot.sequence,started=started,deadline=started+3}
+        if op=='minimize' then s.windows[alias]:minimize() else s.windows[alias]:unminimize() end
+        return {accepted=true,submitted_at=now()}
+    end
     if s.managedWindowChooser then
         if op=='chooserQuery' then
             assert(type(commands)=='table' and #commands==1 and type(commands[1])=='string' and #commands[1]<=64,'invalid_chooser_query')
@@ -1591,7 +1630,7 @@ function M.command(op,alias,commands)
             return {accepted=true,submitted_at=now()}
         end
     end
-    if (s.closeInvestigation or s.configuredRules or s.managedWindowChooser) and (op=='focus' or op=='renameToExcluded' or op=='renameToManaged' or (s.managedWindowChooser and op=='renameForRanking')) then
+    if (s.columnMovement or s.closeInvestigation or s.configuredRules or s.managedWindowChooser) and (op=='focus' or op=='renameToExcluded' or op=='renameToManaged' or (s.managedWindowChooser and op=='renameForRanking')) then
         assert(type(alias)=='string' and alias:match('^[A-E]$') and s.windows[alias],'owned_alias_required')
         return publish(op,alias)
     end
