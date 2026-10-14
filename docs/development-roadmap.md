@@ -121,12 +121,31 @@ is recorded with passing cold-start acceptance in
 Its inclusive initialization-service failure remains explicit; no complete discovery
 or fully responsive cold-initialization guarantee is claimed. Restoration is separate.
 
-**Next: reported bugs, with deliberate contract decisions.** The user's updated
-scheduling decision on 2026-10-13 is chooser first, then:
-[`0001 close recovery`](../todos/0001-close-recovery-returns-underlying-member.md)
-and [`0002 sole-column movement rebalance`](../todos/0002-move-sole-column-member-rebalances-peer.md).
-Both remain open; their recovery/movement contract decisions must be settled
-deliberately. Do not fold either fix into the chooser slice.
+**Immediate next: bug0001 close recovery.** On 2026-10-14 the user explicitly
+requested fixing reported bugs **one at a time**, before pending roadmap features.
+The bug queue is:
+
+1. [`0001 close recovery`](../todos/0001-close-recovery-returns-underlying-member.md).
+2. [`0002 sole-column movement rebalance`](../todos/0002-move-sole-column-member-rebalances-peer.md).
+3. [`0005 divider resizing pushes a peer offscreen`](../todos/0005-divider-resize-pushes-peer-offscreen.md).
+4. [`0006 disappearing status bar`](../todos/0006-status-bar-disappears-without-recovery.md).
+5. [`0007 chooser focuses the wrong column member`](../todos/0007-chooser-focuses-wrong-column-member.md).
+
+All remain open. Complete each reviewed native acceptance/measurement checkpoint
+and coherent commit before starting the next; do not combine them based on an
+unproved shared cause. For0001, settle the intended generic recovery target before
+changing COL-005/FOCUS-004; for0002, deliberately settle COL-006's replacement rule.
+
+After the bug queue, resume step5 restoration (including
+[`0004 known-fullscreen chooser focus`](../todos/0004-chooser-focus-known-fullscreen-window.md),
+unminimize and unhide), then step6 fullscreen commands/creation effects and step7
+hardening/release acceptance. TODO0004 alone is not all of restoration. TODO0003
+cold fullscreen/minimized discovery remains deferred investigation; movement,
+deletion and other explicit deferrals are not automatically reactivated.
+
+Operational entry: `.pi/handoffs/2026-10-14-bugs-first-next-0001.md` supplies current
+ownership, runtime safety and the narrow starting procedure. Creating that handoff
+does not implement a bug, revise its behavior contract, or authorize host mutations.
 
 The manual host runtime uses a separate frozen source copy; see WORK_STATE for
 exact ownership and rollback. Editing or building the development checkout does not
