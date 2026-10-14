@@ -125,7 +125,8 @@ local function launchFixture()
     s.task=s.fixtureSession.task; s.pid=s.fixtureSession.pid
 end
 local function beginCandidate()
-    if s.coldStart then launchFixture(); s.phase='coldSetup'; s.coldStep=1; s.coldDeadline=now()+3
+    if s.coldStart or s.fullscreenChooser then
+        launchFixture(); s.phase=s.fullscreenChooser and 'fullscreenSetup' or 'coldSetup'; s.coldStep=1; s.coldDeadline=now()+3
     else bootstrap() end
 end
 local function nativeNumber(alias)
@@ -482,11 +483,23 @@ local function sample()
             end
         end
         local d={visible=chooser and chooser:isVisible() or false,rows={},query=chooser and chooser:query() or '',
-            completions=copy(s.chooserCompletions),native={},pending=pending,
+            completions=copy(s.chooserCompletions),measurements=copy(s.chooserMeasurements),native={},pending=pending,
             setupSettlements=copy(s.chooserSetupSettlements or {}),
+            fullscreenUnplaced=s.fullscreenChooser and s.candidate.focusHistory:unplacedTarget(nativeNumber('A'))~=nil or nil,
             nativeSnapshot={sequence=native.sequence,sampled_at=native.sampled_at,
                 age=sampledAt-native.sampled_at,runMatch=true,pidMatch=true,
                 isActive=native.isActive,frontmostFixture=frontPid==native.pid}}
+        if s.fullscreenChooser then
+            local id=nativeNumber('A')
+            local route=s.candidate.handleRegistry:target(id)
+            local record=s.candidate.host.handles[id]
+            local unplaced=s.candidate.focusHistory:unplacedTarget(id)
+            local placed=false
+            for _,core in pairs(s.candidate.cores or {}) do if core:state().manager.windows[id] then placed=true end end
+            d.fullscreenNoPlacement=not placed and unplaced~=nil and route~=nil and record~=nil and record.active
+                and record.lease==route.lease and record.handle==s.windows.A and record.element==s.axes.A
+                and record.pid==s.ownerPids.A and unplaced.target.spaceId==route.spaceId
+        end
         if d.visible then
             for i=1,6 do -- five owned aliases plus an overflow sentinel
                 local row=chooser:selectedRowContents(i)
@@ -878,11 +891,36 @@ local function tick()
         s.baselineFacts.processesExited=exited
         if exited then
             s.settings.cleanedSeedTerminal=true
-            beginCandidate(); if not s.coldStart then s.phase='ready'; s.readyDeadline=now()+3 end
+            beginCandidate(); if not s.coldStart and not s.fullscreenChooser then s.phase='ready'; s.readyDeadline=now()+3 end
         elseif now()>s.baselineDeadline then failure('seed_terminal_exit_timeout') end
         return
     end
     if s.phase=='cleanup' then cleanupTick(); return end
+    if s.phase=='fullscreenSetup' then
+        if now()>s.coldDeadline then failure('fullscreen_setup_timeout'); return end
+        if s.pending or not s.ready then drain(); return end
+        if s.coldStep==1 then
+            publish('create','A'); s.coldStep=2; s.coldDeadline=now()+3
+        elseif s.coldStep==2 then
+            s.windows.A:setFullScreen(true); s.coldStep=3; s.coldDeadline=now()+3
+        else
+            local native=hs.json.read(s.dir..'/native-observation.json')
+            local row=native and native.windows and native.windows.A
+            local owners=hs.spaces.windowSpaces(nativeNumber('A'))
+            local owner=type(owners)=='table' and #owners==1 and owners[1]
+            local kind
+            for _,item in ipairs(nativeDisplay().Spaces) do if item.ManagedSpaceID==owner then kind=item.type end end
+            if row and row.fullscreen and row.key and native.run==s.run and native.pid==s.pid
+                and now()-native.sampled_at<=.15 and kind==4 and hs.spaces.focusedSpace()==owner then
+                s.fullscreenSetupStable=s.fullscreenSetupStable or now()
+                if now()-s.fullscreenSetupStable>=.25 then
+                    s.fullscreenId=owner; s.desktopAliases[owner]='F1'
+                    bootstrap(); s.phase='ready'; s.readyDeadline=now()+3
+                end
+            else s.fullscreenSetupStable=nil end
+        end
+        return
+    end
     if s.phase=='coldSetup' then
         if now()>s.coldDeadline then failure('cold_setup_timeout'); return end
         if s.pending or not s.ready then drain(); return end
@@ -997,7 +1035,7 @@ local function tick()
         end
     end
     if s.ready and s.phase=='ready' then
-        if s.initialLayout=='stack' then s.phase='active'
+        if s.initialLayout=='stack' or s.fullscreenChooser then s.phase='active'
         else s.phase='columns'; key('cycleLayout') end
     end
     local setup=s.lifecycleSetup
@@ -1054,7 +1092,7 @@ bootstrap=function()
         if not s.coldStart then
             config.rules={{match={bundleID='dev.10bucks.functional-fixture',title='10bucks fixture B'},action='exclude'}}
         end
-        s.chooserCompletions={}
+        s.chooserCompletions={}; s.chooserMeasurements={}
         s.chooserSelectOriginal=s.candidate._chooseWindow
         s.candidate._chooseWindow=function(candidate,choice)
             local record=candidate.host.handles[choice.windowId]
@@ -1062,7 +1100,16 @@ bootstrap=function()
             local exact=alias and record and record.active and record.lease==choice.lease
                 and record.handle==s.windows[alias] and record.element==s.axes[alias]
                 and record.pid==s.ownerPids[alias] and choice.windowId==nativeNumber(alias)
+            local started=now()
+            local before=candidate.instrumentation:status().counts
             local accepted,reason=s.chooserSelectOriginal(candidate,choice)
+            local after=candidate.instrumentation:status().counts
+            local delta={}
+            for _,key in ipairs({'focusRequests','targetedFocusQueries','frameRequests','frameWrites','applicationWindowQueries','targetedOwnershipQueries'}) do
+                delta[key]=(after[key] or 0)-(before[key] or 0)
+            end
+            s.chooserMeasurements[#s.chooserMeasurements+1]={alias=exact and alias or 'unknown',
+                started=started,finished=now(),accepted=accepted,counts=delta}
             s.chooserCompletions[#s.chooserCompletions+1]={alias=exact and alias or 'unknown',accepted=accepted,reason=reason}
             return accepted,reason
         end
@@ -1319,9 +1366,14 @@ bootstrap=function()
             _checkWindowValidity=host._checkWindowValidity,_record=host._record}
     end
     local _,unknown=candidateSnapshot()
-    assert(s.candidate.context and s.candidate.context.regularSpaceId~=nil
-        and not s.candidate.suspended,'regular_space_required')
-    assert(s.candidate.core and unknown==0,'initial_managed_scope_not_empty')
+    if s.fullscreenChooser then
+        assert(s.candidate.suspended and s.candidate.focusHistory:unplacedTarget(nativeNumber('A')),
+            'independent_fullscreen_admission_required')
+    else
+        assert(s.candidate.context and s.candidate.context.regularSpaceId~=nil
+            and not s.candidate.suspended,'regular_space_required')
+        assert(s.candidate.core and unknown==0,'initial_managed_scope_not_empty')
+    end
     if not s.fixtureSession then launchFixture() end
 end
 baseline=function(clean)
@@ -1401,7 +1453,7 @@ function M.start(o)
     local screens=hs.screen.allScreens(); assert(#screens==1,'sole_screen_required')
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
-        columnMovement=o.columnMovement==true,closeInvestigation=o.closeRecoveryInvestigation==true,coldStart=o.coldStart==true,managedWindowChooser=o.managedWindowChooser==true,configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
+        columnMovement=o.columnMovement==true,closeInvestigation=o.closeRecoveryInvestigation==true,coldStart=o.coldStart==true,fullscreenChooser=o.fullscreenChooser==true,managedWindowChooser=o.managedWindowChooser==true,configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
         initialLayout=o.initialLayout or 'columns',ghosttyEnabled=o.ghostty==true,ownedDisposable=o.ownedDisposable==true,cleanSeedTerminal=o.cleanSeedTerminal==true,originalPointer=copy(hs.mouse.absolutePosition()),
         sequence=0,actionSequence=0,windows={},axes={},byId={},ownerPids={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}
@@ -1607,9 +1659,11 @@ function M.command(op,alias,commands)
             hs.eventtap.keyStrokes(commands[1])
             return {accepted=true,submitted_at=now()}
         end
-        if op=='chooserCmd1' or op=='chooserCmd2' or op=='chooserEnter' or op=='chooserCancel' then
+        if op=='chooserCmd1' or op=='chooserCmd2' or op=='chooserEnter' or op=='chooserEnterService' or op=='chooserCancel' then
             assert(s.candidate.windowChooser.chooser:isVisible(),'chooser_not_visible')
-            emitChord(op:match('^chooserCmd') and {'cmd'} or {},op=='chooserCmd1' and '1' or op=='chooserCmd2' and '2' or op=='chooserEnter' and 'return' or 'escape')
+            s.keyEvents[#s.keyEvents+1]={kind='posted',name=op,at=now()}
+            emitChord(op:match('^chooserCmd') and {'cmd'} or {},op=='chooserCmd1' and '1' or op=='chooserCmd2' and '2' or (op=='chooserEnter' or op=='chooserEnterService') and 'return' or 'escape')
+            if op=='chooserEnterService' then key('benignService') end
             return {accepted=true,submitted_at=now()}
         end
         if op=='chooseWindow' then key(op);return {accepted=true,submitted_at=now()} end

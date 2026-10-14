@@ -126,7 +126,10 @@ function Tenbucks:_scopedIntents(intents, core)
     local desired = core and core:state().manager.focus.desiredBySpace[core.spaceId]
     local current = intent.kind ~= "focus" or (desired and desired.pending
       and desired.targetId == intent.windowId and desired.generation == intent.generation)
-    if current then
+    local window = core and core:state().manager.windows[intent.windowId]
+    -- Fullscreen global requests use the direct exact-handle effect below;
+    -- saved regular Core intents must not issue a second effect behind it.
+    if current and not (intent.kind == "focus" and window and window.lifecycle.nativeFullscreen) then
     local copy = {}; for key, value in pairs(intent) do copy[key] = value end
     if copy.kind == "frame" or copy.kind == "focus" then
       local target = self.handleRegistry:target(copy.windowId)
@@ -148,16 +151,18 @@ function Tenbucks:_flushCoreIntents(entries)
           local target = { windowId = intent.windowId, spaceId = intent.spaceId }
           local pending = self.focusHistory:pending()
           if self:_targetIsManaged(target) and (not pending or pending.windowId ~= target.windowId or pending.spaceId ~= target.spaceId) then
+            if self.managedFocusTimer then self.managedFocusTimer:stop(); self.managedFocusTimer = nil end
             self.focusHistory:request(target)
           end
         end
       end
     end
   end
+  local success = true
   for _, entry in ipairs(entries) do
     if self:_entryCanExecute(entry) then
       self:_publishBar()
-      self.host:execute(self.windows, self:_scopedIntents(entry.intents, entry.core), function(intent)
+      local executed = self.host:execute(self.windows, self:_scopedIntents(entry.intents, entry.core), function(intent)
         if not self:_entryCanExecute(entry) then return false end
         if intent.kind == "focus" then
           local desired = entry.core:state().manager.focus.desiredBySpace[entry.core.spaceId]
@@ -167,8 +172,10 @@ function Tenbucks:_flushCoreIntents(entries)
         end
         return intent.kind ~= "frame" or entry.core:frameIsCurrent(intent)
       end)
+      if executed == false then self:_cancelManagedFocus(); success = false end
     end
   end
+  return success
 end
 
 function Tenbucks:_withEffectBatch(work)
@@ -181,6 +188,7 @@ function Tenbucks:_withEffectBatch(work)
     for _, entry in ipairs(batch) do parent[#parent + 1] = entry end
   else
     self.effectBatch = batch
+    local focusFailed = false
     local flushed, flushError = pcall(function()
     while #batch > 0 do
     local pending = batch; batch = {}; self.effectBatch = batch
@@ -188,7 +196,7 @@ function Tenbucks:_withEffectBatch(work)
     for _, entry in ipairs(pending) do
       if entry.workspace then workspace[#workspace + 1] = entry else cores[#cores + 1] = entry end
     end
-    self:_flushCoreIntents(cores)
+    if self:_flushCoreIntents(cores) == false then focusFailed = true end
     for _, entry in ipairs(workspace) do
       for _, intent in ipairs(entry.intents) do
         if self.spaces and self.workspace then
@@ -214,6 +222,7 @@ function Tenbucks:_withEffectBatch(work)
       end
       error(flushError, 0)
     end
+    if focusFailed and first == true then return false, "managed-focus-failed" end
   end
   return first, second
 end
@@ -287,7 +296,12 @@ function Tenbucks:_afterCoreEvent(event, eventCore)
     local unplaced = self.focusHistory:unplacedTarget(event.id)
     local target = (unplaced and not unplaced.uncertain and unplaced.target)
       or (window and { windowId = event.id, spaceId = window.placementSpaceId })
-    if target and self:_targetIsManaged(target) then self.focusHistory:observe(target) end
+    if target and self:_targetIsManaged(target) then
+      self.focusHistory:observe(target)
+      if not self.focusHistory:pending() and self.managedFocusTimer then
+        self.managedFocusTimer:stop(); self.managedFocusTimer = nil
+      end
+    end
   end
 end
 
@@ -322,6 +336,7 @@ function Tenbucks:_deliverEvent(event, handle)
   end
 
   if event.type == "ApplicationHidden" or event.type == "ApplicationUnhidden" or event.type == "ApplicationTerminated" then
+    if event.type ~= "ApplicationTerminated" then self.focusHistory:observeLifecycle(event) end
     self:_withEffectBatch(function()
       local removed = {}
       for _, core in pairs(self.cores or {}) do
@@ -341,6 +356,10 @@ function Tenbucks:_deliverEvent(event, handle)
     return true
   end
 
+  if event.type == "WindowMinimized" or event.type == "WindowRestored"
+    then
+    self.focusHistory:observeLifecycle(event)
+  end
   local readyAction = event.decision and event.decision.action or "manage"
   local function readyRouteAllowed()
     local prior = self.handleRegistry:target(event.id)
@@ -392,7 +411,8 @@ function Tenbucks:_deliverEvent(event, handle)
   local eventCore = nil
   if event.type == "ActualFocusChanged" then
     local pending = self.focusHistory:pending()
-    eventCore = (pending and self.cores[pending.spaceId]) or self:_coreForManagedWindow(event.id, event.resource) or self.core
+    if pending and pending.windowId ~= event.id then self:_publishBar(); return true end
+    eventCore = self:_coreForManagedWindow(event.id, event.resource) or self.core
   elseif event.id then
     eventCore = self:_coreForManagedWindow(event.id, event.resource)
   end
@@ -420,10 +440,20 @@ function Tenbucks:_focusManagedPrevious()
   return self:_focusManagedTarget(target)
 end
 
+function Tenbucks:_cancelManagedFocus()
+  if self.managedFocusTimer then self.managedFocusTimer:stop(); self.managedFocusTimer = nil end
+  self.focusHistory:cancel()
+  for _, core in pairs(self.cores or {}) do
+    self:_submitCore(core, { type = "FocusRequestCancelled", spaceId = core.spaceId })
+  end
+end
+
 function Tenbucks:_focusManagedTarget(target)
-  local targetCore = self.cores[target.spaceId]
-  local window = targetCore and targetCore:state().manager.windows[target.windowId]
-  if window and (window.lifecycle.minimized or window.lifecycle.appHidden) then
+  if not self.host or not self:_targetIsManaged(target) then return false, "stale-chooser-target" end
+  local targetCore, window = self:_coreForManagedWindow(target.windowId, target.lease)
+  local unplaced = self.focusHistory:unplacedTarget(target.windowId)
+  if (window and (window.lifecycle.minimized or window.lifecycle.appHidden))
+    or (unplaced and (unplaced.minimized or unplaced.appHidden)) then
     return false, "previous-managed-window-unavailable"
   end
   -- A global target supersedes local requests in other scopes. Retire their
@@ -435,18 +465,34 @@ function Tenbucks:_focusManagedTarget(target)
     end
   end
   self.focusHistory:request(target)
+  if self.managedFocusTimer then self.managedFocusTimer:stop() end
+  local timer
+  timer = hs.timer.doAfter(5, function()
+    if self.managedFocusTimer ~= timer then return end
+    self.managedFocusTimer = nil
+    local pending = self.focusHistory:pending()
+    if not self.started or not pending or pending.windowId ~= target.windowId or pending.spaceId ~= target.spaceId then return end
+    self:_withEffectBatch(function() self:_cancelManagedFocus() end)
+    self.host:observeFocus() -- reconcile actual state, never retry the effect
+    if hs.alert then hs.alert.show("10bucks: Window focus was not confirmed. Visit the window and try again.") end
+  end)
+  self.managedFocusTimer = timer
   local handle = self.handleRegistry:resolve(target)
-  if not handle then self.focusHistory:cancel(); return false, "previous-managed-window-unavailable" end
+  if not handle then self:_cancelManagedFocus(); return false, "stale-chooser-target" end
   if targetCore then
     local accepted, failure = targetCore:submit({ type = "FocusTarget", windowId = target.windowId })
-    if not accepted then self.focusHistory:cancel(); return false, failure end
-    if targetCore == self.core and not self.suspended then return true end
+    if not accepted then self:_cancelManagedFocus(); return false, failure end
+    if targetCore == self.core and not self.suspended and target.spaceId == targetCore.spaceId
+      and not window.lifecycle.nativeFullscreen then return true end
   end
   -- Use the same targeted post-effect confirmation path as Core focus intents;
   -- hs.window:focus() may not emit an unchanged-focus AX callback.
-  local requested = self.host:focus(handle) -- Native focus may change Spaces.
-  if requested == false and not self:_targetIsManaged(target) then
-    self.focusHistory:cancel(); return false, "previous-managed-window-unavailable"
+  if not self:_targetIsManaged(target) then self:_cancelManagedFocus(); return false, "stale-chooser-target" end
+  local ok, requested = pcall(self.host.focus, self.host, handle, target.lease, target.spaceId,
+    (window and window.lifecycle.nativeFullscreen) or unplaced ~= nil,
+    unplaced and unplaced.target.spaceId) -- Native focus may change Spaces.
+  if not ok or requested == nil or not self:_targetIsManaged(target) then
+    self:_cancelManagedFocus(); return false, "managed-focus-failed"
   end
   return true
 end
@@ -458,13 +504,18 @@ function Tenbucks:_chooseWindow(choice)
   local target = self.handleRegistry:target(choice.windowId, choice.lease)
   if not target or not self:_targetIsManaged(target) then return false, "stale-chooser-target" end
   local core, window = self:_coreForManagedWindow(target.windowId, target.lease)
-  if not window or not Model.isAvailable(window) or self.focusHistory:unplacedTarget(target.windowId) then
+  local unplaced = self.focusHistory:unplacedTarget(target.windowId)
+  if (window and (window.lifecycle.minimized or window.lifecycle.appHidden))
+    or (unplaced and (unplaced.minimized or unplaced.appHidden)) then
     return false, "chooser-restoration-deferred"
   end
+  if not window and not unplaced then return false, "stale-chooser-target" end
   local operation = self.workspace and self.workspace:state().switch.inFlight
   if operation then
     if not operation.creating then return false, "desktop-switch-pending" end
-    if core ~= self.core or self.suspended then return false, "desktop-creation-pending" end
+    if core ~= self.core or self.suspended or not window or window.lifecycle.nativeFullscreen then
+      return false, "desktop-creation-pending"
+    end
   end
   return self:_withEffectBatch(function() return self:_focusManagedTarget(target) end)
 end
@@ -635,7 +686,11 @@ function Tenbucks:_contextChanged(context)
     local previous = self.context and self.context.regularSpaceId
     if previous and previous ~= context.regularSpaceId then
       local pending = self.focusHistory:pending()
-      if pending and pending.spaceId == previous then self.focusHistory:cancel() end
+      local requestedWindow
+      if pending then local _; _, requestedWindow = self:_coreForManagedWindow(pending.windowId) end
+      if pending and pending.spaceId == previous and not (requestedWindow and requestedWindow.lifecycle.nativeFullscreen) then
+        self.focusHistory:cancel()
+      end
       local old = self.cores[previous]
       if old then self:_submitCore(old, { type = "FocusRequestCancelled", spaceId = previous }) end
     end
@@ -736,6 +791,7 @@ end
 
 function Tenbucks:stop()
   self.started, self.starting = false, nil
+  if self.managedFocusTimer then self.managedFocusTimer:stop(); self.managedFocusTimer = nil end
   if self.contextSubscription then self.contextSubscription.detach() end
   self.contextSubscription = nil
   if self.workspace then self.workspace:submit({ type = "WorkspaceSwitchStopped" }) end

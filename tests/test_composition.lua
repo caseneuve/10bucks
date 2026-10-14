@@ -28,14 +28,14 @@ local function fakeHs(options)
     fullFrame = function() return f.geometry or { x = 0, y = 0, w = 100, h = 80 } end }
   -- Evidence-derived boundary: AX conversion provides metadata/asHSWindow only;
   -- the per-window watcher is constructed by hs.window:newWatcher(handler).
-  local element = { asHSWindow = function() return f.window end,
+  local element = { isValid = function() return true end, asHSWindow = function() return f.window end,
     attributeValue = function(_, _) return false end, isAttributeSettable = function() return true end }
   local app = { isHidden = function() return false end, pid = function() return 8 end, name = function() return "App" end, bundleID = function() return "app" end,
     allWindows = function() f.scans = f.scans + 1; if options.bootstrapFails then error("bootstrap failed") end; return { f.window } end,
     newWatcher = function(_, cb) f.appWatcher = watcher(cb, "app"); return f.appWatcher end }
   f.window = { isMinimized = function() return false end, id = function() return 9 end, title = function() return "Window" end, application = function() return app end,
     role = function() return "AXWindow" end, subrole = function() return "AXStandardWindow" end,
-    isFullScreen = function() return f.fullscreen end, newWatcher = function(_, cb) f.windowWatcher = watcher(cb, "window"); return f.windowWatcher end, frame = function() f.frameReads = (f.frameReads or 0) + 1; return f.actual end,
+    isFullScreen = function() return f.fullscreen == true end, newWatcher = function(_, cb) f.windowWatcher = watcher(cb, "window"); return f.windowWatcher end, frame = function() f.frameReads = (f.frameReads or 0) + 1; return f.actual end,
     setFrame = function(_, frame, duration) assert(duration == 0); f.frames = f.frames + 1; f.actual = frame end,
     focus = function() f.focuses = f.focuses + 1; f.presentationAtFocus = f.canvas and f.canvas.elements and f.canvas.elements[4].text end }
   local dock = { pid = function() return 81 end, bundleID = function() return 'com.apple.dock' end,
@@ -243,7 +243,7 @@ return {
     ten.host:_ready(f.window, "created", ten.host.windowCallback)
     assert(#ui.rows == 1 and ui.rows[1].windowId == stale.windowId)
     local focuses = f.focuses
-    ui.complete(stale); assert(f.focuses == focuses and ui.rejection:find("stale-chooser-target", 1, true))
+    ui.complete(stale); assert(f.focuses == focuses and ui.rejection:find("reopen the chooser", 1, true))
     ui.complete({ windowId = 9 }); assert(f.focuses == focuses)
     local last = ui.rows[1]
     ten:stop(); assert(ui.deleted and not ui.visible and not ui.complete and not ten.windowChooser)
@@ -271,7 +271,7 @@ return {
     ten.host:_ready(f.window, "targetedReadiness", ten.host.windowCallback)
     ten:_submitCommand({ type = "OpenWindowChooser" }); assert(#ui.rows == 1)
     local focuses = f.focuses
-    ui.complete(ui.rows[1]); assert(f.focuses == focuses and not ten.focusHistory:pending())
+    ui.complete(ui.rows[1]); assert(f.focuses == focuses + 1 and ten.focusHistory:pending())
     f.window.title = function() return "Fullscreen title" end
     f.windowWatcher.callback(nil, "AXTitleChanged"); assert(ui.rows[1].text == "Fullscreen title")
     f.life.callback(nil, hs.application.watcher.terminated, f.window:application())
@@ -281,7 +281,7 @@ return {
     local f = fakeHs(); local ten = load(f):start(); local ui = chooserUI()
     ten:_submitCommand({ type = "OpenWindowChooser" }); local choice = ui.rows[1]
     for _, event in ipairs({ { type = "WindowMinimized", id = 9 },
-      { type = "ApplicationHidden", pid = 8 }, { type = "WindowEnteredNativeFullscreen", id = 9 } }) do
+      { type = "ApplicationHidden", pid = 8 } }) do
       if event.id then event.resource = choice.lease end
       ten:_submitEvent(event)
       ten.focusHistory:request({ windowId = 9, spaceId = "space" })
@@ -295,10 +295,14 @@ return {
     local f = fakeHs(); local ten = load(f):start(); local ui = chooserUI()
     ten:_submitCommand({ type = "OpenWindowChooser" }); local first = ui.rows[1]
     local focusCount = 0
-    local handle = { id = function() return 10 end, focus = function() focusCount = focusCount + 1 end,
+    local handle = { id = function() return 10 end, isFullScreen = function() return false end, focus = function() focusCount = focusCount + 1 end,
       frame = function() return { x = 0, y = 0, w = 1, h = 1 } end, setFrame = function() end }
     local ready = { type = "WindowReady", id = 10, resource = 1010, appResource = 88,
       displayId = "built-in", spaceId = "next-space", title = "Second", application = { pid = 8, name = "App" } }
+    local appLease = ten.host.appResources[8].lease
+    ten.host.handles[10] = { handle = handle, element = { isValid = function() return true end }, lease = 1010, appLease = appLease, pid = 8, active = true }
+    ten.host.managedObservers[10] = true
+    hs.spaces.windowSpaces = function(id) return id == 10 and { ready.spaceId } or f.owners end
     ten:_submitEvent(ready, handle)
     assert(#ui.rows == 2 and ui.rows[1].windowId == first.windowId)
     local second = ui.rows[2]
@@ -875,7 +879,7 @@ return {
       end
       f.window.isFullScreen=function()return false end
       f.window.focus=function()f.focusedWindow=f.window end
-      elements[f.window]={attributeValue=function()return false end,isAttributeSettable=function()return true end,isValid=function()return nil end}
+      elements[f.window]={attributeValue=function()return false end,isAttributeSettable=function()return true end,isValid=function()return true end}
       hs.axuielement.windowElement=function(w)return elements[w]end
       local factory={create=function()return {set=function(_,_,t)token=t end,
         poll=function()return rows or {} end,stop=function()end}end}
@@ -885,7 +889,7 @@ return {
         local w={};for k,v in pairs(f.window)do w[k]=v end
         w.id=function()return 8+i end;w.newWatcher=function()return {start=function()end,stop=function()end}end
         w.focus=function()f.focusedWindow=w end;w.setFrame=function()end
-        windows[i]=w;elements[w]={attributeValue=function()return false end,isAttributeSettable=function()return true end,isValid=function()return nil end}
+        windows[i]=w;elements[w]={attributeValue=function()return false end,isAttributeSettable=function()return true end,isValid=function()return true end}
         f.appWatcher.callback(w,'AXWindowCreated')
         f.focusedWindow=w;ten.host:observeFocus()
       end
@@ -985,6 +989,10 @@ return {
     local target = ten.handleRegistry:resolve({ windowId = 10, spaceId = "space" })
     target.id = function() return 10 end
     target.focus = function() focusCalls = focusCalls + 1 end
+    target.isFullScreen = function() return false end
+    ten.host.handles[10] = { handle = target, element = { isValid = function() return true end },
+      lease = 100, appLease = ten.host.appResources[8].lease, pid = 8, active = true }
+    ten.host.managedObservers[10] = true
     local original = f.window.frame; local injected = false
     f.window.frame = function()
       local before = original()
@@ -1070,6 +1078,10 @@ return {
     local requested = {}
     local second = { frame = function() return f.actual end, setFrame = function() end,
       focus = function() requested[#requested + 1] = 10 end, id = function() return 10 end }
+    second.isFullScreen = function() return false end
+    ten.host.handles[10] = { handle = second, element = { isValid = function() return true end },
+      lease = 100, appLease = ten.host.appResources[8].lease, pid = 8, active = true }
+    ten.host.managedObservers[10] = true
     ten.handleRegistry:remember(10, "space", second, 8, 100, ten.host.appResources[8].lease)
     focus(ten, 10)
     local firstFocus = f.window.focus

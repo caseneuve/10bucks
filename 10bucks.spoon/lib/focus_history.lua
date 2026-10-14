@@ -111,6 +111,16 @@ function FocusHistory.reduce(state, event)
     error("focus history event must be plain normalized data", 2)
   end
 
+  if event.type == "WindowMinimized" or event.type == "WindowRestored"
+    or event.type == "ApplicationHidden" or event.type == "ApplicationUnhidden" then
+    local nextState = copy(state)
+    for id, record in pairs(nextState.unplaced) do
+      if id == event.id then record.minimized = event.type == "WindowMinimized" end
+      if record.pid == event.pid then record.appHidden = event.type == "ApplicationHidden" end
+    end
+    return nextState
+  end
+
   if event.type == "Observe" then
     local observed = target(event.target)
     if state.unplaced[observed.windowId] and state.unplaced[observed.windowId].uncertain then return state end
@@ -169,16 +179,21 @@ function FocusHistory.reduce(state, event)
     local existing = state.unplaced[descriptor.windowId]
     if not existing then
       local nextState = copy(state)
-      nextState.unplaced[descriptor.windowId] = { target = descriptor, pid = pid }
+      nextState.unplaced[descriptor.windowId] = { target = descriptor, pid = pid,
+        minimized = event.ready.metadata.minimized == true, appHidden = event.ready.metadata.appHidden == true }
       return nextState
     end
     -- A later targeted probe can confirm a new native fullscreen owner for the
     -- same pre-existing window. Rebind focus descriptors in place without an
     -- MRU move or a new admission decision.
-    if sameTarget(existing.target, descriptor) and not existing.uncertain then return state end
+    local minimized, appHidden = event.ready.metadata.minimized == true, event.ready.metadata.appHidden == true
+    if sameTarget(existing.target, descriptor) and not existing.uncertain
+      and existing.minimized == minimized and existing.appHidden == appHidden then return state end
     local nextState = copy(state)
     nextState.unplaced[descriptor.windowId].target = descriptor
     nextState.unplaced[descriptor.windowId].uncertain = nil
+    nextState.unplaced[descriptor.windowId].minimized = minimized
+    nextState.unplaced[descriptor.windowId].appHidden = appHidden
     for _, entry in ipairs(nextState.entries) do
       if entry.windowId == descriptor.windowId then entry.spaceId = descriptor.spaceId end
     end
@@ -253,6 +268,10 @@ end
 
 function FocusHistory:_submit(event)
   self.committed = FocusHistory.reduce(self.committed, event)
+end
+
+function FocusHistory:observeLifecycle(event)
+  self:_submit({ type = event.type, id = event.id, pid = event.pid })
 end
 
 function FocusHistory:observe(observed)

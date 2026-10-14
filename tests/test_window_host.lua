@@ -515,7 +515,7 @@ return {
     host:subscribeExistingWindows(function() end); host:subscribeWindow(f.window, function() end); host:enableManaged(9, host.handles[9].lease)
     host.windowCallback = function(event) if event.kind == "destroyed" then host:releaseWindow(event.id, event.resource) end end
     element.isValid = function() return false end
-    assert(host:focus(f.window) == false and f.focusRequests == 0 and not host.handles[9])
+    assert(host:focus(f.window) == nil and f.focusRequests == 0 and not host.handles[9])
     host:stop()
   end,
   ["DISC-002 STATE-008: unknown native lifecycle defers readiness without admitting available state"] = function()

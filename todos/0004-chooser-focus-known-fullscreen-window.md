@@ -1,6 +1,6 @@
 ---
 title: Focus already-managed native-fullscreen windows from chooser
-status: open
+status: done
 priority: high
 type: feature
 labels: []
@@ -29,27 +29,38 @@ explicit rather than silently implementing other restoration effects.
 
 ## Acceptance Criteria
 
-- [ ] Selecting an already-managed, non-hidden, non-minimized native-fullscreen
+- [x] Selecting an already-managed, non-hidden, non-minimized native-fullscreen
       row reaches its current fullscreen Space and confirms exact native focus.
       Cover both retained regular placement and independently admitted unplaced
       fullscreen targets; never invent a regular layout slot for the latter.
-- [ ] Revalidate the returned exact resource lease and current ownership before
+- [x] Revalidate the returned exact resource lease and current ownership before
       effects. Reject destroyed, replaced or uncertain targets without aliasing a
       reused native ID, broad enumeration or focus-driven admission.
-- [ ] Commit the managed focus request before native effects; actual focus confirms
+- [x] Commit the managed focus request before native effects; actual focus confirms
       it through the shared observation path. Latest chooser target wins; stale
       callbacks cannot overwrite a newer selection or focus-history authority.
-- [ ] Preserve fullscreen mode, saved placement, layout grouping/order, chooser
+- [x] Preserve fullscreen mode, saved placement, layout grouping/order, chooser
       admission order and rules. Do not request tiled frames behind fullscreen.
-- [ ] Respect existing pending desktop-creation/switch restrictions and shutdown
+- [x] Respect existing pending desktop-creation/switch restrictions and shutdown
       cancellation. Failed/unconfirmed focus must not be reported as successful
       completion or strand pending authority.
-- [ ] Successful selection does not show `chooser-restoration-deferred`. Any genuine
+- [x] Successful selection does not show `chooser-restoration-deferred`. Any genuine
       rejection/failure uses actionable user-facing wording, not internal codes.
-- [ ] Add generic pure sequence/resource/effect-budget coverage and targeted native
+- [x] Add generic pure sequence/resource/effect-budget coverage and targeted native
       UI acceptance, then relevant focus/key-service measurements and independent
       raw/source/simplicity review. Reuse proved mechanisms; preserve failures and
       verify candidate/observer/worker/fixture cleanup.
+
+## Delivery — 2026-10-14
+
+**Verified:** shared exact-resource focus path supports known placed/unplaced
+native-fullscreen chooser targets; hidden/minimized restoration remains rejected.
+345 Lua/74 Python tests pass; two frozen fixture-VM native UI scenarios pass,
+independent source/raw/simplicity review has no remaining blocker. Preserved
+pre-selection harness failure and cleanup, scoped timing/service observations and
+all qualifications: [evidence record](../docs/pocs/024-known-fullscreen-chooser-focus.md).
+Native supersession/resource failures/expiry/shutdown races are pure/source coverage,
+not live claims. No host load or release/physical latency certification.
 
 ## Affected Files
 

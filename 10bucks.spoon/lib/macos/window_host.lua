@@ -913,12 +913,13 @@ function Host:_checkWindowValidity(id, record)
   -- Only the API's explicit InvalidUIElement result is removal evidence.
   -- nil/errors, hidden/minimized status and snapshot absence retain uncertainty.
   local ok, valid = pcall(element.isValid, element)
-  if not ok or valid ~= false then return end
+  if not ok or valid ~= false then return ok and valid == true end
   record.checkingValidity = true
   local emitted, failure = pcall(self.windowCallback, { kind = "destroyed", id = id,
     resource = record.lease, presentationResource = self.presentationId == id and self.presentationWindow == record.handle and self.presentationLease or nil })
   record.checkingValidity = nil
   if not emitted then error(failure, 0) end
+  return false
 end
 
 function Host:observeFocus(expectedId)
@@ -957,16 +958,28 @@ function Host:observeFocus(expectedId)
   return true
 end
 
-function Host:focus(window)
+function Host:focus(window, lease, spaceId, fullscreen, fullscreenOwner)
   local requestedId = call(window, "id")
   if requestedId == nil then return end
   local record = self.handles[requestedId]
+  if lease ~= nil and (not record or record.handle ~= window
+    or not self:current(requestedId, lease, record.appLease, record.pid)) then return end
   if record and record.handle == window then
-    self:_checkWindowValidity(requestedId, record)
-    if not record.active or self.handles[requestedId] ~= record then return false end
+    local valid = self:_checkWindowValidity(requestedId, record)
+    if not record.active or self.handles[requestedId] ~= record then return end
+    if lease ~= nil then
+      if valid ~= true then return end
+      local owner, kind = self:_owner(requestedId)
+      local nativeFullscreen = call(window, "isFullScreen")
+      if not owner or nativeFullscreen ~= (fullscreen == true)
+        or (fullscreen and (kind ~= "fullscreen" or (fullscreenOwner and owner ~= fullscreenOwner)))
+        or (not fullscreen and (kind ~= "user" or owner ~= spaceId)) then return end
+      if not self:current(requestedId, lease, record.appLease, record.pid) then return end
+    end
   end
   self:_record("focusRequests")
-  window:focus()
+  local ok, result = pcall(window.focus, window)
+  if not ok or result == false then return end
   return self:observeFocus(requestedId)
 end
 
@@ -999,7 +1012,8 @@ function Host:execute(adapter, intents, current)
       self.frames[intent.windowId] = { x = intent.frame.x, y = intent.frame.y, w = intent.frame.w, h = intent.frame.h }
       end
     elseif window and intent.kind == "focus" then
-      self:focus(window)
+      local result = self:focus(window, intent.lease, intent.spaceId, false)
+      if result == nil then return false end
     end
     end
     end

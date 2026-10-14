@@ -133,10 +133,16 @@ prior-confirmed focused source-member recovery (option2) on2026-10-14; revise
 COL-005/FOCUS-004 explicitly rather than asking A-vs-B again. For0002, settle
 COL-006's replacement rule before implementation.
 
-After the bug queue, resume step5 restoration (including
-[`0004 known-fullscreen chooser focus`](../todos/0004-chooser-focus-known-fullscreen-window.md),
-unminimize and unhide), then step6 fullscreen commands/creation effects and step7
-hardening/release acceptance. TODO0004 alone is not all of restoration. TODO0003
+**Step5 known-fullscreen chooser focus delivered on2026-10-14 (TODO0004):**
+already-confirmed placed and unplaced non-hidden/non-minimized fullscreen targets
+reach their existing native fullscreen Space through the shared exact-resource
+focus/confirmation path. Scoped fixture-VM acceptance, failure cleanup and timing
+qualifications: [`pocs/024-known-fullscreen-chooser-focus.md`](pocs/024-known-fullscreen-chooser-focus.md).
+This is not cold discovery, unhide/unminimize, fullscreen toggle or host acceptance.
+
+After the remaining bug queue, resume step5 unminimize and unhide, then step6
+fullscreen commands/creation effects and step7 hardening/release acceptance.
+TODO0004 alone is not all of restoration. TODO0003
 cold fullscreen/minimized discovery remains deferred investigation; movement,
 deletion and other explicit deferrals are not automatically reactivated.
 

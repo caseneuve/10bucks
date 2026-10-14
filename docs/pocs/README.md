@@ -154,6 +154,15 @@ fullscreen behavior still requires targeted native acceptance, not a broad app m
 
 **Status: narrow mechanism observations passed.** [`009-focus-confirmation.md`](009-focus-confirmation.md) records a same-target command that remained pending without a callback, then a separate matching focus/read probe. These support one targeted post-effect confirmation read, not polling or confirmation from a stale Core. End-to-end acceptance and callback reliability are not established by those probes. The record also attributes Space-bootstrap blocking; no broad focus or performance pass is claimed.
 
+## Known native-fullscreen chooser selection
+
+**Verified: scoped fixture-VM acceptance.**
+[`024-known-fullscreen-chooser-focus.md`](024-known-fullscreen-chooser-focus.md)
+records TODO0004 placed/unplaced real chooser selection, exact native focus/Space,
+preserved placement/no invented slots, hidden/minimized rejection controls,
+scoped timing and independent review. No discovery completeness, host/release or
+statistical latency claim; the pre-selection harness failure remains preserved.
+
 ## Slice cleanup gate
 
 For a new POC, record its narrow result/decision and affected cleanup. Remove

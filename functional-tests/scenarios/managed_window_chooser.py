@@ -1,4 +1,4 @@
-"""CHOOSE-001..004 actual native UI oracle; restoration is roadmap step 5.
+"""CHOOSE-001..004 actual native UI oracle; hidden/minimized restoration is deferred.
 
 Uses the ordinary 5s/250ms/150ms sampler. No quotas, benchmark controller,
 cache assertions, corrective focus, or programmatic chooser selection.
@@ -171,9 +171,25 @@ def run(driver, *, clock=time.monotonic, sleep=time.sleep):
         driver.fixture_action(disable, 'A')
         before = check(disable + ' native state', visible=False, native={'A': {field: True}})
         open_chooser(disable + ' remains listed')
-        # A stays visible row1 but step4 MUST NOT restore it.
-        select('chooserEnter', 'A', accepted=False, reason='chooser-restoration-deferred',
-               focus=before.focused, frames=before.frames, native={'A': {field: True}})
+        if field == 'fullscreen':
+            # Leave F through a normal desktop hotkey, then choose its actual row.
+            driver.hotkey('chooserCancel')
+            check('fullscreen chooser cancellation', visible=False, focus='A', desktop='F1')
+            driver.hotkey('focusDesktop1')
+            check('regular departure leaves native fullscreen intact', visible=False,
+                  desktop='D1', native={'A': {field: True}})
+            open_chooser('known fullscreen target from regular desktop')
+            selected = select('chooserEnter', 'A', focus='A', desktop='F1', native={'A': {field: True}})
+            for scope, saved in before.diagnostics.get('retained', {}).items():
+                current = selected.diagnostics.get('retained', {}).get(scope, {})
+                if current.get('order') != saved.get('order') or current.get('layouts') != saved.get('layouts'):
+                    raise AssertionError('fullscreen choice changed retained placement/layout order')
+            open_chooser('unchanged fullscreen target')
+            select('chooserEnter', 'A', focus='A', desktop='F1', native={'A': {field: True}})
+        else:
+            # Hidden/minimized restoration remains explicitly outside this slice.
+            select('chooserEnter', 'A', accepted=False, reason='chooser-restoration-deferred',
+                   focus=before.focused, frames=before.frames, native={'A': {field: True}})
         driver.fixture_action(enable, 'A')
         check(enable + ' native state', visible=False, native={'A': {field: False}})
         open_chooser(enable + ' order retained')

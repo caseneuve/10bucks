@@ -135,6 +135,23 @@ class ChooserOracle(unittest.TestCase):
         d['rows'].reverse()
         self.assertFalse(checkpoint('AC', titles={'A':'i---n---b','C':'Inbox'})(o))
 
+    def test_fullscreen_selection_requires_native_context_and_confirmation(self):
+        o = self.observation()
+        d = o.diagnostics['chooser']; d['visible'] = False; d['pending'] = False
+        d['native']['A'] = {'fullscreen': True, 'minimized': False, 'hidden': False}
+        o.diagnostics['nativeDesktop']['active'] = 'F1'
+        predicate = checkpoint([], visible=False, focus='A', desktop='F1', pending=False,
+                               native={'A': {'fullscreen': True, 'minimized': False, 'hidden': False}},
+                               completion=[{'alias':'A','accepted':True}])
+        self.assertTrue(predicate(o))
+        for fault in ('focus', 'desktop', 'mode', 'pending'):
+            bad = copy.deepcopy(o)
+            if fault == 'focus': bad = replace(bad, focused='C')
+            if fault == 'desktop': bad.diagnostics['nativeDesktop']['active'] = 'D1'
+            if fault == 'mode': bad.diagnostics['chooser']['native']['A']['fullscreen'] = False
+            if fault == 'pending': bad.diagnostics['chooser']['pending'] = True
+            self.assertFalse(predicate(bad), fault)
+
     def test_cleanup_evidence(self):
         spec = importlib.util.spec_from_file_location('ft_runner', Path(__file__).with_name('run.py'))
         runner = importlib.util.module_from_spec(spec); spec.loader.exec_module(runner)

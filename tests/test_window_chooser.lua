@@ -149,6 +149,19 @@ return {
     assert(#Rows.filter(rows, "baah") == 0)
     assert(#Rows.filter(rows, "") == 2)
   end,
+  ["CHOOSE-004 CMD-001: chooser rejections offer an action without exposing internal codes"] = function()
+    local complete, message, reason
+    local hs = { chooser = { new = function(callback)
+      complete = callback; return { queryChangedCallback = function() end }
+    end }, alert = { show = function(value) message = value end } }
+    Adapter.new(hs, function() return {} end, function() return false, reason end)
+    for _, code in ipairs({ "stale-chooser-target", "chooser-restoration-deferred", "desktop-switch-pending",
+      "desktop-creation-pending", "managed-focus-failed", "unknown-internal-failure" }) do
+      reason = code; complete({ windowId = 1 })
+      assert(message:find("10bucks:", 1, true) and not message:find(code, 1, true))
+      assert(message:find("try again", 1, true) or message:find("reopen", 1, true) or message:find("choose", 1, true))
+    end
+  end,
   ["CHOOSE-002 CHOOSE-004: adapter query projection cancellation and disposal have no window queries"] = function()
     local n = { visible = false, value = "" }
     function n:queryChangedCallback(cb) self.changed = cb; return self end

@@ -1,12 +1,12 @@
 -- POC-010: native fullscreen is independently ready but has no regular slot.
 -- Native focus can confirm before the Space callback; no callback is injected
 -- inside enumeration. Fullscreen exit ordering is also recorded in POC-001/003.
-local function setup()
-  local f = { fullscreen = true, activeSpace = "full", focuses = {}, frames = {}, watchers = {}, scans = 0, queries = 0 }
+local function setup(retained)
+  local f = { fullscreen = not retained, activeSpace = retained and "regular" or "full", focuses = {}, frames = {}, watchers = {}, scans = 0, queries = 0, timers = {} }
   local function watcher(callback)
     return { callback = callback, start = function() end, stop = function(self) self.stopped = true end }
   end
-  local app = { isHidden = function() return false end, pid = function() return 41 end, name = function() return "Fixture" end, bundleID = function() return "fixture" end }
+  local app = { isHidden = function() return f.hidden == true end, pid = function() return 41 end, name = function() return "Fixture" end, bundleID = function() return "fixture" end }
   -- Dock owns only the topology boundary observer, never fixture AX windows.
   local dock = { pid = function() return 81 end, bundleID = function() return 'com.apple.dock' end,
     allWindows = function() return {} end }
@@ -14,7 +14,7 @@ local function setup()
   local windows = {}
   local function owner(id) return id == 1 and f.fullscreen and "full" or "regular" end
   for id = 1, 2 do
-    local window = { isMinimized = function() return false end, id = function() return id end, title = function() return "fixture" end,
+    local window = { isMinimized = function() return f.minimized == true end, id = function() return id end, title = function() return "fixture" end,
       application = function() return app end, role = function() return "AXWindow" end,
       subrole = function() return "AXStandardWindow" end,
       isFullScreen = function() return id == 1 and f.fullscreen end,
@@ -41,7 +41,7 @@ local function setup()
       allSpaces = function() return { ["built-in"] = { "regular", "full" } } end,
       spaceType = function(id) return id == "full" and "fullscreen" or "user" end,
       windowsForSpace = function(space) local ids = {}; for id in ipairs(windows) do if owner(id) == space then ids[#ids + 1] = id end end; return ids end,
-      windowSpaces = function(id) return { owner(id) } end,
+      windowSpaces = function(id) if f.ownerOverride then return f.ownerOverride end; return { owner(id) } end,
       watcher = { new = function(callback) f.contextWatcher = watcher(callback); return f.contextWatcher end } },
     axuielement = { applicationElement = function(application) assert(application == dock); return dockElement end,
       observer = { notifications = { AXUIElementDestroyed = 'AXUIElementDestroyed' }, new = function(pid)
@@ -56,6 +56,7 @@ local function setup()
         }
         f.dockObserver = observer; return observer
       end }, windowElement = function(window) return {
+      isValid = function() return true end,
       attributeValue = function() return false end,
       isAttributeSettable = function(_, attribute) return not (window == windows[1] and f.fullscreen and attribute == "AXPosition") end,
     } end },
@@ -72,7 +73,12 @@ local function setup()
         launched = 2, terminated = 3, hidden = 4, unhidden = 5, activated = 6 } },
     canvas = { new = canvas }, mouse = { absolutePosition = function() return { x = 50, y = 50 } end }, host = { interfaceStyle = function() return nil end },
     distributednotifications = { new = function() return { start = function() end, stop = function() end } end },
-    timer = { secondsSinceEpoch = function() return 1 end, doAfter = function() return barTimer() end, doEvery = function() return barTimer() end },
+    timer = { secondsSinceEpoch = function() return 1 end, doAfter = function(delay, callback)
+      local timer = barTimer(); timer.delay, timer.callback = delay, callback
+      timer.stop = function(self) self.stopped = true end
+      f.timers[#f.timers + 1] = timer; return timer
+    end, doEvery = function() return barTimer() end },
+    alert = { show = function(message) f.alert = message end },
     hotkey = { bind = function() return { delete = function() end } end },
   }
   local discovery = { inventory = function()
@@ -88,10 +94,157 @@ local function setup()
   function f:previous()
     assert(ten:_submitCommand({ type = "FocusManagedPrevious" }))
   end
+  function f:choose(id)
+    for _, row in ipairs(ten.chooserRows) do if row.windowId == id then return ten:_chooseWindow(row) end end
+    error("fixture chooser row missing")
+  end
   return f, ten
 end
 
 return {
+  ["CHOOSE-001 CHOOSE-003 FS-002 FS-005 STATE-002: chooser focuses retained and unplaced fullscreen without slot/frame/order changes"] = function()
+    for _, retained in ipairs({ false, true }) do
+      local f, ten = setup(retained)
+      local core = ten.cores.regular
+      local order = table.concat(core:state().manager.spaces.regular.memberIds, ",")
+      if retained then
+        f.fullscreen = true
+        f.watchers[1].callback(nil, "AXWindowResized")
+      end
+      f:activateRegular()
+      local layout = core:state().coordinators.regular.activeLayoutId
+      local rows = table.concat({ ten.chooserRows[1].windowId, ten.chooserRows[2].windowId }, ",")
+      f.onFocus = function(id) assert(ten.focusHistory:pending().windowId == id) end
+      local queries, scans, effects = f.queries, f.scans, #f.focuses
+      assert(f:choose(1))
+      assert(#f.focuses == effects + 1, "chooser selection has exactly one focus effect")
+      assert(f.activeSpace == "full" and f.focused == f.windows[1] and not ten.focusHistory:pending())
+      assert(f.queries == queries + 1 and f.scans == scans)
+      assert(table.concat(core:state().manager.spaces.regular.memberIds, ",") == order)
+      assert(core:state().coordinators.regular.activeLayoutId == layout)
+      assert(table.concat({ ten.chooserRows[1].windowId, ten.chooserRows[2].windowId }, ",") == rows)
+      assert((core:state().manager.windows[1] ~= nil) == retained)
+      if retained then assert(core:state().manager.windows[1].placementSpaceId == "regular") else assert(not f.frames[1]) end
+      f.contextWatcher.callback()
+      assert(f:choose(1) and not ten.focusHistory:pending(), "unchanged exact focus confirms without AX callback")
+      ten:stop()
+    end
+  end,
+  ["CHOOSE-001 STATE-008 FS-005: unplaced overlapping lifecycle rejects until each flag clears and readiness refreshes"] = function()
+    local f, ten = setup(); f:activateRegular()
+    f.minimized, f.hidden = true, true
+    f.watchers[1].callback(nil, "AXWindowMiniaturized")
+    f.life.callback(nil, hs.application.watcher.hidden, f.windows[1]:application())
+    local effects = #f.focuses
+    assert(not f:choose(1) and #f.focuses == effects)
+    f.minimized = false; f.watchers[1].callback(nil, "AXWindowDeminiaturized")
+    assert(not f:choose(1) and #f.focuses == effects)
+    f.hidden = false
+    ten.host:_ready(f.windows[1], "targetedReadiness", ten.host.windowCallback)
+    assert(f:choose(1), "repeat independently confirmed readiness refreshes lifecycle")
+    ten:stop()
+  end,
+  ["CHOOSE-001 STATE-005 FOCUS-003: uncertain/mismatched native owner rejects without admission or focus"] = function()
+    for _, owners in ipairs({ {}, { "regular" }, { "full", "regular" }, { "other-full" } }) do
+      local f, ten = setup(); f:activateRegular(); f.ownerOverride = owners
+      local nativeType = hs.spaces.spaceType
+      hs.spaces.spaceType = function(id) return id == "other-full" and "fullscreen" or nativeType(id) end
+      local effects, scans = #f.focuses, f.scans
+      assert(not f:choose(1) and #f.focuses == effects and not ten.focusHistory:pending())
+      assert(ten.focusHistory:unplacedTarget(1) and not ten.core:state().manager.windows[1] and f.scans == scans)
+      ten:stop()
+    end
+  end,
+  ["CHOOSE-001 STATE-005 WIN-005: exact resource uncertainty replacement and destruction never focus numerical aliases"] = function()
+    for _, kind in ipairs({ "uncertain", "invalid", "replaced", "app-retired", "destroyed" }) do
+      local f, ten = setup(); f:activateRegular()
+      local row
+      for _, item in ipairs(ten.chooserRows) do if item.windowId == 1 then row = item end end
+      local record = ten.host.handles[1]
+      if kind == "uncertain" then record.element.isValid = function() return nil end
+      elseif kind == "invalid" then record.element.isValid = function() return false end
+      elseif kind == "replaced" then record.handle = { id = function() return 1 end }
+      elseif kind == "app-retired" then ten.host.appResources[41].active = false
+      else f.watchers[1].callback(nil, "AXUIElementDestroyed") end
+      local effects, scans = #f.focuses, f.scans
+      assert(not ten:_chooseWindow(row) and #f.focuses == effects and f.scans == scans)
+      assert(not ten.focusHistory:pending())
+      if kind == "uncertain" or kind == "replaced" then assert(ten.focusHistory:unplacedTarget(1)) end
+      ten:stop()
+    end
+  end,
+  ["CMD-006 CHOOSE-001: desktop operation gates fullscreen even when saved placement is active"] = function()
+    for _, retained in ipairs({ false, true }) do
+      local f, ten = setup(retained)
+      if retained then f.fullscreen = true; f.watchers[1].callback(nil, "AXWindowResized") end
+      f:activateRegular()
+      local original = ten.workspace.state
+      for _, creating in ipairs({ false, true }) do
+        ten.workspace.state = function() return { switch = { inFlight = { creating = creating } } } end
+        local effects = #f.focuses
+        local ok, reason = f:choose(1)
+        assert(not ok and reason == (creating and "desktop-creation-pending" or "desktop-switch-pending"))
+        assert(#f.focuses == effects and not ten.focusHistory:pending())
+      end
+      ten.workspace.state = original
+      ten:stop()
+    end
+  end,
+  ["FOCUS-006 CMD-005: stale chooser confirmation cannot overwrite newer pending history or selection"] = function()
+    local f, ten = setup(); f:activateRegular(); f.delayFocus = true
+    assert(f:choose(1))
+    f.focused = nil
+    assert(f:choose(2) and ten.focusHistory:pending().windowId == 2)
+    local core = ten.core
+    f.focused = f.windows[1]; f.appWatcher.callback(f.windows[1], "AXFocusedWindowChanged")
+    assert(ten.focusHistory:pending().windowId == 2)
+    assert(core:state().manager.focus.desiredBySpace.regular.targetId == 2)
+    assert(ten.focusHistory:snapshot()[2].windowId == 2)
+    f.focused = f.windows[2]; f.appWatcher.callback(f.windows[2], "AXFocusedWindowChanged")
+    assert(not ten.focusHistory:pending() and not core:state().manager.focus.desiredBySpace.regular.pending)
+    ten:stop()
+  end,
+  ["FOCUS-006 CMD-005 CMD-006: chooser timeout supersession shutdown and late callbacks release only current authority"] = function()
+    local f, ten = setup(); f:activateRegular(); f.delayFocus = true
+    assert(f:choose(1)); local expired = ten.managedFocusTimer
+    assert(expired and ten.focusHistory:pending().windowId == 1)
+    assert(f:choose(2) and not ten.focusHistory:pending())
+    expired.callback(); assert(not ten.focusHistory:pending() and not f.alert)
+    assert(f:choose(1)); local timeout = ten.managedFocusTimer
+    local effects = #f.focuses; timeout.callback()
+    assert(not ten.focusHistory:pending() and #f.focuses == effects and f.alert)
+    assert(not ten.core:state().manager.focus.desiredBySpace.regular.pending)
+    assert(f:choose(1)); local stopped = ten.managedFocusTimer
+    ten:stop(); stopped.callback(); assert(not ten.focusHistory:pending() and #f.focuses == effects + 1)
+  end,
+  ["FOCUS-006 CMD-005 FS-002: departed saved placement Space callback cannot cancel fullscreen chooser authority"] = function()
+    local f, ten = setup(true); f.fullscreen = true; f.watchers[1].callback(nil, "AXWindowResized"); f:activateRegular()
+    f.delayFocus = true; assert(f:choose(1))
+    f.activeSpace = "full"; f.contextWatcher.callback()
+    assert(ten.focusHistory:pending().windowId == 1)
+    f.focused = f.windows[1]; f.appWatcher.callback(f.windows[1], "AXFocusedWindowChanged")
+    assert(not ten.focusHistory:pending())
+    ten:stop()
+  end,
+  ["FOCUS-006 STATE-002: same-Space chooser terminal native failure clears both authorities"] = function()
+    local f, ten = setup(); f:activateRegular()
+    f.windows[2].focus = function() error("fixture local focus failure") end
+    local ok, reason = f:choose(2)
+    assert(not ok and reason == "managed-focus-failed")
+    assert(not ten.focusHistory:pending() and not ten.managedFocusTimer)
+    assert(not ten.core:state().manager.focus.desiredBySpace.regular.pending)
+    ten:stop()
+  end,
+  ["FOCUS-006 STATE-002: native focus exception clears chooser global and Core authority"] = function()
+    for _, retained in ipairs({ false, true }) do
+      local f, ten = setup(retained)
+      if retained then f.fullscreen = true; f.watchers[1].callback(nil, "AXWindowResized") end
+      f:activateRegular(); f.windows[1].focus = function() error("fixture focus failure") end
+      assert(not f:choose(1) and not ten.focusHistory:pending())
+      assert(not ten.core:state().manager.focus.desiredBySpace.regular.pending)
+      ten:stop()
+    end
+  end,
   ["FS-004 FS-005 FOCUS-003: cold fullscreen is tracked without a Core, layout slot, frame, or focus request"] = function()
     local f, ten = setup()
     assert(ten.core == nil and ten.suspended)
