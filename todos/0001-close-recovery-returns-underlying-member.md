@@ -1,6 +1,6 @@
 ---
 title: Close recovery returns an underlying member instead of the originating focused window
-status: done
+status: in_progress
 priority: high
 type: bug
 labels: []
@@ -57,7 +57,36 @@ No product fix or benchmark acceptance. Owned VM cleanup verified; host unchange
 **Decision resolved:** user chose option2, prior confirmed focused source survivor A,
 and explicitly rejected B. No repeat A-vs-B investigation is required.
 
-## Fix checkpoint — 2026-10-14
+## Host feedback — reopened 2026-10-14
+
+User reports loaded bb21137 does not fix the real sequence: A/B|C, actual A,
+spawning new terminal first focuses existing B, then creates D. A is Thunderbird;
+B/D are Ghostty. App names are reproduction context, not policy. Spawn gesture,
+native/manager cause and exact event order are not yet traced. Intermediate B focus
+can become the newest source history entry; fixture's direct D creation did not
+cover activation of another app's existing window before creation. Do not suppress
+legitimate focus or invent opener authority. User's desired recovery remains A;
+no repeat preference question. Prior implementation/native fixture success is scoped,
+not completed real-workflow acceptance. No new host effects authorized by report.
+
+## Launcher correction — 2026-10-14
+
+Verified host skhd HyperReturn explicitly activated Ghostty before clicking New
+Window, allowing existing B focus to precede D. User authorized direct creation.
+Host HyperReturn now uses `osascript -e 'tell application "Ghostty" to new window'`;
+only that line changed, backup retained privately. Existing skhd process received
+its documented SIGUSR1 reload (CLI reload failed because pidfile was stale).
+
+Narrow owned-guest Ghostty1.3.1 native probe: actual generic A with existing B →
+direct command → one new D, final native D stable250ms,22samples/no observed B,
+max sampled gap118ms,script exit0. Initial setup/permission-interrupted runs remain
+unaccepted; Automation allowed through normal guest UI. Observer/timer stopped,
+normal fixture quit acknowledgment/exit,Ghostty exit and0ordinary windows verified.
+This is sampled launcher evidence, not proof of every transient or user-host
+acceptance. No host shortcut/window action automated; user should verify A→D→closeA.
+No engine app-specific exception or focus suppression introduced.
+
+## Scoped fix checkpoint — 2026-10-14
 
 Stack/Columns `RecoverSource` now consult the existing reducer-owned focus history,
 filtered to available surviving members of the physical source. No new state,
@@ -82,4 +111,4 @@ adapter limitation is not repaired by this source-preference change.
 
 ## Notes
 
-Deferred from the current rules story by explicit user decision: finish/commit rules and separate the test harness first, then fix found bugs. Do not initiate mail or put user-specific exclusion policy in the repository. Host frozen candidate/user config remains a separate boundary. Read `.pi/WORK_STATE.md` for runtime authority; ignored close-bug handoff supplies operational context. Historical initial review stalled, was cancelled, and queued input was cleared without a verdict. Independent source/native investigation review completed on 2026-10-14; the policy decision is resolved and the targeted source-preference fix is delivered as recorded above.
+Deferred from the current rules story by explicit user decision: finish/commit rules and separate the test harness first, then fix found bugs. Do not initiate mail or put user-specific exclusion policy in the repository. Host frozen candidate/user config remains a separate boundary. Read `.pi/WORK_STATE.md` for runtime authority; ignored close-bug handoff supplies operational context. Historical initial review stalled, was cancelled, and queued input was cleared without a verdict. Independent source/native investigation review completed on 2026-10-14; the policy decision is resolved and the source-preference correction is implemented, but user host feedback reopens the actual workflow as recorded above.
