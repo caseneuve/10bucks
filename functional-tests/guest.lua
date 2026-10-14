@@ -310,6 +310,15 @@ local function join(alias,number,pid)
             or record.appResource~=hostRecord.appLease then return false end
         identity={id=number,resource=hostRecord.lease,appResource=hostRecord.appLease,pid=pid,app=app}
     end
+    if s.closeInvestigation then
+        local record=s.candidate.host.handles[number]
+        local appRecord=record and s.candidate.host.appResources[pid]
+        if not record or not record.active or record.handle~=matched or record.element~=ax or record.pid~=pid
+            or not appRecord or not appRecord.active or appRecord.app~=app or appRecord.lease~=record.appLease then return false end
+        s.closeIdentities[alias]={resource=record.lease,appResource=record.appLease,pid=pid,
+            handle=matched,element=ax,app=appRecord.app}
+        if alias=='E' then s.closeExcludedId=number end
+    end
     s.windows[alias]=matched; s.axes[alias]=ax; s.byId[number]=alias; s.ownerPids[alias]=pid
     if identity then s.aliasResources[alias]=identity end
     s.observers=s.observers or {}
@@ -347,7 +356,7 @@ local function drain()
         -- fixture ack without requesting now-impossible policy/observer joins.
         if s.phase~='cleanup' and not join(pending.alias,ack.windowNumber) then return end
     end
-    if pending and (pending.operation=='create' or pending.operation=='createExcluded') and s.configuredRules then
+    if pending and (pending.operation=='create' or pending.operation=='createExcluded') and (s.configuredRules or s.closeInvestigation) then
         assert(type(ack.creationFrame)=='table','independent_creation_frame_required')
         s.creationFrames[pending.alias]=copy(ack.creationFrame)
     end
@@ -410,12 +419,31 @@ local function sample()
         end
         timings[alias]=now()-aliasStarted
     end
+    if s.closeInvestigation and focused and not focusedAlias then focusedAlias='other' end
     table.sort(closed)
     local snapshotStarted=now()
     -- Join F1 before aliasing workspace diagnostics from the same publication.
     s.chooserNativeFullscreen=native and native.windows.A and native.windows.A.fullscreen or false
     local desktop=s.desktopSwitching and nativeDesktop() or nil
     local managed,unknown,diagnostics=candidateSnapshot()
+    if s.closeInvestigation then
+        local history,localHistory={},{}
+        for _,entry in ipairs(s.candidate.focusHistory:snapshot()) do history[#history+1]=s.byId[entry.windowId] or 'unknown' end
+        for _,id in ipairs(s.candidate.core:state().manager.focus.managedHistory) do localHistory[#localHistory+1]=s.byId[id] or 'unknown' end
+        local liveExcluded={}
+        if frames.E then liveExcluded={'E'} end
+        local instrumented=s.closeWrappers~=nil
+        for _,entry in ipairs(s.closeWrappers or {}) do instrumented=instrumented and entry.owner[entry.name]==entry.wrapper end
+        local identities={}
+        for alias,identity in pairs(s.closeIdentities) do
+            identities[alias]=identity.resource~=nil and identity.appResource~=nil and identity.pid==s.ownerPids[alias]
+        end
+        diagnostics.closeRecovery={history=history,localHistory=localHistory,liveExcluded=liveExcluded,
+            exactJoins=identities,lastAck=copy(s.lastAck),excludedFocusRequests=s.closeRequests[s.closeExcludedId] or 0,
+            excludedFrame=copy(s.creationFrames.E),excludedEffects=copy(s.closeEffects[s.closeExcludedId] or {frame=0,focus=0}),
+            excludedSafety=s.closeSafety[s.closeExcludedId]==true,orderingDropped=s.closeOrderingDropped,
+            instrumented=instrumented}
+    end
     if s.desktopSwitching then diagnostics.nativeDesktop=desktop end
     if s.desktopFullscreen then
         diagnostics.fixtureNative={}
@@ -592,6 +620,14 @@ local function sample()
     s.trace[#s.trace+1]=copy(s.latest)
     if #s.trace>1200 then table.remove(s.trace,1); s.dropped=s.dropped+1 end
 end
+local function drained(worker, cancelled)
+    if not worker then return true end
+    local ok,status=pcall(worker.status,worker)
+    if not ok or type(status)~='table' then
+        s.cleanup.error=s.cleanup.error or 'worker_status_failed'; return false
+    end
+    return status.drained==true and (not cancelled or status.cancelled==true)
+end
 local function finalize()
     if s.timer then s.timer:stop(); s.timer=nil end
     if s.raceTimer then s.raceTimer:stop(); s.raceTimer=nil end
@@ -602,7 +638,8 @@ local function finalize()
         observerStopped=observerStopped and ok and result
     end
     s.cleanup.observerStopped=observerStopped
-    s.cleanup.nativeWorkerDrained=not s.stoppedWorker or s.stoppedWorker:status().drained==true
+    if s.closeInvestigation then s.cleanup.nativeWorkerDrained=drained(s.stoppedWorker)
+    else s.cleanup.nativeWorkerDrained=not s.stoppedWorker or s.stoppedWorker:status().drained==true end
     s.cleanup.timerStopped=s.timer==nil
     hs.mouse.absolutePosition(s.originalPointer)
     s.cleanup.pointerRestored=true
@@ -623,6 +660,19 @@ local function finalize()
         for name,method in pairs(s.ruleMethods) do s.rulesModule[name]=method end
         s.cleanup.ruleWrappersRestored=s.cleanup.ruleWrappersRestored==true
             and s.rulesModule.filter==s.ruleMethods.filter and s.rulesModule.reduce==s.ruleMethods.reduce
+    end
+    if s.closeWrappers then
+        s.cleanup.closeWrappersRestored=true
+        for _,entry in ipairs(s.closeWrappers) do
+            entry.owner[entry.name]=entry.original
+            s.cleanup.closeWrappersRestored=s.cleanup.closeWrappersRestored and entry.owner[entry.name]==entry.original
+        end
+        s.cleanup.discoveryJobs=#s.closeDiscoveryJobs
+        s.cleanup.discoveryDrainApplicable=#s.closeDiscoveryJobs>0
+        s.cleanup.discoveryWorkerDrained=true
+        for _,job in ipairs(s.closeDiscoveryJobs) do
+            s.cleanup.discoveryWorkerDrained=drained(job,true) and s.cleanup.discoveryWorkerDrained
+        end
     end
     s.cleanup.bindWrapperRestored=hs.hotkey.bind==s.originalBind
     s.cleanup.taskStopped=not s.task or not s.task:isRunning()
@@ -655,7 +705,7 @@ local function finalize()
             and h.validityTimer==nil and h.discoveryTimer==nil and h.validityTarget==nil
     end
     local syntheticReleased=s.syntheticKeys==nil or s.cleanup.syntheticKeyReleaseSubmitted==true
-    s.cleanup.ok=(not s.configuredRules or (s.cleanup.ruleWrappersRestored==true and s.cleanup.ruleResourcesCleared==true)) and syntheticReleased and s.cleanup.nativeWorkerDrained and s.cleanup.ghosttyNormal and s.cleanup.candidateStopped and observerStopped and s.cleanup.bindWrapperRestored
+    s.cleanup.ok=(not s.closeInvestigation or s.cleanup.error==nil) and (not s.closeInvestigation or (s.cleanup.closeWrappersRestored==true and s.cleanup.discoveryWorkerDrained==true)) and (not s.configuredRules or (s.cleanup.ruleWrappersRestored==true and s.cleanup.ruleResourcesCleared==true)) and syntheticReleased and s.cleanup.nativeWorkerDrained and s.cleanup.ghosttyNormal and s.cleanup.candidateStopped and observerStopped and s.cleanup.bindWrapperRestored
         and s.cleanup.taskStopped and s.cleanup.normalExit and s.cleanup.callbackReceived
         and s.cleanup.claimsAbsent and s.cleanup.quitAcknowledged and not s.cleanup.forced
     if not s.cleanup.ok then s.cleanup.error=s.cleanup.error or 'cleanup_incomplete' end
@@ -663,6 +713,31 @@ local function finalize()
     local result={error=s.error,cleanup=s.cleanup,trace=s.trace,dropped=s.dropped,
         workArea=s.workArea,settings=s.settings,failedOperation=s.failedOperation,baseline=s.baselineFacts,
         controllerFailures=s.controllerFailures or {},coldDiscoveryStatus=s.coldDiscoveryStatus}
+    if s.closeInvestigation then
+        result.closeOrderingDropped=s.closeOrderingDropped
+        result.closeOrdering={}
+        for _,row in ipairs(s.closeOrdering) do
+            local exported={}
+            for key,value in pairs(row) do
+                if key~='handle' and key~='element' and key~='app' then exported[key]=copy(value) end
+            end
+            if row.id and row.resource then
+                local alias=s.byId[row.id]
+                local identity=alias and s.closeIdentities[alias]
+                exported.joinedLifetime=identity~=nil and identity.resource==row.resource
+                    and identity.handle==row.handle and identity.element==row.element
+                    and identity.pid==row.pid and identity.appResource==row.appResource and identity.app==row.app
+            end
+            exported.resource=nil; exported.pid=nil; exported.appResource=nil
+            for _,key in ipairs({'id','expected','eventTarget','desiredTarget','actual','validity'}) do
+                if exported[key]~=nil then exported[key]=s.byId[exported[key]] or 'unknown' end
+            end
+            for _,key in ipairs({'selected','history','members'}) do
+                if exported[key] then for i,id in ipairs(exported[key]) do exported[key][i]=s.byId[id] or 'unknown' end end
+            end
+            result.closeOrdering[#result.closeOrdering+1]=exported
+        end
+    end
     local ok=pcall(atomic,s.outputDir..'/guest-result.json',result)
     if not ok then s.cleanup.error='result_write_failed'; s.cleanup.ok=false end
 
@@ -681,6 +756,9 @@ local function cleanupTick()
         s.stoppedHost=s.candidate and s.candidate.host
         s.stoppedWindows=s.candidate and s.candidate.windows
         s.stoppedWorker=s.stoppedHost and s.stoppedHost.validityWorker
+        for _,job in ipairs(s.closeDiscoveryJobs or {}) do
+            if not pcall(job.cancel,job) then s.cleanup.error='discovery_cancel_failed' end
+        end
         local stopped,stopError=true,nil
         if s.candidate then
             local adapter=s.managedWindowChooser and s.candidate.windowChooser
@@ -748,7 +826,9 @@ local function cleanupTick()
     local ghosttyExited=not s.ghosttyLaunchSubmitted or
         (s.ghosttyLaunchResolved==true and s.ghosttyApp~=nil
          and hs.application.applicationForPID(s.ghosttyPid)==nil)
-    if ((not s.task or s.exitCode~=nil) and ghosttyExited) or now()-s.cleanupAt>=5 or now()-s.started>=60 then
+    local workersDrained=not s.closeInvestigation or drained(s.stoppedWorker)
+    for _,job in ipairs(s.closeDiscoveryJobs or {}) do workersDrained=drained(job,true) and workersDrained end
+    if ((not s.task or s.exitCode~=nil) and ghosttyExited and workersDrained) or now()-s.cleanupAt>=5 or now()-s.started>=60 then
         if s.task and s.task:isRunning() and not s.forced then s.forced=true; s.task:terminate() end
         finalize()
     end
@@ -956,6 +1036,105 @@ bootstrap=function()
             s.chooserCompletions[#s.chooserCompletions+1]={alias=exact and alias or 'unknown',accepted=accepted,reason=reason}
             return accepted,reason
         end
+    end
+    if s.closeInvestigation then
+        config.rules={{match={bundleID='dev.10bucks.functional-fixture',title='10bucks fixture E'},action='exclude'}}
+        s.closeWrappers={}; s.closeOrdering={}; s.closeOrderingDropped=0; s.closeDiscoveryJobs={}
+        s.closeEffects={}; s.closeRequests={}; s.closeSafety={}; s.closeIdentities={}
+        local function record(boundary, event, core)
+            if #s.closeOrdering>=512 then s.closeOrderingDropped=s.closeOrderingDropped+1; return end
+            local row={sequence=#s.closeOrdering+1,at=now(),boundary=boundary,action=s.actionSequence}
+            if event then
+                row.kind=event.type or event.kind; row.id=event.id
+                row.origin=event.observationOrigin; row.expected=event.expected
+                row.effect=event.effect; row.eventTarget=event.target
+            end
+            local host=s.candidate.host
+            row.validity=host and host.validityTarget and host.validityTarget.id
+            if event and event.id and event.resource then
+                local native=host and host.handles[event.id]
+                local app=native and host.appResources[native.pid]
+                row.exactResource=native~=nil and native.active and native.lease==event.resource
+                    and app~=nil and app.active and app.lease==native.appLease
+                row.resource=event.resource -- private references become joined booleans at export
+                row.handle=native and native.handle; row.element=native and native.element
+                row.pid=native and native.pid; row.appResource=native and native.appLease
+                row.app=app and app.app
+            end
+            if core then
+                local state=core:state(); local coord=state.coordinators[core.spaceId]
+                local layout=coord.layouts[coord.activeLayoutId]
+                row.members=copy(state.manager.spaces[core.spaceId].memberIds)
+                row.actual=state.manager.focus.actualWindow and state.manager.focus.actualWindow.id
+                row.history=copy(state.manager.focus.managedHistory)
+                row.active=layout.activeStack; row.selected={}
+                if layout.selectedId then row.selected={layout.selectedId} end
+                for _,group in ipairs(layout.stacks or {}) do row.selected[#row.selected+1]=group.selectedId end
+                local desired=state.manager.focus.desiredBySpace[core.spaceId]
+                row.desiredTarget=desired.targetId; row.pending=desired.pending
+            end
+            s.closeOrdering[#s.closeOrdering+1]=row
+        end
+        -- These wrappers retain every return (including nils) and forward all
+        -- original arguments/batches. Only Lua state/clocks are read here.
+        local function wrap(owner,name,before,after)
+            local original=owner[name]
+            s.closeWrappers[#s.closeWrappers+1]={owner=owner,name=name,original=original}
+            owner[name]=function(...)
+                if before then before(...) end
+                local results=table.pack(original(...))
+                if after then after(...) end
+                return table.unpack(results,1,results.n)
+            end
+            s.closeWrappers[#s.closeWrappers].wrapper=owner[name]
+        end
+        local Host=require('lib.macos.window_host')
+        local Windows=require('lib.macos.windows')
+        wrap(Host,'_record',function(_,kind)
+            if kind=='rawWindowDestroyed' or kind=='targetedValidityQueries' or kind=='asynchronousValidityRemovals' then record('host.signal',{kind=kind}) end
+        end)
+        wrap(Host,'observeFocus',function(_,expected) record('host.focus.begin',{expected=expected}) end,
+            function() record('host.focus.end') end)
+        wrap(Host,'_cancelValidity',function() record('host.validity.cancel') end)
+        wrap(Host,'_checkWindowValidity',function(_,id,resource)
+            if resource and resource.active and s.candidate.host.managedObservers[id] then s.closeSafety[id]=true end
+            record('host.validity.boundary',{id=id,resource=resource and resource.lease})
+        end)
+        wrap(Host,'focus',function(h,window)
+            local id
+            for candidate,resource in pairs(h.handles) do if resource.handle==window then id=candidate; break end end
+            local resource=id and h.handles[id]
+            record('host.focus.request',{id=id,resource=resource and resource.lease})
+            if id then
+                local counts=s.closeRequests[id] or 0; s.closeRequests[id]=counts+1
+            end
+        end)
+        wrap(Windows,'_window',function(_,event) record('host.observation',event) end)
+        wrap(Windows,'_emit',function(_,event) record('windows.normalized',event) end)
+        wrap(s.candidate,'_submitCore',function(_,core,event) record('core.before',event,core) end,
+            function(_,core,event) record('core.after',event,core) end)
+        wrap(Host,'execute',function(_,_,intents)
+            record('effects.batch.begin',{kind='batch'})
+            for _,intent in ipairs(intents) do
+                record('effects.intent',{kind=intent.kind,id=intent.windowId,resource=intent.lease})
+                if intent.windowId and (intent.kind=='frame' or intent.kind=='focus') then
+                    local counts=s.closeEffects[intent.windowId] or {frame=0,focus=0}
+                    s.closeEffects[intent.windowId]=counts; counts[intent.kind]=counts[intent.kind]+1
+                end
+            end
+        end,function() record('effects.batch.end') end)
+        wrap(Host,'_trackValidity',nil,function(h)
+            if h.validityTarget then s.closeSafety[h.validityTarget.id]=true end
+        end)
+        local discovery=require('lib.macos.regular_discovery')
+        local original=discovery.create
+        s.closeWrappers[#s.closeWrappers+1]={owner=discovery,name='create',original=original}
+        discovery.create=function(...)
+            local results=table.pack(original(...))
+            if results[1] then s.closeDiscoveryJobs[#s.closeDiscoveryJobs+1]=results[1] end
+            return table.unpack(results,1,results.n)
+        end
+        s.closeWrappers[#s.closeWrappers].wrapper=discovery.create
     end
     if s.configuredRules then
         s.filterCounts={}; s.commitCounts={}; s.aliasResources={}; s.safetyTargets={}; s.ruleRecords={}
@@ -1192,7 +1371,7 @@ function M.start(o)
     local screens=hs.screen.allScreens(); assert(#screens==1,'sole_screen_required')
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
-        coldStart=o.coldStart==true,managedWindowChooser=o.managedWindowChooser==true,configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
+        closeInvestigation=o.closeRecoveryInvestigation==true,coldStart=o.coldStart==true,managedWindowChooser=o.managedWindowChooser==true,configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
         initialLayout=o.initialLayout or 'columns',ghosttyEnabled=o.ghostty==true,ownedDisposable=o.ownedDisposable==true,cleanSeedTerminal=o.cleanSeedTerminal==true,originalPointer=copy(hs.mouse.absolutePosition()),
         sequence=0,actionSequence=0,windows={},axes={},byId={},ownerPids={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}
@@ -1412,7 +1591,7 @@ function M.command(op,alias,commands)
             return {accepted=true,submitted_at=now()}
         end
     end
-    if (s.configuredRules or s.managedWindowChooser) and (op=='focus' or op=='renameToExcluded' or op=='renameToManaged' or (s.managedWindowChooser and op=='renameForRanking')) then
+    if (s.closeInvestigation or s.configuredRules or s.managedWindowChooser) and (op=='focus' or op=='renameToExcluded' or op=='renameToManaged' or (s.managedWindowChooser and op=='renameForRanking')) then
         assert(type(alias)=='string' and alias:match('^[A-E]$') and s.windows[alias],'owned_alias_required')
         return publish(op,alias)
     end

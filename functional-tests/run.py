@@ -40,7 +40,7 @@ def evidence_complete(result, *, configured_rules=False, managed_window_chooser=
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=["rules-benchmark", "desktop-switching-benchmark", "desktop-creation-benchmark", "configured-rules", "managed-window-chooser", "managed-window-chooser-cold-start", "desktop-creation-race", "columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching", "desktop-creation"])
+    parser.add_argument("scenario", choices=["rules-benchmark", "desktop-switching-benchmark", "desktop-creation-benchmark", "configured-rules", "managed-window-chooser", "managed-window-chooser-cold-start", "desktop-creation-race", "close-recovery-investigation", "columns-close-recovery", "stack-columns-membership", "ghostty-close-recovery", "ghostty-column-normalization", "ghostty-layout-retention", "desktop-switching", "desktop-creation"])
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--demo", action="store_true", help="2s pauses between actions; not a latency benchmark")
     parser.add_argument("--bar-capture", action="store_true", help="capture native bar outside/hover/return pixels for independent visual review")
@@ -49,7 +49,14 @@ def main():
     parser.add_argument('--desktop-fullscreen', action='store_true',
                         help='desktop-only separate owned-fixture fullscreen indexing/retention subcase')
     parser.add_argument('--benchmark-mode', choices=['warm', 'cold'])
+    parser.add_argument('--close-case', choices=['normal', 'excluded', 'deliberate-b', 'deliberate-c'],
+                        help='required fresh-run case for close-recovery-investigation')
     args = parser.parse_args()
+    investigation = args.scenario == 'close-recovery-investigation'
+    if investigation != bool(args.close_case):
+        parser.error('--close-case is required only for close-recovery-investigation')
+    if investigation and (args.demo or args.bar_capture or args.keep_open):
+        parser.error('close investigation requires normal bounded cleanup, without demo/bar capture/keep-open')
     benchmark_name = {'rules-benchmark':'rules', 'desktop-switching-benchmark':'desktop_switching',
                       'desktop-creation-benchmark':'desktop_creation'}.get(args.scenario)
     rules_benchmark = benchmark_name == 'rules'
@@ -162,7 +169,7 @@ def main():
             status = wait_status(lambda s: s.get("candidateReady") is True and s.get("fixtureReady") is True, 10)
             if status.get("unknownMembers", 0) != 0:
                 raise RuntimeError("unowned candidate membership")
-            expected_layout='stack' if args.scenario in ('stack-columns-membership','ghostty-column-normalization') else 'columns'
+            expected_layout='stack' if args.scenario in ('stack-columns-membership','ghostty-column-normalization','close-recovery-investigation') else 'columns'
             if status.get("layout") != expected_layout:
                 raise RuntimeError(expected_layout + " bootstrap not confirmed")
             return Frame(**status["workArea"])
@@ -212,6 +219,9 @@ def main():
 
         def hotkey_burst(self, commands):
             self.action('hotkeyBurst', commands=list(commands))
+
+        def investigation_record(self, value):
+            (results / 'close-investigation.json').write_text(json.dumps(value, indent=2) + '\n')
 
         def benchmark_record(self, value):
             (results / ('rules-benchmark-analysis.json' if rules_benchmark else 'desktop-benchmark.json')).write_text(json.dumps(value, indent=2) + '\n')
@@ -312,7 +322,7 @@ def main():
         ssh(f"mkdir -m 700 {control}")
         hs('ft=dofile("' + guest_root + ('/functional-tests/benchmarks/guest.lua' if rules_benchmark else '/functional-tests/benchmarks/desktop_guest.lua' if desktop_benchmark else '/functional-tests/guest.lua') + '"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
-           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization") else "columns"}",configuredRules={str(args.scenario == "configured-rules").lower()},coldStart={str(args.scenario == "managed-window-chooser-cold-start").lower()},managedWindowChooser={str(args.scenario in ("managed-window-chooser","managed-window-chooser-cold-start")).lower()},desktopSwitching={str(args.scenario in ("managed-window-chooser-cold-start","managed-window-chooser","configured-rules","desktop-switching","desktop-creation","desktop-creation-race")).lower()},desktopCreation={str(args.scenario in ("desktop-creation","desktop-creation-race")).lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
+           f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","ghostty-column-normalization","close-recovery-investigation") else "columns"}",closeRecoveryInvestigation={str(investigation).lower()},configuredRules={str(args.scenario == "configured-rules").lower()},coldStart={str(args.scenario == "managed-window-chooser-cold-start").lower()},managedWindowChooser={str(args.scenario in ("managed-window-chooser","managed-window-chooser-cold-start")).lower()},desktopSwitching={str(args.scenario in ("managed-window-chooser-cold-start","managed-window-chooser","configured-rules","desktop-switching","desktop-creation","desktop-creation-race")).lower()},desktopCreation={str(args.scenario in ("desktop-creation","desktop-creation-race")).lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
         driver = Driver()
         if rules_benchmark:
             module.run(driver, mode=args.benchmark_mode)
@@ -320,6 +330,8 @@ def main():
             module.fullscreen(driver)
         elif desktop_benchmark:
             module.benchmark(driver, mode=args.benchmark_mode)
+        elif investigation:
+            scenario(driver, case=args.close_case)
         else:
             scenario(driver)
         if args.bar_capture:
@@ -456,12 +468,22 @@ def main():
         guest_result = read('guest-result.json')
         evidence_ok = evidence_complete(guest_result, configured_rules=args.scenario == 'configured-rules',
                                         managed_window_chooser=args.scenario in ('managed-window-chooser','managed-window-chooser-cold-start'))
+        if investigation:
+            outcome_path = results / 'close-investigation.json'
+            outcome = json.loads(outcome_path.read_text()) if outcome_path.exists() else {}
+            evidence_ok = evidence_ok and module.ordering_valid(guest_result, args.close_case, outcome.get('excludedESetupAt')) \
+                and guest_result.get('cleanup', {}).get('closeWrappersRestored') is True
+            if guest_result is not None:
+                (results / 'close-ordering.json').write_text(json.dumps({
+                    'case': args.close_case, 'trace': guest_result.get('closeOrdering'),
+                    'dropped': guest_result.get('closeOrderingDropped')}, indent=2) + '\n')
         cleanup['completeEvidence'] = evidence_ok
         success = evidence_ok and passed and error is None and not (final or {}).get("error") and (args.reuse_debug or (cleanup.get("vmStopped") and cleanup.get("tartExited"))) and cleanup.get("guest", {}).get("ok") is True
         summary = {"pass": bool(success), "scenarioPassed": passed, "error": error,
                    "cleanup": cleanup, "vm": vm, "cloneCreated": cloned, "demo": args.demo, "debugReuse": bool(args.reuse_debug),
                    "barEvidenceCaptured": bool(args.bar_capture and (results / "bar-evidence.json").exists()),
-                   "acceptance": bool(success and not args.reuse_debug)}
+                   "investigationCase": args.close_case,
+                   "acceptance": bool(success and not args.reuse_debug and not investigation)}
         (results / "host-result.json").write_text(json.dumps(summary, indent=2) + "\n")
         print(f"{'PASS' if success else 'FAIL'}; artifacts: {results}", flush=True)
     return 0 if success else 1
