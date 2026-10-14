@@ -119,6 +119,17 @@ def run(driver, *, clock=time.monotonic, sleep=time.sleep):
     driver.chooser_query('1bfx')  # subsequence, not a contiguous native substring
     check('fuzzy title visible rows', query='1bfx')
     select('chooserCmd2', 'C', focus='C', frames=frames)  # same target confirmation
+    driver.fixture_action('renameForRanking', 'A'); titles['A'] = 'i---n---b'
+    driver.fixture_action('renameForRanking', 'C'); titles['C'] = 'Inbox'
+    open_chooser('empty query retains admission order before ranking')
+    driver.chooser_query('inb')
+    rows[:] = ['C', 'A']
+    check('contiguous title ranks ahead of earlier scattered admission', query='inb')
+    # Cmd2 must use visible rank, not admission ordinal: rank2 is exact A.
+    select('chooserCmd2', 'A', focus='A', frames=frames)
+    rows[:] = ['A', 'C']
+    open_chooser('empty query restores admission order after ranked selection')
+    driver.hotkey('chooserCancel'); check('ranked query cancellation', visible=False, focus='A')
     driver.fixture_action('focus', 'A')
     check('native focus does not reorder', visible=False, focus='A')
     open_chooser('title update armed')

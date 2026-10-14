@@ -1335,7 +1335,7 @@ function M.command(op,alias,commands)
             return {accepted=true,submitted_at=now()}
         end
     end
-    if (s.configuredRules or s.managedWindowChooser) and (op=='focus' or op=='renameToExcluded' or op=='renameToManaged') then
+    if (s.configuredRules or s.managedWindowChooser) and (op=='focus' or op=='renameToExcluded' or op=='renameToManaged' or (s.managedWindowChooser and op=='renameForRanking')) then
         assert(type(alias)=='string' and alias:match('^[A-E]$') and s.windows[alias],'owned_alias_required')
         return publish(op,alias)
     end

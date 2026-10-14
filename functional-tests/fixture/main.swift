@@ -126,7 +126,7 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
             sequence = value.intValue
             let alias = object["alias"] as? String
             guard (operation == "quit" && alias == nil) ||
-                  (["create", "createExcluded", "resetClosedAlias", "focus", "close", "renameToExcluded", "renameToManaged"].contains(operation) && ["A", "B", "C", "D", "E"].contains(alias ?? "")) else {
+                  (["create", "createExcluded", "resetClosedAlias", "focus", "close", "renameToExcluded", "renameToManaged", "renameForRanking"].contains(operation) && ["A", "B", "C", "D", "E"].contains(alias ?? "")) else {
                 finish(operation: "invalid", alias: nil, accepted: false, error: "unsupported_operation_or_alias")
                 return
             }
@@ -178,6 +178,8 @@ final class Fixture: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     window.makeKeyAndOrderFront(nil)
                 } else if operation == "renameToExcluded" {
                     window.title = "10bucks fixture B"
+                } else if operation == "renameForRanking" {
+                    window.title = name == "A" ? "i---n---b" : "Inbox"
                 } else if operation == "renameToManaged" {
                     window.title = "10bucks managed \(name)"
                 } else {

@@ -120,7 +120,7 @@ Run the fullscreen portion immediately before fullscreen effects. It must answer
 
 ## POC-006 — Cached chooser and cross-Space focus
 
-**Status: cached chooser scoped delivery verified; restoration deferred to roadmap step 5.** [`021-cached-managed-window-chooser.md`](021-cached-managed-window-chooser.md) records pure behavior/query checks, settled-state native UI/focus acceptance, separate 30-warm/5-cold measurements and independent-sender stress. Earlier failed sampling/setup artifacts and inactive-unhide geometry qualifications remain explicit. No pixel/physical-host/full-release certificate or host-manual readiness is implied; no standalone broad platform certification was needed.
+**Status: cached chooser scoped delivery verified; restoration deferred to roadmap step 5.** [`021-cached-managed-window-chooser.md`](021-cached-managed-window-chooser.md) records pure behavior/query checks, settled-state native UI/focus acceptance, separate 30-warm/5-cold measurements and independent-sender stress. [`022-chooser-relevance-ranking.md`](022-chooser-relevance-ranking.md) records the later ranked-search correction and native visible-row regression. Broader discovery is deferred in TODO0003. Earlier failed sampling/setup artifacts and inactive-unhide geometry qualifications remain explicit. No pixel/physical-host/full-release certificate or host-manual readiness is implied; no standalone broad platform certification was needed.
 
 ## POC-007 — macOS settings and read-only doctor
 

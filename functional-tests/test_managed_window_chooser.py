@@ -115,6 +115,26 @@ class ChooserOracle(unittest.TestCase):
         # Ordinary geometry checkpoints still reject extra/missing frame aliases.
         self.assertFalse(checkpoint([], visible=False, frames={'A':area})(o))
 
+    def test_ranked_visible_order_and_exact_selection(self):
+        o = self.observation()
+        d = o.diagnostics['chooser']; d['query'] = 'inb'
+        d['rows'] = [{'alias':'C','text':'Inbox','subText':'10bucks Fixture'},
+                     {'alias':'A','text':'i---n---b','subText':'10bucks Fixture'}]
+        predicate = checkpoint('CA', query='inb', titles={'A':'i---n---b','C':'Inbox'})
+        self.assertTrue(predicate(o))
+        d['rows'].reverse()
+        self.assertFalse(predicate(o))
+        d['visible'] = False; d['pending'] = False
+        selected = checkpoint([], visible=False, focus='A', pending=False,
+                              completion=[{'alias':'A','accepted':True}])
+        self.assertTrue(selected(o))
+        d['completions'] = [{'alias':'C','accepted':True}]
+        self.assertFalse(selected(o))
+        d['visible'] = True; d['query'] = ''
+        self.assertTrue(checkpoint('AC', titles={'A':'i---n---b','C':'Inbox'})(o))
+        d['rows'].reverse()
+        self.assertFalse(checkpoint('AC', titles={'A':'i---n---b','C':'Inbox'})(o))
+
     def test_cleanup_evidence(self):
         spec = importlib.util.spec_from_file_location('ft_runner', Path(__file__).with_name('run.py'))
         runner = importlib.util.module_from_spec(spec); spec.loader.exec_module(runner)

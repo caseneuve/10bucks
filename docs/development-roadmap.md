@@ -105,6 +105,14 @@ and explicit rejection of restoration-requiring targets. Functional acceptance,
 recorded in [`pocs/021-cached-managed-window-chooser.md`](pocs/021-cached-managed-window-chooser.md).
 This does not establish host-manual readiness or deliver roadmap step 5 restoration.
 
+**Chooser relevance correction, 2026-10-14:** nonempty queries rank title/application
+name by match quality, with application-name priority on equal quality; empty
+queries retain admission order. Generic pure/native ranked-row acceptance and
+separate measurements are recorded in [`pocs/022-chooser-relevance-ranking.md`](pocs/022-chooser-relevance-ranking.md).
+The user simplified MVP to existing managed state; broader cold-start/fullscreen/
+minimized discovery remains investigation [`0003`](../todos/0003-chooser-global-unavailable-window-discovery.md),
+not a shipped global-discovery or restoration feature.
+
 **Next: reported bugs, with deliberate contract decisions.** The user's updated
 scheduling decision on 2026-10-13 is chooser first, then:
 [`0001 close recovery`](../todos/0001-close-recovery-returns-underlying-member.md)

@@ -388,10 +388,10 @@ For MVP, one overlay canvas serves the built-in display. Canvas ownership is key
 Keep `hs.chooser` UI behavior. Replace the backend with a cached managed-window read model.
 
 - Stable chooser rank is assigned at admission.
-- New rows append; destroyed rows disappear; surviving rows never reorder.
+- New cached rows append; destroyed rows disappear; surviving admission order never changes.
 - Title/app metadata updates in place.
 - Minimized, hidden, and native-fullscreen managed windows remain listed.
-- Fuzzy search covers title and application name.
+- Empty-query projection preserves admission order. Nonempty fuzzy search ranks title/application matches by the quality defined in CHOOSE-004, with admission order breaking ties. Scoring/sorting are pure query-local projection, not another cache or membership owner.
 - Existing `Cmd+1…9` visible-row behavior is preserved by integration POC.
 - Opening performs no AX enumeration.
 

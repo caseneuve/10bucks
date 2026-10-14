@@ -314,13 +314,13 @@ Chooser lists discovered managed windows only, across regular and native-fullscr
 
 Opening chooser MUST use incrementally cached rows and perform no global AX/window enumeration or per-window icon lookup.
 
-### CHOOSE-003 — Stable row order
+### CHOOSE-003 — Stable admission order and ranked search
 
-Surviving rows keep stable admission rank. New managed windows append; destroyed windows disappear; focus, title, availability, layout, and Space changes do not reorder survivors.
+Surviving cached rows keep stable admission rank. New managed windows append; destroyed windows disappear; focus, title, availability, layout, and Space changes do not reorder that underlying order. An empty query presents admission order. A nonempty query presents matches by relevance, using admission order as the final tie-breaker; search MUST NOT mutate cached order or membership.
 
-### CHOOSE-004 — Existing UI contract
+### CHOOSE-004 — Ranked fuzzy search and existing UI
 
-Keep `hs.chooser` fuzzy title/application search and its observed `Cmd+1…9` visible-row selection behavior. UI styling is not an MVP rewrite target.
+Keep `hs.chooser` and its observed `Cmd+1…9` current-visible-row selection behavior. Search matches ordered characters literally in title or application name, and ranks exact-field, word-boundary contiguous, other contiguous, word-boundary-start subsequence, then other subsequence matches. Within a class, fewer intervening characters then earlier start wins. Compare each field independently; prefer application-name matches on identical field quality, then stable admission order between rows. A weaker application match MUST NOT outrank a stronger title match merely because of its field. Word boundaries use field start or preceding ASCII whitespace/punctuation; current ASCII case-insensitivity remains. Unicode character distances are supported, but Unicode case folding, normalization and word segmentation are not promised. UI styling is not an MVP rewrite target.
 
 ## Bar
 
