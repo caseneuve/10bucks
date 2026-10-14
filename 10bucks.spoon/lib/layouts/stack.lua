@@ -193,7 +193,15 @@ function Stack.reduce(state, event, context)
 
   if event.type == "RecoverSource" then
     local available = availableMembers(state, context and context.availableMembers)
-    local target = available[#available]
+    local target
+    for index = #(context and context.managedFocusHistory or {}), 1, -1 do
+      local candidate = context.managedFocusHistory[index]
+      for _, member in ipairs(available) do
+        if member == candidate then target = candidate; break end
+      end
+      if target then break end
+    end
+    target = target or available[#available]
     if not target or target == state.selectedId then return state end
     return copyStateWith(state, nil, target)
   end

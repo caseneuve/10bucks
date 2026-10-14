@@ -1,6 +1,6 @@
 ---
 title: Close recovery returns an underlying member instead of the originating focused window
-status: blocked
+status: done
 priority: high
 type: bug
 labels: []
@@ -20,12 +20,12 @@ User manual test of ordered exclusions succeeded, but revealed a focus-recovery 
 
 ## Acceptance Criteria
 
-- [ ] Confirm observed destination and approved generic close-recovery target (prior focused source member versus last admitted survivor).
-- [ ] Deliberately update contracts if needed; no app-origin or app-specific production exception.
-- [ ] Reproduce with generic windows and cover excluded focus plus fallback-before-destruction ordering.
-- [ ] Deliberate user focus followed by background closure preserves that focus; no recovery stealing.
-- [ ] Preserve stable membership/group order and unrelated column selection.
-- [ ] Targeted native acceptance confirms actual focus, not desired selection alone.
+- [x] Generic normal case observes B before fix; user approved prior confirmed focused source survivor A.
+- [x] COL-005/FOCUS-004 explicitly revised; no opener/app-specific policy.
+- [x] Generic excluded-focus recovery and existing removal-first/pending-fallback coverage. Actual unknown-validity fallback-before-destruction remains a separate retained adapter limitation, not claimed fixed.
+- [x] Deliberate B/C focus followed by background D closure preserves focus.
+- [x] Stable membership/navigation order and unrelated column selection preserved.
+- [x] Targeted native acceptance confirms exact A focus; controls confirm B/C.
 
 ## Affected Files
 
@@ -54,11 +54,32 @@ frozen cases independently reviewed,395artifact hashes,327Lua/71Python checks;
 two original evidence-validator FAILs retained with separately reviewed re-analysis.
 No product fix or benchmark acceptance. Owned VM cleanup verified; host unchanged.
 
-**Blocked on deliberate generic recovery-policy decision:** last available source
-survivor B versus previously confirmed focused source member A, and recency/snapshot,
-unavailable/source-collapse and minimize/movement scope. Do not silently revise
-COL-005/FOCUS-004 or start another bug while this is unresolved.
+**Decision resolved:** user chose option2, prior confirmed focused source survivor A,
+and explicitly rejected B. No repeat A-vs-B investigation is required.
+
+## Fix checkpoint — 2026-10-14
+
+Stack/Columns `RecoverSource` now consult the existing reducer-owned focus history,
+filtered to available surviving members of the physical source. No new state,
+native calls, worker changes, opener registry or admission snapshot. Stable `j/k`
+order remains unchanged. Existing shared recovery also applies to minimize;
+vanished sources retain structural normalization and history-less stable fallback.
+
+Failing-before generic A/B/C/D/excluded regression now passes in both layouts;
+unavailable prior member and background B/C controls covered.330Lua/71Python PASS.
+Frozen VM normal4c99b6eb481b and excludedc5a729943906 confirm native A; deliberate
+Cfdb0984a428f and B224115f63ea2 preserve C/B without recovery requests. All4 PASS,
+396artifact hashes verified,0ordering drops,normal quit/wrapper cleanup and both
+workers drained. Fresh postcheck0ordinary windows/firstdesktop/FTidle. Source review
+GO; independent normal/C raw review confirms exact outcomes, strict joins,
+no corrective focus, unchanged whole batches and normal worker drain.
+
+No fresh benchmark population: pure policy change reuses unchanged native effects
+and existing query path; no performance-certification claim. No host deployment:
+frozen host77abbcf is unchanged and needs explicit load authority. Original
+investigation FAILs remain preserved. The unobserved fallback-first/unknown-validity
+adapter limitation is not repaired by this source-preference change.
 
 ## Notes
 
-Deferred from the current rules story by explicit user decision: finish/commit rules and separate the test harness first, then fix found bugs. Do not initiate mail or put user-specific exclusion policy in the repository. Host frozen candidate/user config remains a separate boundary. Read `.pi/WORK_STATE.md` for runtime authority; ignored close-bug handoff supplies operational context. Historical initial review stalled, was cancelled, and queued input was cleared without a verdict. Independent source/native investigation review completed on 2026-10-14; the policy decision and product fix remain blocked.
+Deferred from the current rules story by explicit user decision: finish/commit rules and separate the test harness first, then fix found bugs. Do not initiate mail or put user-specific exclusion policy in the repository. Host frozen candidate/user config remains a separate boundary. Read `.pi/WORK_STATE.md` for runtime authority; ignored close-bug handoff supplies operational context. Historical initial review stalled, was cancelled, and queued input was cleared without a verdict. Independent source/native investigation review completed on 2026-10-14; the policy decision is resolved and the targeted source-preference fix is delivered as recorded above.

@@ -134,7 +134,7 @@ If one column has no currently available members only because its durable member
 
 ### COL-005 — Permanent empty column
 
-Destroying or cross-Space-moving the last durable member removes that column. If at least two durable windows survive in the other column, columns immediately normalizes them back to two non-empty physical columns by retaining their order, keeping all but the newest on the left, and moving the newest to the right. With only one survivor, one column remains and the next admission follows COL-002. If the destroyed window had managed focus, recovery remains on its physical source column when that column has or receives a replacement; it selects the last surviving member of that column. It MUST NOT jump to the other column merely because macOS reported a transient fallback focus first.
+Destroying or cross-Space-moving the last durable member removes that column. If at least two durable windows survive in the other column, columns immediately normalizes them back to two non-empty physical columns by retaining their order, keeping all but the newest on the left, and moving the newest to the right. With only one survivor, one column remains and the next admission follows COL-002. If the destroyed window had managed focus, recovery remains on its physical source column when that column has or receives a replacement; it selects the most recently confirmed focused available survivor in that column, falling back to the last available member in stable order when no survivor has focus history. It MUST NOT jump to the other column merely because macOS reported a transient fallback focus first.
 
 ### COL-006 — Move between columns
 
@@ -170,11 +170,11 @@ An actual focus callback MUST NOT admit an unknown window. It MAY trigger one ta
 
 After the focused managed member becomes unavailable, recovery preference is:
 
-1. last surviving available member in the source stack/column;
+1. most recently confirmed focused available survivor in the source stack/column; if none has confirmed focus history, the last available survivor in stable membership order;
 2. the retained selected available member in the other column;
 3. no focus request.
 
-Recovery MUST NOT cross Spaces. A transient native fallback focus observed between close/minimize and the authoritative removal/unavailability event MUST NOT redirect recovery to another column. A background close/minimize MUST preserve the current managed focus and every column's retained selection.
+Focus recency is filtered to surviving members of the physical source after structural normalization, not an opener relationship or admission-time snapshot. It MUST NOT reorder membership or the `j/k` cycle. The same preference applies to close/minimize and future source recovery; unavailable/dead entries are skipped. Recovery MUST NOT cross Spaces. A transient native fallback focus observed between close/minimize and the authoritative removal/unavailability event MUST NOT redirect recovery to another column. A background close/minimize MUST preserve the current managed focus and every column's retained selection.
 
 ### FOCUS-005 — Global previous window
 

@@ -1,7 +1,7 @@
-"""BUG0001 investigation, not prior-A recovery acceptance.
+"""BUG0001 focused regression: source recency recovery and background controls.
 
-Each invocation uses a fresh fixture/candidate. No corrective focus after a gate.
-Ordering comes from guest wrappers; sampled native outcomes remain independent.
+Reuses the investigation driver; runner acceptance=false denotes reused-VM scope.
+Native A recovery is mandatory in normal/excluded cases, not destination-neutral.
 """
 import math
 import time
@@ -108,7 +108,8 @@ def run(driver, *, case, clock=time.monotonic, sleep=time.sleep):
         driver.close('E'); closed.append('E')
         # Capture actual native fallback without assuming it returns to D.
         intervening = check('E closed native fallback observed', 'ABCD', [['A', 'B', 'D'], ['C']], None, closed=closed)
-        expected_focus = None
+        expected_focus = {'A'}
+        final_selected = ['A', 'C']
     elif case.startswith('deliberate-'):
         target = case[-1].upper()
         driver.fixture_action('focus', target)  # Planned control after a passed gate.
@@ -117,7 +118,8 @@ def run(driver, *, case, clock=time.monotonic, sleep=time.sleep):
         expected_focus = {target}
         final_selected = ['B', 'C']
     else:
-        expected_focus = None
+        expected_focus = {'A'}
+        final_selected = ['A', 'C']
     before_close = driver.observe()
     driver.record('immediately before D close', before_close)
     if case.startswith('deliberate-'):
@@ -131,7 +133,7 @@ def run(driver, *, case, clock=time.monotonic, sleep=time.sleep):
                                  'managedDSetupAt': managed_d.sampled_at,
                                  'managedDSetupSample': managed_d.sample_id,
                                  'excludedESetupAt': excluded_e.sampled_at,
-                                 'sample': final.sample_id, 'priorAAcceptance': False,
+                                 'sample': final.sample_id, 'priorAAcceptance': case in ('normal', 'excluded'),
                                  'postECloseTarget': intervening.focused if intervening else None,
                                  'postECloseSample': intervening.sample_id if intervening else None,
                                  'immediatelyBeforeDCloseTarget': before_close.focused,

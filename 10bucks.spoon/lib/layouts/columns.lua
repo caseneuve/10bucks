@@ -323,8 +323,16 @@ function Columns.reduce(state, event, context)
     local source = event.sourceGroup
     if type(source) ~= "number" or source < 1 or source > #state.stacks then return state end
     local stack, target = state.stacks[source]
-    for index = #stack.members, 1, -1 do
-      if isAvailable(context.availableMembers, stack.members[index]) then target = stack.members[index]; break end
+    for index = #(context.managedFocusHistory or {}), 1, -1 do
+      local candidate = context.managedFocusHistory[index]
+      if stackIndexForMember(state, candidate) == source and isAvailable(context.availableMembers, candidate) then
+        target = candidate; break
+      end
+    end
+    if not target then
+      for index = #stack.members, 1, -1 do
+        if isAvailable(context.availableMembers, stack.members[index]) then target = stack.members[index]; break end
+      end
     end
     if not target then return state end
     local stacks = copyStacks(state.stacks)

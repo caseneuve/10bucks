@@ -347,7 +347,7 @@ return {
     equal(columns.stacks[1].selectedId, "one")
   end,
 
-  ["FOCUS-004 COL-005: native focus fallback before destruction still recovers in the source column"] = function()
+  ["FOCUS-004 COL-005: authoritative destruction recovers in the source column"] = function()
     local observed = {}
     local core = new(function(intents) observed[#observed + 1] = intents end)
     core:submit(ready("a")); core:submit(ready("b"))
@@ -379,7 +379,7 @@ return {
     local intents = observed[#observed]
     local focus
     for _, intent in ipairs(intents) do if intent.kind == "focus" then focus = intent end end
-    equal(focus.windowId, "three") -- FOCUS-004: last available survivor in the source stack
+    equal(focus.windowId, "one") -- FOCUS-004: most recently confirmed available source survivor
     core:submit({ type = "WindowDestroyed", id = "three" })
     state = core:state()
     equal(#state.manager.spaces["space-1"].memberIds, 2)

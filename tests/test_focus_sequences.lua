@@ -46,6 +46,54 @@ end
 
 local cases = {
   {
+    name = "FOCUS-004 WIN-002: close reveals prior focused source survivor without reordering navigation",
+    run = function(h)
+      for _, layout in ipairs({ "stack", "columns" }) do
+        for _, prior in ipairs({ "A", "B" }) do
+          local test = harness()
+          test:send(ready("A")):send(ready("B")):send(ready("C"))
+          if layout == "columns" then test:send({ type = "CycleLayout" }) end
+          test:send({ type = "ActualFocusChanged", id = prior }):send(ready("D", true))
+              :send({ type = "ActualFocusChanged", id = "D" })
+              :send({ type = "ActualFocusChanged", id = "excluded" })
+              :send({ type = "WindowDestroyed", id = "D" })
+          equal(test:focusIntent().windowId, prior)
+          local state = test.core:state()
+          equal(table.concat(state.manager.spaces["space-1"].memberIds, ","), "A,B,C")
+          if layout == "columns" then
+            equal(table.concat(test:columns().stacks[1].members, ","), "A,B")
+            equal(test:columns().stacks[2].selectedId, "C")
+          end
+        end
+      end
+    end,
+  },
+  {
+    name = "FOCUS-004: unavailable prior source skips to surviving local history, not other column",
+    run = function(h)
+      h:send(ready("A")):send(ready("B")):send(ready("C")):send({ type = "CycleLayout" })
+       :send({ type = "ActualFocusChanged", id = "B" }):send({ type = "ActualFocusChanged", id = "A" })
+       :send(ready("D", true)):send({ type = "ActualFocusChanged", id = "D" })
+       :send({ type = "WindowMinimized", id = "A" }):send({ type = "WindowDestroyed", id = "D" })
+      equal(h:focusIntent().windowId, "B")
+      equal(h:columns().stacks[2].selectedId, "C")
+    end,
+  },
+  {
+    name = "FOCUS-004: deliberate source or peer focus before background close remains authoritative",
+    run = function(h)
+      for _, target in ipairs({ "B", "C" }) do
+        local test = harness()
+        test:send(ready("A")):send(ready("B")):send(ready("C")):send({ type = "CycleLayout" })
+         :send({ type = "ActualFocusChanged", id = "A" }):send(ready("D", true))
+         :send({ type = "ActualFocusChanged", id = "D" }):send({ type = "ActualFocusChanged", id = target })
+         :send({ type = "WindowDestroyed", id = "D" })
+        assert(test:focusIntent() == nil)
+        equal(test.core:state().manager.focus.actualWindow.id, target)
+      end
+    end,
+  },
+  {
     name = "COL-007 FOCUS-006: h/l are physical, retain both tops, and never toggle or cycle",
     run = function(h)
       h:send(ready("A")):send(ready("B")):send(ready("C")):send({ type = "CycleLayout" })
