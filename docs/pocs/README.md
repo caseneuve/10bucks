@@ -4,6 +4,13 @@
 
 POCs use disposable code or instrumentation and never create a second production path. Pure reducer/layout/transaction work does not need a POC. Scheduled canary acceptance validates a composed implementation; it is not another POC or a broad certification program. During a canary, stable and development runtimes are never active simultaneously. A completed replacement deletes its old production path and obsolete tests in the same slice.
 
+## How to use this index
+
+Look up a record only for a platform assumption your change depends on. This is
+not a read-all list or per-bug certification checklist. `../AGENTS.md` is the sole
+workflow authority: a proved mechanism needs targeted implementation acceptance,
+not another POC. Settle behavior questions before native experiments.
+
 ## Execution authority
 
 The test VM is agent-owned under `AGENTS.md`. Bounded guest POCs, topology/fixture
@@ -23,7 +30,13 @@ and the >120-second human-approval exception below remain unchanged.
 - A POC may not introduce permanent polling. A targeted safety check requires recorded evidence of a silent gap and must remain non-destructive.
 - POC code is removed after its purpose unless a result names a POC-only diagnostic owner, ongoing use, and negligible idle cost.
 
-## Required result format
+## Recording a new POC
+
+Record the narrow question/decision, environment/artifact identity, procedure and
+fixed outcome gates before effects; then results (including failures/uncertainty),
+consequence and cleanup. A concise entry in an existing result or TODO suffices.
+Use the following template when a standalone record is useful, not as mandatory
+paperwork for ordinary native acceptance:
 
 ```markdown
 # POC-NNN — Title
@@ -116,7 +129,10 @@ single addition after an ambiguous add result.
 
 **Status: deferred.** Slice 2 implements normalized metadata and the generic `RULE-002` manage/exclude decision with the direct-AX adapter. If a private/undocumented readiness mechanism blocks that slice, run only a minimal focused POC for that mechanism. Configured ordered rules arrive later.
 
-Run the fullscreen portion immediately before fullscreen effects. It must answer only transition confirmation, failure/timeout, manual slot retention, and source-Space removal behavior needed for that slice. It must not broaden into an app matrix.
+Before relying on an unresolved fullscreen mechanism, run only its narrow POC:
+transition confirmation, failure/timeout, slot retention or removed-source behavior
+needed by the change. Reuse recorded proof rather than repeating it. Changed
+fullscreen behavior still requires targeted native acceptance, not a broad app matrix.
 
 ## POC-006 — Cached chooser and cross-Space focus
 
@@ -140,4 +156,9 @@ Run the fullscreen portion immediately before fullscreen effects. It must answer
 
 ## Slice cleanup gate
 
-Before merging a replacement that used a POC, record the narrow result and decision, remove disposable code, retain only justified diagnostics, and copy a selected fact into architecture/performance/settings documentation where it changes a target contract. A POC never authorizes compatibility paths, app-specific production behavior, or a second runtime.
+For a new POC, record its narrow result/decision and affected cleanup. Remove
+disposable code unless a concrete ongoing diagnostic/test owner needs it; do not
+add permanent infrastructure just to document evidence. Update behavior/platform
+docs only when the result actually changes them. A POC never authorizes
+compatibility paths, app-specific policy or a second runtime. Historical results
+and failed thresholds remain evidence, not recurring execution instructions.

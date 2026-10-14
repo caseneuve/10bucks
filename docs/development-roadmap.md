@@ -45,21 +45,17 @@ Space. Unhiding must not clear minimize/fullscreen. It does **not** mean restori
 layouts after Hammerspoon restart or reboot. Step 5 can reuse independently proved
 fullscreen focus mechanisms; step 6 adds explicit toggle/spawn effects.
 
-## Gate for every step—not only the last one
+## Delivery checks
 
-1. Cite existing platform evidence; verify official installed API contracts first.
-2. Reproduce the target invariant/sequence in tests. Pure checks are not native proof.
-3. Direct replacement through the single runtime; no shadow/compatibility path.
-4. Freeze source, helpers and executed binaries; run bounded native functional
-   tests with independent outcomes and real callback receipts.
-5. Independently review underlying traces, failures and cleanup—not only verdicts.
-6. Measure the relevant performance/query/resource gates before calling the step done.
-7. Delete replaced production code and obsolete tests in that slice; commit the
-   reviewed green checkpoint, preserve failures, update the operational handoff.
+Use the proportional workflow in `../AGENTS.md` and `rewrite-plan.md`: focused
+regressions, one direct path, targeted native outcomes for behavior changes, and
+measurements for concrete performance risks/claims. Reuse platform evidence;
+POC only an unproved dependency. Do not impose a fresh full benchmark/stress/review
+population on every local fix. Preserve failures and verify affected cleanup.
 
-Step 7 closes residual release coverage; it does not postpone the earlier gates.
-Performance budgets in `performance.md` are unchanged. Native animation time is
-separate from command service, and sender completion never proves hotkey receipt.
+Step7 closes broader release coverage; it does not replace focused live testing of
+earlier behavior changes. Performance budgets remain unchanged. Native animation
+is separate from command service; sender completion is not hotkey receipt.
 
 ## Delivered checkpoint and next action
 
@@ -131,10 +127,11 @@ The bug queue is:
 4. [`0006 disappearing status bar`](../todos/0006-status-bar-disappears-without-recovery.md).
 5. [`0007 chooser focuses the wrong column member`](../todos/0007-chooser-focuses-wrong-column-member.md).
 
-All remain open. Complete each reviewed native acceptance/measurement checkpoint
-and coherent commit before starting the next; do not combine them based on an
-unproved shared cause. For0001, settle the intended generic recovery target before
-changing COL-005/FOCUS-004; for0002, deliberately settle COL-006's replacement rule.
+Finish each bug's relevant checks and coherent commit before starting the next;
+do not combine fixes based on an unproved shared cause. For0001, the user selected
+prior-confirmed focused source-member recovery (option2) on2026-10-14; revise
+COL-005/FOCUS-004 explicitly rather than asking A-vs-B again. For0002, settle
+COL-006's replacement rule before implementation.
 
 After the bug queue, resume step5 restoration (including
 [`0004 known-fullscreen chooser focus`](../todos/0004-chooser-focus-known-fullscreen-window.md),
@@ -143,17 +140,13 @@ hardening/release acceptance. TODO0004 alone is not all of restoration. TODO0003
 cold fullscreen/minimized discovery remains deferred investigation; movement,
 deletion and other explicit deferrals are not automatically reactivated.
 
-Operational entry: `.pi/handoffs/2026-10-14-bugs-first-next-0001.md` supplies current
-ownership, runtime safety and the narrow starting procedure. Creating that handoff
-does not implement a bug, revise its behavior contract, or authorize host mutations.
+Operational entry is `.pi/WORK_STATE.md`. Consult relevant evidence only when
+needed; historical handoffs are records, not mandatory procedure or authority.
 
 The manual host runtime uses a separate frozen source copy; see WORK_STATE for
 exact ownership and rollback. Editing or building the development checkout does not
 update that running candidate. A new host load still requires its own authority. Do not use unchanged synchronous `hs.spaces.gotoSpace()` in hotkeys.
 
-Fresh-session operational entry: read `.pi/WORK_STATE.md`, then the current
-closeout handoff it names; older `.pi/handoffs/2026-10-13-configured-rules-next.md`
-runtime facts are historical. The ignored handoff holds exact
-live host/VM ownership, rollback and worker protocol; this tracked roadmap holds
-the durable user-approved order. Neither authorizes host window/Space mutations
-merely by being read.
+WORK_STATE records current ownership/safety/next action; this roadmap records the
+user-approved order. Neither reading it nor changing the checkout authorizes host
+window/Space mutations. No recursive historical-handoff read is required.

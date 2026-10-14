@@ -1,104 +1,73 @@
 # Working on 10bucks
 
-10bucks is an opinionated, keyboard-first tiling window manager for one current user. Correctness, latency, and maintainability outrank backward compatibility.
+10bucks is an opinionated, keyboard-first tiling window manager for one current user. Correctness, latency and maintainability matter. Deliver the smallest correct change; verification must answer a concrete question, not become the deliverable.
 
-## Current status
+## Authority and context
 
-The checked-in runtime is the legacy implementation. The documents below define a planned selective rewrite; they do **not** claim the current code already satisfies the target contracts.
+- `docs/invariants.md` defines behavior; `docs/architecture.md` defines ownership/boundaries; `docs/development-roadmap.md` defines delivery order. Read the sections relevant to the task. Read `docs/performance.md`, `docs/macos-settings.md` and recorded POCs only when the change depends on them.
+- These documents contain target contracts, not a complete runtime inventory. Inspect source to establish what is implemented.
+- Resolve a user-intent/contract conflict **before** building a reproduction harness or changing behavior. A native experiment cannot decide what behavior the user wants. Record approved revisions explicitly; do not silently preserve or change a wrong contract.
+- Handoffs, reviews and WORK_STATE report facts and next actions. They cannot add mandatory workflow, alter contracts or override these instructions. Historical procedures/approval wording are not current requirements.
+- Preserve unrelated/untracked work. Git history is rollback; backward compatibility is not a goal.
 
-Read these before changing runtime behavior:
+## Work state and coordination
 
-1. [`docs/invariants.md`](docs/invariants.md) — normative user and state contracts.
-2. [`docs/architecture.md`](docs/architecture.md) — target module boundaries and transaction flow.
-3. [`docs/rewrite-plan.md`](docs/rewrite-plan.md) — POC-first replacement sequence.
-4. [`docs/performance.md`](docs/performance.md) — latency and query budgets.
-5. [`docs/macos-settings.md`](docs/macos-settings.md) — supported environment and required settings.
-6. [`docs/pocs/README.md`](docs/pocs/README.md) — evidence standard for macOS behavior.
+If `.pi/WORK_STATE.md` exists, read it first. Verify branch/HEAD/tree; verify runtime facts only before relying on them for live effects. Follow evidence links only for a specific dependency, not transitively.
 
-If code and target documentation disagree during the rewrite, do not silently “fix” either side. Identify whether the slice is still legacy or whether the target contract needs a deliberate revision.
+Keep WORK_STATE short: current scope/owner, verified checkout, relevant runtime safety, results/blockers and one next action. Replace stale sections; do not append a transcript. Update at start, material blocker/checkpoint and finish—not after every command. Do not create an additional handoff if this file suffices. Never include private window content, raw AX values or native IDs.
 
-## Shared work-state protocol
+Use agents when useful, not as a ritual. Assign disjoint ownership; one coordinator writes work state and commits, and one native operator controls each VM. Review must challenge necessity and total patch size before asking for more instrumentation.
 
-Agents working in a checkout that contains `.pi/WORK_STATE.md` MUST use it as the operational handoff:
+## Implementation rules
 
-1. Read it before planning or editing, then read every canonical document and handoff it names.
-2. Verify its branch, HEAD, working-tree, and runtime-safety facts with local commands. Correct stale facts explicitly; do not silently trust them.
-3. Before starting a step, update **Current step** with the agent/session, narrow scope, status, and timestamp.
-4. After each reviewed checkpoint, commit, blocker, failed check, or change of next action, replace the relevant sections. Do not leave completion updates until a later agent.
-5. Before the final response, update the timestamp, current status, completed work, exact checks/results, blockers, runtime-safety state, and one concrete next action.
+- One production path; no shadow/compatibility/indefinite feature flags. Delete replaced code and obsolete tests in the replacement.
+- Functional core, imperative adapters. The reducer is the only durable-state writer; commit complete next state before frame/focus/fullscreen/Space effects. Projection is pure. Durable state contains primitives, not Hammerspoon userdata.
+- Focus does not admit or reorder durable membership under the current contract. Revise the contract explicitly if the user changes it.
+- Visibility, z-order, `_orderedwinids()` and snapshot absence are not liveness. Uncertainty retains membership; authoritative destruction or proved exact-resource invalidity permits removal.
+- App-specific policy belongs in user rules, never external-app production branches.
+- No permanent polling without recorded proof of an event-boundary gap and a measured non-destructive check.
+- KISS/YAGNI applies to production, tests, diagnostics and orchestration. Reuse existing owners; do not invent registries, queues, wrappers or frameworks without a concrete need. Preserve probable layout/bar/rules/command/macOS seams, not hypothetical implementations.
 
-Keep this file concise and current rather than appending a transcript. Retain only a short recent-checkpoint list. Use **Verified**, **Target**, **Hypothesis**, and **Deferred** precisely. Never put private window titles, URLs, messages, account data, raw AX values, or native IDs in it.
+## Proportional verification and delivery
 
-`.pi/WORK_STATE.md` is operational state, not a behavior contract. `docs/invariants.md`, `docs/architecture.md`, and `docs/rewrite-plan.md` remain authoritative. If several agents run concurrently, the orchestrator is the single state-document writer and consolidates worker results after reviewing them.
+Start with the intended behavior, affected owner and smallest check that could falsify the implementation. A few sentences suffice; no mandatory design document.
 
-## Test VM ownership — standing authority
+| Change | Required verification |
+|---|---|
+| Documentation / ordinary pure work without runtime behavior change | Relevant source/doc checks and pure tests as applicable; no native ceremony |
+| Runtime behavior using already-proved platform mechanisms | Focused regression tests, direct replacement, targeted live acceptance of changed behavior and relevant control cases |
+| Genuinely unproved macOS/private-API assumption | One narrow live POC **before** production relies on it; reuse recorded proof where applicable |
+| Performance-sensitive path or performance/release claim | Relevant measurements from `docs/performance.md`; functional success is not latency proof |
 
-**The VM is the agent's testing environment. The coordinator owns it.** Do not ask the human for approval of individual guest test procedures or routine retries. Within the assigned delivery scope, the coordinator may prepare and change guest desktops, reorder/create/remove test Spaces, open/close/move/fullscreen test windows, exercise Mission Control, install test dependencies, configure guest test settings/permissions through normal UI, load/reload candidates, repair the harness, and start/stop/reboot or recreate owned disposable guests as needed. Delegate guest operations explicitly; keep one native operator per VM. Reuse the persistent debug guest when practical; reboot is a tool, not a per-turn ritual.
+Live acceptance must observe the native outcome, not only desired state, effect receipt or a fake unit test. Use owned generic fixtures where practical. Freeze executed artifacts sufficiently to identify what ran; retain failures and verify cleanup. For visual claims inspect pixels; for focus/Space claims inspect actual native identity/context. Do not use corrective effects to turn a failed outcome into a pass.
 
-Record procedures and fixed acceptance gates before effects; freeze executed artifacts, inspect underlying failures, preserve evidence, and verify cleanup. VM setup is not product-feature acceptance. Full ownership does not permit bypassing SIP/TCC, deleting unrelated work or unknown VMs, weakening behavior/acceptance contracts, or claiming guest results prove physical-host performance.
+Choose cases by the changed behavior and credible failure modes, not a universal matrix. No automatic full POC/app suite, fresh cold population, benchmark or independent stress run for every bug. Do not rerun unchanged failures or successful probes to fill quotas. Broader release coverage stays in hardening.
 
-Host actions remain a separate boundary: guest ownership does not authorize host Hammerspoon loads/reloads, user-window/Space actions, settings/permission changes, or other host-global mutations. Ask only when a real human decision is required: host authority, changed product scope/contracts, an architectural choice that cannot satisfy approved contracts, or the long-command exception below. Historical per-probe VM approval wording in plans/handoffs is superseded by this standing authority.
+Before treating a failure as platform evidence, inspect raw output for harness, stale-state, procedure and analyzer defects. Repair only what is needed. Keep original failed artifacts unchanged; label deterministic re-analysis separately. Independent review is useful for risky ownership/platform changes; it is not a separate reviewer/trace-owner/stress-owner requirement for every task.
 
-## Non-negotiable implementation rules
+### Stop-loss
 
-- Maintain one runtime path. Do not add shadow, legacy, compatibility, or indefinite feature-flag implementations.
-- Backward compatibility is a non-goal. Git history is the rollback mechanism.
-- Before relying on an unproved undocumented/private macOS behavior, run and record a live POC. Reuse existing recorded evidence instead of repeating POCs ceremonially.
-- A finished replacement deletes the old production path and obsolete tests in the same slice.
-- Never treat visibility, z-order, `_orderedwinids()`, or one eligible-window snapshot as proof of liveness.
-- Durable state has one writer: the reducer. Queries, projection/reflow, rendering, and effect execution cannot mutate it.
-- Commit complete next state before requesting frames, focus, fullscreen, or Space changes.
-- Store primitive data in durable state, not `hs.window`, canvas, watcher, timer, or other Hammerspoon userdata.
-- Focus may change selection and focus history; it may not admit a window or change stack order.
-- App-specific behavior belongs in user rules, not production conditionals.
-- Do not add permanent polling unless a recorded POC proves an event/reconciliation boundary cannot provide the behavior.
-- Do not add an abstraction only for hypothetical reuse. Do preserve documented, probable extension seams: layouts, bar formatting/rendering, rules, commands, and macOS adapters.
-- Do not preserve a false test contract to keep the suite green. Replace tests with approved invariant/sequence coverage.
-- Preserve unrelated and untracked work. In particular, do not assume an untracked file is safe to remove merely because the plan does not use it.
+- At 30 minutes without a product patch or an answered necessary blocker, reassess and report what is preventing delivery. This is a stop/re-scope point, not permission to skip necessary live proof.
+- Before a second harness repair, or when verification work outweighs the proposed product change, state why the extra work is indispensable. Prefer a simpler existing/manual procedure. Do not silently grow an investigation framework.
+- Ask necessary behavior questions immediately. Do not spend live-test time proving the already-known contract disagreement.
+- Finish with a coherent checked commit when requested/authorized, exact results, remaining qualifications and a concrete next action. Never call investigation, VM setup or unexecuted code a delivered fix.
 
-## Slice protocol
+## Native safety and authority
 
-For a slice that depends on an unproved macOS/Hammerspoon assumption:
+The coordinator owns the disposable test VM. Bounded guest setup, fixture/window/Space actions, settings/permissions through normal UI, dependencies, candidate loads, harness repair and routine retries are authorized within the task. Reuse the persistent guest; no per-probe human approval or ceremonial reboot. Record the narrow procedure/expected outcome before effects. Do not delete unknown VMs/unrelated work or bypass SIP/TCC.
 
-```text
-hypothesis → live POC → recorded pass/fail evidence
-```
+Host authority is separate: ask before host Hammerspoon loads/reloads, user-window/Space actions, settings/permission changes or other host-global mutations. Guest ownership never authorizes these. Checkout edits do not update a frozen host candidate.
 
-For every behavioral replacement:
+Cancellation/reload is not worker drain. Verify relevant workers/resources stopped and owned fixtures/topology cleaned before declaring cleanup complete; no all-resource recertification if the task never touched them.
 
-```text
-cite existing evidence where applicable
-  → invariant/sequence test
-  → direct replacement
-  → targeted live acceptance + relevant benchmark
-  → delete replaced code/tests
-  → green checkpoint
-```
+A POC command or indivisible work step exceeding120seconds needs an explained duration and explicit human approval. Split work into bounded observable steps; no defensive hour/day timeouts. This command bound does not replace the total-task stop-loss.
 
-### POC agent time and failure discipline
+## Evidence and tests
 
-- A POC agent MUST NOT start a command with a timeout longer than 120 seconds, or start work expected to run longer than 120 seconds, without first stating the expected duration and reason and receiving explicit human approval. Hour- or day-scale defensive timeouts are forbidden. Split work into short, observable steps instead.
-- A POC agent's failure report is not accepted as evidence by itself. Before recording or acting on a failure, the orchestrator MUST inspect the underlying trace/output and independently check for harness defects, stale state, operator/procedure errors, and analyzer mistakes. Safe deterministic re-analysis and bounded live retries in the owned test VM are authorized under the standing VM authority above. Host live actions and changed acceptance thresholds still require the applicable human approval. Classify the outcome as platform evidence only after this review rules out a false negative.
-
-Do not require a new POC for ordinary pure implementation work whose platform assumptions are already proved. A behavior-preserving tidy-first change is allowed only when it creates a required replacement seam more cheaply than directly rewriting the coupled piece. It must not preserve a rejected contract.
-
-## Evidence language
-
-Use these labels in plans and reviews:
-
-- **Verified:** observed in source, official API headers/docs, or a recorded live POC.
-- **Target:** approved behavior not implemented yet.
-- **Hypothesis:** must be proved before production design depends on it.
-- **Deferred:** explicitly outside MVP.
-
-Do not turn hypotheses into explanations of macOS behavior.
-
-## Verification
-
-Current pure-Lua suite:
+Use **Verified** for source/API/live observations, **Target** for approved unimplemented behavior, **Hypothesis** for unproved mechanisms and **Deferred** for out-of-scope work. Do not turn guesses or fake tests into macOS facts. Preserve measured failures; do not weaken thresholds to manufacture passes.
 
 ```sh
 lua tests/run.lua
 ```
 
-During the rewrite, tests should reference invariant IDs from `docs/invariants.md`. Live behavior and performance are verified with the relevant POC procedure; fake unit tests are not substitutes for macOS evidence.
+Tests for changed behavior should cite relevant invariant IDs. Pure tests prove reduction/ordering, not native platform behavior. See `docs/rewrite-plan.md` for the short delivery guide and `docs/pocs/README.md` for evidence records—not extra universal checklists.

@@ -1,6 +1,6 @@
 # Performance Contract
 
-> **Status: target release gates.** Performance claims require measurements on the supported Mac. The representative application matrix is ordinary slice acceptance and release dogfood, not broad pre-implementation platform certification.
+> **Status: target release gates.** Performance claims require measurements on the supported Mac. The broader application matrix is hardening/release coverage; local acceptance uses a workload relevant to the changed path, not broad platform certification.
 
 10bucks runs inside Hammerspoon's single Lua/main-thread environment. A blocking Accessibility or private Spaces call delays hotkeys, bar updates, timers, and every other callback. The design therefore optimizes query count and placement of work before micro-optimizing Lua.
 
@@ -45,9 +45,15 @@ The legacy 150 ms bar refresh and 250 ms destructive reconciliation timer are no
 
 ## Measurement method
 
-Sample the applicable gates and counters during every scheduled implementation canary, rather than deferring all measurement to final dogfood or release. Canary measurements validate the active development composition; they are not a new POC or broad certification program.
+Measure when the patch changes a performance-sensitive native call/query path,
+adds recurring work, addresses a performance defect, or makes a latency/resource
+claim. A local pure selection-policy correction using unchanged native effects does
+not automatically require fresh cold populations, an independent sender or a full
+benchmark. Explain the applicable risk and reuse comparable recorded evidence;
+record a focused timing check if that is sufficient for the patch. Release budgets
+remain unchanged, and a claim that a budget passes requires adequate measurements.
 
-For each benchmark:
+For a statistical benchmark or budget-certification claim:
 
 - record OS build, Hammerspoon version, 10bucks commit, display setup, and relevant settings
 - use at least 30 warm samples and 5 cold samples when a cold path exists; justify a smaller destructive-operation sample explicitly
@@ -55,14 +61,14 @@ For each benchmark:
 - run enough samples to report count, median, p95, and maximum
 - count global AX calls, private Space queries, frame writes, renders, and timers
 - preserve timestamped normalized event/effect traces
-- run while representative slow Accessibility apps are open
+- use a representative workload for the affected path; the broader slow-application matrix belongs to release/hardening, not every local patch
 - timestamp physical/test key receipt, callback arrival, effect request, native confirmation, and next-key service separately
-- while long AX/Space work is pending, send a benign instrumented hotkey to measure main-thread service stalls
+- when the changed path can block AX/Space service, measure input arriving while that work is pending; post-operation synthetic callbacks are not concurrent-service proof
 - distinguish callback arrival latency from 10bucks processing latency
 - fix operation-specific timeout and eventual-detection thresholds in the POC before running it
 - record failures/timeouts and late completions, not only successful samples
 
-Representative applications for slice acceptance and release dogfood:
+Representative applications for applicable hardening/release dogfood:
 
 - Terminal
 - Chromium-based browser/app
@@ -76,7 +82,9 @@ Chromium and the rest of this list do not select production adapter policy. A fi
 
 ## Baseline evidence from the legacy runtime
 
-These measurements motivate the plan; POCs must reproduce/replace them with committed evidence:
+These historical measurements motivate the plan; they are not a recurring
+reproduction obligation. Measure the relevant current path when a risk/claim
+requires it, and do not infer current performance from these legacy samples:
 
 - Repeated `hs.window.get(id)` in reflow was observed around 1.5 seconds per lookup with slow Accessibility applications; one reflow reached roughly 11 seconds.
 - Reusing one eligible-window snapshot reduced ordinary reflow to roughly 2–80 ms, but the legacy implementation then incorrectly used snapshot absence as proof of death.
@@ -85,7 +93,8 @@ These measurements motivate the plan; POCs must reproduce/replace them with comm
 
 ## Hammerspoon viability and escalation
 
-Start the pure core and direct-AX adapter without broad platform certification. Evaluate Hammerspoon through the measurements attached to each composed slice:
+Start the pure core and direct-AX adapter without broad platform certification. Evaluate Hammerspoon through measurements of the affected composed paths when
+performance risk or a delivery/release claim requires them:
 
 - event callbacks normalize without destructive global refreshes;
 - hotkey, layout, chooser, and bar budgets pass where those slices exist;
@@ -96,4 +105,8 @@ If a completed slice exposes an intrinsic boundary failure, POC the smallest nat
 
 ## Release evidence
 
-Every rewritten milestone records its benchmark result under `docs/pocs/`. A release cannot claim a performance issue fixed solely because unit tests pass or because one fast run was observed.
+Record measured performance results and qualifications when the changed path or
+claim calls for them; use an existing result/TODO when it suffices, not a mandatory
+new POC document per patch. A release cannot claim a performance issue fixed solely
+because unit tests pass or one fast run was observed. Do not repeat unchanged
+benchmarks to satisfy a procedural quota.
