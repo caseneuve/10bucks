@@ -71,7 +71,8 @@ end
 
 local function layoutDependencies(config)
   return { activeLayoutId = "stack", layoutIds = { "stack", "columns" }, registry = { stack = Stack, columns = Columns },
-    layoutConfigs = { columns = { minRatio = .30, maxRatio = .70, defaultRatio = .5, columnGap = config.columnGap } } }
+    layoutConfigs = { stack = { columnGap = config.columnGap },
+      columns = { minRatio = .30, maxRatio = .70, defaultRatio = .5, columnGap = config.columnGap } } }
 end
 
 function Tenbucks:_publishBar()

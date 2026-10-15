@@ -8,7 +8,7 @@ return {
   -- First match wins; bundleID/title are exact, titlePrefix is literal and case-sensitive.
   -- Empty titlePrefix matches every known title; unavailable titles defer. No predicates/patterns.
   rules = {}, -- e.g. { { match = { bundleID = "com.example.App", titlePrefix = "Utility: " }, action = "exclude" } }
-  -- Columns only: points on all outer sides (top below usable area) and once between columns.
+  -- Both layouts: points on all outer sides (top below usable area), once between columns.
   -- Finite and nonnegative; clamped to fit, allowing zero-sized frames at extremes.
   -- Ratio divides the window width remaining after gaps (two columns subtract 3 gaps).
   columnGap = 0,

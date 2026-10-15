@@ -242,6 +242,13 @@ function Stack.project(state, availability, workArea, context)
     error("stack projection requires explicit displayId and spaceId", 2)
   end
 
+  -- STACK-001: shared configured gap, applied once around the usable area.
+  local gap = context.config and context.config.columnGap
+  if gap == nil then gap = 0 end
+  if type(gap) ~= "number" or not (gap >= 0 and gap < math.huge) then
+    error("stack columnGap must be finite nonnegative points", 2)
+  end
+  gap = math.min(gap, math.max(0, workArea.w / 2), math.max(0, workArea.h / 2))
   local intents = {}
   for _, memberId in ipairs(state.members) do
     if isAvailable(availability, memberId) then
@@ -249,7 +256,8 @@ function Stack.project(state, availability, workArea, context)
         windowId = memberId,
         displayId = context.displayId,
         spaceId = context.spaceId,
-        frame = { x = workArea.x, y = workArea.y, w = workArea.w, h = workArea.h },
+        frame = { x = workArea.x + gap, y = workArea.y + gap,
+          w = math.max(0, workArea.w - 2 * gap), h = math.max(0, workArea.h - 2 * gap) },
       }
     end
   end

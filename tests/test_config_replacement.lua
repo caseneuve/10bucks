@@ -23,6 +23,7 @@ return {
     ten.cores = {}
     local core = ten:_coreForSpace("first")
     assert(core.dependencies.layoutConfigs.columns.columnGap == 10)
+    assert(core.dependencies.layoutConfigs.stack.columnGap == 10)
     ten.config.columnGap = 20 -- Core configuration is a primitive snapshot, not the public table.
     assert(ten:_coreForSpace("first") == core)
     assert(core.dependencies.layoutConfigs.columns.columnGap == 10)
@@ -31,13 +32,15 @@ return {
     assert(other.dependencies.layoutConfigs.columns ~= core.dependencies.layoutConfigs.columns)
     assert(core:submit({ type = "WindowReady", id = "one", displayId = "built-in", spaceId = "first",
       application = { pid = 1, name = "Example", bundleID = "example.app" } }))
-    assert(core.currentFrames.one.x == 100 and core.currentFrames.one.y == 132)
-    assert(core.currentFrames.one.w == 300 and core.currentFrames.one.h == 400)
+    assert(core.currentFrames.one.x == 110 and core.currentFrames.one.y == 142)
+    assert(core.currentFrames.one.w == 280 and core.currentFrames.one.h == 380)
     assert(core:submit({ type = "CycleLayout" }))
     assert(core.currentFrames.one.x == 110 and core.currentFrames.one.y == 142)
     assert(core.currentFrames.one.w == 280 and core.currentFrames.one.h == 380)
     assert(core:submit({ type = "Reflow" }))
     assert(core.currentFrames.one.x == 110)
+    assert(core:submit({ type = "CycleLayout" }))
+    assert(core.currentFrames.one.x == 110 and core.currentFrames.one.w == 280)
   end,
   ["RULE-001 RULE-003: narrow rules config copies exact matches and rejects unsupported actions/matchers"] = function()
     local input = { rules = { { match = { bundleID = "example.app", title = "" }, action = "exclude" } } }

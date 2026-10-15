@@ -38,6 +38,29 @@ local function context(overrides)
 end
 
 return {
+  ["STACK-001 COL-010 STATE-006: shared gap insets available stack members once and caps uniformly"] = function()
+    local state = Stack.initialState({ "one", "two", "three" })
+    local area = { x = 100, y = 132, w = 300, h = 400 }
+    local availability = available("one", "three")
+    for _, gap in ipairs({ 0, 8, 2.5, 1e300 }) do
+      local ctx = context({ config = { columnGap = gap } })
+      local intents = Stack.project(state, availability, area, ctx)
+      local effective = math.min(gap, 150)
+      equal(#intents, 2)
+      for _, intent in ipairs(intents) do
+        assert(deepEqual(intent.frame, { x = 100 + effective, y = 132 + effective,
+          w = 300 - 2 * effective, h = 400 - 2 * effective }))
+      end
+      assert(intents[1].frame ~= intents[2].frame)
+      equal(ctx.config.columnGap, gap)
+    end
+    assert(deepEqual(area, { x = 100, y = 132, w = 300, h = 400 }))
+    assert(deepEqual(availability, available("one", "three")))
+    assert(deepEqual(state, { members = { "one", "two", "three" }, selectedId = "three" }))
+    for _, gap in ipairs({ -1, math.huge, 0/0, false }) do
+      assert(not pcall(Stack.project, state, availability, area, context({ config = { columnGap = gap } })))
+    end
+  end,
   ["ENV-004 STACK-001 STATE-006: projection emits equal plain frame intents with explicit display and Space identity"] = function()
     local state = Stack.initialState({ "one", "two", "three" })
     local before = { members = { "one", "two", "three" }, selectedId = "three" }

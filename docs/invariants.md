@@ -110,7 +110,7 @@ Core/runtime code MUST NOT branch on `layout.id` to implement columns behavior. 
 
 ### STACK-001 — Stack geometry
 
-Stack layout has one stable stack. Every currently available member receives the same usable display frame. Decorations, native menu-bar area, and 10bucks bar remain normally visible.
+Stack layout has one stable stack. Every currently available member receives the same usable display frame inset on all sides by the configured `columnGap` (default 0). The effective gap is clamped to `min(columnGap, usableWidth / 2, usableHeight / 2)`, with nonnegative dimensions. This shared gap also applies in columns mode; it never changes membership or selection. Decorations, native menu-bar area, and 10bucks bar remain normally visible.
 
 ### STACK-002 — Stack navigation
 
@@ -154,7 +154,7 @@ When an untracked Space is first adopted in columns mode, eligible windows are o
 
 ### COL-010 — Uniform configurable gaps
 
-Public top-level `columnGap` MUST be finite nonnegative points, defaulting to 0. Columns projection MUST apply the same gap on all outer sides of the usable area and once (not doubled) between available columns. The top gap starts below the usable-area boundary, not the display top. A single available column receives outer gaps only. The retained ratio divides the window width remaining after gaps (usable width minus `3 * gap` for two available columns); projection MUST NOT change ratio, membership or selection. Stack geometry is unchanged. The effective gap MUST be clamped to `min(columnGap, usableWidth / (twoAvailableColumns and 3 or 2), usableHeight / 2)`. Dimensions MUST remain nonnegative; extreme settings MAY produce zero-sized frames. This geometric fit bound does not enforce native window minimum sizes.
+Public top-level `columnGap` MUST be finite nonnegative points, defaulting to 0. Columns projection MUST apply the same gap on all outer sides of the usable area and once (not doubled) between available columns. The top gap starts below the usable-area boundary, not the display top. A single available column receives outer gaps only. The retained ratio divides the window width remaining after gaps (usable width minus `3 * gap` for two available columns); projection MUST NOT change ratio, membership or selection. Stack projection applies the same configured outer gap, as specified by STACK-001. The effective gap MUST be clamped to `min(columnGap, usableWidth / (twoAvailableColumns and 3 or 2), usableHeight / 2)`. Dimensions MUST remain nonnegative; extreme settings MAY produce zero-sized frames. This geometric fit bound does not enforce native window minimum sizes.
 
 ## Focus
 
