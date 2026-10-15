@@ -60,7 +60,12 @@ independent source/raw/simplicity review has no remaining blocker. Preserved
 pre-selection harness failure and cleanup, scoped timing/service observations and
 all qualifications: [evidence record](../docs/pocs/024-known-fullscreen-chooser-focus.md).
 Native supersession/resource failures/expiry/shutdown races are pure/source coverage,
-not live claims. No host load or release/physical latency certification.
+not live claims. No release/physical latency certification.
+
+**User acceptance — 2026-10-15:** after explicitly authorized frozen `d3d9e29`
+host load, the user confirmed “cool” and requested closure. Host bindings/rules
+were preserved and the previous native worker drained. This is user-reported
+acceptance, not an independently captured host focus/Space or latency measurement.
 
 ## Affected Files
 
