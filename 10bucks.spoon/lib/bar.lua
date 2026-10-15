@@ -1,7 +1,9 @@
 -- Pure bar semantics and the one current formatter. Native canvas/timer lifetime
 -- is intentionally isolated in lib/macos/bar.lua.
 local Bar = {}
-local HEIGHT, TOP_PADDING, RIGHT_INSET = 32, 4, 24
+local HEIGHT, TOP_PADDING, RIGHT_INSET = 32, 4, 25
+-- Align rendered text with the privacy indicator and icons with the text centre.
+local CONTENT_OFFSET, ICON_OFFSET = 5, 3.5
 local DARK = { background = { red = .08, green = .09, blue = .12, alpha = .45 }, text = { red = .9, green = .92, blue = .96, alpha = 1 } }
 local LIGHT = { background = { red = .94, green = .95, blue = .97, alpha = .65 }, text = { red = .08, green = .09, blue = .12, alpha = 1 } }
 
@@ -68,7 +70,7 @@ local function desktopText(view)
   return #labels > 0 and table.concat(labels, " ") .. " · " or ""
 end
 local function icon(layout, color)
-  local y = math.max(0, TOP_PADDING + math.max(0, ((HEIGHT - TOP_PADDING) - 11) / 2) - 5)
+  local y = ICON_OFFSET + math.max(0, TOP_PADDING + math.max(0, ((HEIGHT - TOP_PADDING) - 11) / 2) - 5)
   local function outline(value) return { type = "rectangle", action = "stroke", frame = value, strokeColor = color, strokeWidth = 1.5 } end
   if layout == "columns" then return { outline({ x = 12, y = y, w = 13, h = 11 }), { type = "rectangle", action = "fill", frame = { x = 18, y = y + 1, w = 1, h = 9 }, fillColor = color } } end
   return { outline({ x = 12, y = y, w = 9, h = 8 }), outline({ x = 15, y = y + 3, w = 9, h = 8 }) }
@@ -77,12 +79,12 @@ end
 -- The practical future-formatter seam: semantic view in, plain canvas
 -- presentation out. No native handle, clock, or query enters this function.
 function Bar.format(view)
-  local palette, clockX, contentHeight = view.dark and DARK or LIGHT, math.max(0, view.frame.w - RIGHT_INSET - 168), HEIGHT - TOP_PADDING
+  local palette, clockX, contentHeight = view.dark and DARK or LIGHT, math.max(0, view.frame.w - RIGHT_INSET - 168), HEIGHT - TOP_PADDING - CONTENT_OFFSET
   local elements = { { type = "rectangle", action = "fill", frame = { x = 0, y = 0, w = view.frame.w, h = HEIGHT }, fillColor = palette.background } }
   for _, item in ipairs(icon(view.layout, palette.text)) do elements[#elements + 1] = item end
-  elements[#elements + 1] = { type = "text", frame = { x = 34, y = TOP_PADDING, w = math.max(0, clockX - 46), h = contentHeight },
+  elements[#elements + 1] = { type = "text", frame = { x = 34, y = TOP_PADDING + CONTENT_OFFSET, w = math.max(0, clockX - 46), h = contentHeight },
     text = desktopText(view) .. truncate(title(view.actual), 90) .. "  (" .. (view.position or 0) .. "/" .. view.count .. ") ", textColor = palette.text, textFont = "Menlo", textSize = 13, textLineBreak = "truncateTail" }
-  elements[#elements + 1] = { type = "text", frame = { x = clockX, y = TOP_PADDING, w = 168, h = contentHeight }, text = os.date("%a, %d %b, %H:%M", math.floor(view.timestamp)), textColor = palette.text, textFont = "Menlo", textSize = 13, textAlignment = "right" }
+  elements[#elements + 1] = { type = "text", frame = { x = clockX, y = TOP_PADDING + CONTENT_OFFSET, w = 168, h = contentHeight }, text = os.date("%a, %d %b, %H:%M", math.floor(view.timestamp)), textColor = palette.text, textFont = "Menlo", textSize = 13, textAlignment = "right" }
   return { displayId = view.displayId, frame = frame(view.frame), visible = view.visible, elements = elements }
 end
 return Bar

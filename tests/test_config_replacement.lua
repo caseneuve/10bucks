@@ -2,6 +2,43 @@ local Config = require("lib.config")
 local Bindings = require("lib.bindings")
 
 return {
+  ["COL-010: public gap defaults to zero, accepts fractional points and rejects invalid values without replacing config"] = function()
+    assert(Config.build().columnGap == 0)
+    local input = { columnGap = 2.5 }
+    local config = Config.build(input); input.columnGap = 99
+    assert(config.columnGap == 2.5 and Config.defaults.columnGap == 0)
+    local ten = dofile("10bucks.spoon/init.lua"):configure({ columnGap = 2.5 })
+    local prior = ten.config
+    for _, gap in ipairs({ -1, math.huge, -math.huge, 0/0, "10", false, {} }) do
+      local ok, err = pcall(ten.configure, ten, { columnGap = gap })
+      assert(not ok and tostring(err):find("config.columnGap", 1, true))
+      assert(ten.config == prior and ten.config.columnGap == 2.5)
+    end
+    assert(Config.build({ columnGap = 0 }).columnGap == 0)
+    assert(Config.build({ columnGap = 1e300 }).columnGap == 1e300)
+  end,
+  ["COL-010 STACK-001 LAY-001: composition snapshots gap per Core through the existing layout owner"] = function()
+    local ten = dofile("10bucks.spoon/init.lua"):configure({ columnGap = 10 })
+    ten.context = { displayId = "built-in", workArea = { x = 100, y = 132, w = 300, h = 400 } }
+    ten.cores = {}
+    local core = ten:_coreForSpace("first")
+    assert(core.dependencies.layoutConfigs.columns.columnGap == 10)
+    ten.config.columnGap = 20 -- Core configuration is a primitive snapshot, not the public table.
+    assert(ten:_coreForSpace("first") == core)
+    assert(core.dependencies.layoutConfigs.columns.columnGap == 10)
+    local other = ten:_coreForSpace("second")
+    assert(other.dependencies.layoutConfigs.columns.columnGap == 20)
+    assert(other.dependencies.layoutConfigs.columns ~= core.dependencies.layoutConfigs.columns)
+    assert(core:submit({ type = "WindowReady", id = "one", displayId = "built-in", spaceId = "first",
+      application = { pid = 1, name = "Example", bundleID = "example.app" } }))
+    assert(core.currentFrames.one.x == 100 and core.currentFrames.one.y == 132)
+    assert(core.currentFrames.one.w == 300 and core.currentFrames.one.h == 400)
+    assert(core:submit({ type = "CycleLayout" }))
+    assert(core.currentFrames.one.x == 110 and core.currentFrames.one.y == 142)
+    assert(core.currentFrames.one.w == 280 and core.currentFrames.one.h == 380)
+    assert(core:submit({ type = "Reflow" }))
+    assert(core.currentFrames.one.x == 110)
+  end,
   ["RULE-001 RULE-003: narrow rules config copies exact matches and rejects unsupported actions/matchers"] = function()
     local input = { rules = { { match = { bundleID = "example.app", title = "" }, action = "exclude" } } }
     local config = Config.build(input)

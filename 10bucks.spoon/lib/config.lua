@@ -2,6 +2,7 @@ local Config = {}
 
 Config.defaults = {
   builtInDisplayUUID = nil,
+  columnGap = 0,
   hotkeys = {
     cycleLayout = { { "cmd", "alt", "ctrl", "shift" }, "space" },
     focusLeftGroup = { { "cmd", "alt", "ctrl", "shift" }, "h" },
@@ -50,9 +51,12 @@ local function chord(name, value)
 end
 function Config.build(override)
   override = override or {}; assert(type(override) == "table", "10bucks config must be a table")
-  for key in pairs(override) do assert(key == "hotkeys" or key == "builtInDisplayUUID" or key == "canaryInstrumentation" or key == "rules", "10bucks Canary A does not support config." .. tostring(key)) end
+  for key in pairs(override) do assert(key == "hotkeys" or key == "columnGap" or key == "builtInDisplayUUID" or key == "canaryInstrumentation" or key == "rules", "10bucks Canary A does not support config." .. tostring(key)) end
   local config = copy(Config.defaults)
   if override.builtInDisplayUUID ~= nil then config.builtInDisplayUUID = override.builtInDisplayUUID end
+  if override.columnGap ~= nil then config.columnGap = override.columnGap end
+  assert(type(config.columnGap) == "number" and config.columnGap >= 0 and config.columnGap < math.huge,
+    "config.columnGap must be finite nonnegative points")
   if override.canaryInstrumentation ~= nil then config.canaryInstrumentation = override.canaryInstrumentation end
   assert(type(config.canaryInstrumentation) == "boolean", "config.canaryInstrumentation must be boolean")
   assert(config.builtInDisplayUUID == nil or (type(config.builtInDisplayUUID) == "string" and config.builtInDisplayUUID ~= ""), "config.builtInDisplayUUID must be a non-empty string")

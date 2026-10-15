@@ -39,6 +39,56 @@ local function assertValid(state, memberIds, ctx)
 end
 
 return {
+  ["COL-010 COL-008 STATE-006: gaps are uniform, non-compounding and preserve asymmetric ratio and state"] = function()
+    local ctx = context()
+    local state = Columns.initialState({ "one", "two", "three" }, ctx)
+    state = Columns.reduce(state, { type = "ResizeRatio", ratio = .7 }, ctx)
+    local before = Columns.initialState({ "one", "two", "three" }, ctx)
+    before = Columns.reduce(before, { type = "ResizeRatio", ratio = .7 }, ctx)
+    local area = { x = 100, y = 132, w = 1030, h = 800 }
+    local zero = Columns.project(state, available("one", "two", "three"), area, ctx)
+    assert(deepEqual(zero[1].frame, { x = 100, y = 132, w = 1030 * .7, h = 800 }))
+    assert(deepEqual(zero[3].frame, { x = 100 + 1030 * .7, y = 132, w = 1030 * (1 - .7), h = 800 }))
+    ctx.config.columnGap = 10
+    local frames = Columns.project(state, available("one", "two", "three"), area, ctx)
+    assert(deepEqual(frames[1].frame, { x = 110, y = 142, w = 700, h = 780 }))
+    assert(deepEqual(frames[1].frame, frames[2].frame))
+    local right = frames[3].frame
+    equal(right.x - (frames[1].frame.x + frames[1].frame.w), 10)
+    assert(math.abs(right.w - 300) < .000001)
+    assert(math.abs(area.x + area.w - (right.x + right.w) - 10) < .000001)
+    for _, members in ipairs({ available("one", "two"), available("three") }) do
+      local single = Columns.project(state, members, area, ctx)
+      assert(deepEqual(single[1].frame, { x = 110, y = 142, w = 1010, h = 780 }))
+    end
+    local single = Columns.initialState({ "only" }, ctx)
+    assert(deepEqual(Columns.project(single, available("only"), area, ctx)[1].frame,
+      { x = 110, y = 142, w = 1010, h = 780 }))
+    assert(deepEqual(state, before) and ctx.config.columnGap == 10)
+  end,
+  ["COL-010: oversized gaps clamp uniformly without changing config or ratio"] = function()
+    local ctx = context(); ctx.config.columnGap = 1000
+    local state = Columns.initialState({ "one", "two" }, ctx)
+    state = Columns.reduce(state, { type = "ResizeRatio", ratio = .75 }, ctx)
+    local area = { x = 100, y = 132, w = 12, h = 10 }
+    local frames = Columns.project(state, available("one", "two"), area, ctx)
+    assert(deepEqual(frames[1].frame, { x = 104, y = 136, w = 0, h = 2 }))
+    assert(deepEqual(frames[2].frame, { x = 108, y = 136, w = 0, h = 2 }))
+    for _, intent in ipairs(frames) do
+      local frame = intent.frame
+      assert(frame.x >= area.x and frame.x + frame.w <= area.x + area.w)
+      assert(frame.y >= area.y and frame.y + frame.h <= area.y + area.h)
+      assert(frame.w >= 0 and frame.h >= 0)
+    end
+    local single = Columns.project(state, available("two"), { x = 100, y = 132, w = 20, h = 5 }, ctx)
+    assert(deepEqual(single[1].frame, { x = 102.5, y = 134.5, w = 15, h = 0 }))
+    equal(ctx.config.columnGap, 1000); equal(state.ratio, .75)
+    equal(#Columns.project(state, {}, area, ctx), 0)
+    for _, gap in ipairs({ -1, math.huge, -math.huge, 0/0, "10", false, {} }) do
+      ctx.config.columnGap = gap
+      assert(not pcall(Columns.project, state, available("one", "two"), area, ctx))
+    end
+  end,
   ["COL-002 COL-003 WIN-003: admission splits a multi-member sole stack once, then appends to active column"] = function()
     local state = { stacks = { { members = { "one", "two" }, selectedId = "two" } }, activeStack = 1, ratio = 0.5 }
     assertValid(state, { "one", "two" })

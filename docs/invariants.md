@@ -152,6 +152,10 @@ Divider ratio is per Space, physically directional, bounded by configuration, re
 
 When an untracked Space is first adopted in columns mode, eligible windows are ordered by observed creation time when trustworthy, otherwise ascending native window ID as a deterministic approximation. All but the newest enter the left stack; only the newest enters the right. The actually focused managed member determines the active column.
 
+### COL-010 — Uniform configurable gaps
+
+Public top-level `columnGap` MUST be finite nonnegative points, defaulting to 0. Columns projection MUST apply the same gap on all outer sides of the usable area and once (not doubled) between available columns. The top gap starts below the usable-area boundary, not the display top. A single available column receives outer gaps only. The retained ratio divides the window width remaining after gaps (usable width minus `3 * gap` for two available columns); projection MUST NOT change ratio, membership or selection. Stack geometry is unchanged. The effective gap MUST be clamped to `min(columnGap, usableWidth / (twoAvailableColumns and 3 or 2), usableHeight / 2)`. Dimensions MUST remain nonnegative; extreme settings MAY produce zero-sized frames. This geometric fit bound does not enforce native window minimum sizes.
+
 ## Focus
 
 ### FOCUS-001 — Separate focus concepts
@@ -351,6 +355,10 @@ Focus/title, reducer state, Space, appearance, and screen events drive updates. 
 ### BAR-007 — Theme
 
 Light/dark appearance behavior remains supported. Unchanged view models MUST NOT reorder/show/render the canvas again.
+
+### BAR-008 — Content alignment
+
+The bar MUST retain its 32-point height. Text MUST align visually with the native privacy dot, and layout icons MUST align with the rendered text centre. Text uses a +5-point downward shift and icons a +3.5-point shift relative to the original positions; equal frame offsets do not imply equal rendered centres. Pure frame checks do not prove native visual alignment.
 
 ## Commands and feedback
 

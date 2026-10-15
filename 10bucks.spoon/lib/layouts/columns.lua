@@ -456,13 +456,23 @@ function Columns.project(state, availability, workArea, context)
   for index, stack in ipairs(state.stacks) do availableStacks[index] = stackHasAvailable(stack, availability) end
   local availableCount = 0
   for _, present in pairs(availableStacks) do if present then availableCount = availableCount + 1 end end
+  -- COL-010: one uniform gap, with ratio applied to the remaining column width.
+  local gap = context.config.columnGap
+  if gap == nil then gap = 0 end
+  if type(gap) ~= "number" or not (gap >= 0 and gap < math.huge) then
+    error("columns columnGap must be finite nonnegative points", 2)
+  end
+  gap = math.min(gap, math.max(0, workArea.w / (availableCount == 2 and 3 or 2)),
+    math.max(0, workArea.h / 2))
+  local x, y, height = workArea.x + gap, workArea.y + gap, math.max(0, workArea.h - 2 * gap)
+  local width = math.max(0, workArea.w - (availableCount == 2 and 3 or 2) * gap)
   local intents = {}
   for index, stack in ipairs(state.stacks) do
     if availableStacks[index] then
       local frame
-      if availableCount == 1 then frame = { x = workArea.x, y = workArea.y, w = workArea.w, h = workArea.h }
-      elseif index == 1 then frame = { x = workArea.x, y = workArea.y, w = workArea.w * state.ratio, h = workArea.h }
-      else frame = { x = workArea.x + workArea.w * state.ratio, y = workArea.y, w = workArea.w * (1 - state.ratio), h = workArea.h } end
+      if availableCount == 1 then frame = { x = x, y = y, w = width, h = height }
+      elseif index == 1 then frame = { x = x, y = y, w = width * state.ratio, h = height }
+      else frame = { x = x + width * state.ratio + gap, y = y, w = width * (1 - state.ratio), h = height } end
       for _, memberId in ipairs(stack.members) do
         if isAvailable(availability, memberId) then
           intents[#intents + 1] = { windowId = memberId, displayId = context.displayId, spaceId = context.spaceId,

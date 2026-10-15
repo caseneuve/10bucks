@@ -69,9 +69,9 @@ function Tenbucks:configureFile(path)
   return self:configure(Config.loadFile(path))
 end
 
-local function layoutDependencies()
+local function layoutDependencies(config)
   return { activeLayoutId = "stack", layoutIds = { "stack", "columns" }, registry = { stack = Stack, columns = Columns },
-    layoutConfigs = { columns = { minRatio = .25, maxRatio = .75, defaultRatio = .5 } } }
+    layoutConfigs = { columns = { minRatio = .25, maxRatio = .75, defaultRatio = .5, columnGap = config.columnGap } } }
 end
 
 function Tenbucks:_publishBar()
@@ -82,7 +82,7 @@ function Tenbucks:_publishBar()
     local coordinator = state.coordinators[self.core.spaceId]
     local available = {}; for id, window in pairs(state.manager.windows) do available[id] = Model.isAvailable(window) end
     status = Coordinator.status(coordinator, available, { displayId = self.core.displayId, spaceId = self.core.spaceId,
-      availableMembers = available }, layoutDependencies())
+      availableMembers = available }, self.core.dependencies)
     layout = coordinator.activeLayoutId
   end
   self.bar:present(Bar.format(Bar.view({ context = self.context, status = status, layout = layout,
@@ -100,9 +100,9 @@ function Tenbucks:_stopScope()
   self.context, self.core, self.cores, self.suspended = nil, nil, nil, false
 end
 
-local function newCore(context)
+local function newCore(context, config)
   return Core.new({ displayId = context.displayId, regularSpaceId = context.regularSpaceId,
-    workArea = context.workArea, layoutDependencies = layoutDependencies() })
+    workArea = context.workArea, layoutDependencies = layoutDependencies(config) })
 end
 
 function Tenbucks:_observeCoreIntents(core, intents, version)
@@ -243,7 +243,7 @@ function Tenbucks:_coreForSpace(spaceId)
     if not present then return nil end
   end
   local context = { displayId = self.context.displayId, regularSpaceId = spaceId, workArea = self.context.workArea }
-  core = newCore(context)
+  core = newCore(context, self.config)
   self.cores[spaceId] = core
   core.observer = function(intents, version) self:_observeCoreIntents(core, intents, version) end
   return core
@@ -668,7 +668,7 @@ function Tenbucks:_beginContext(context)
       if self.workspace then self:_withEffectBatch(function() assert(self.workspace:submit(event)) end) end
     end })
   if context.regularSpaceId then
-    self.core = newCore(context)
+    self.core = newCore(context, self.config)
     self.cores[context.regularSpaceId] = self.core
   end
   self.contextEpoch = (self.contextEpoch or 0) + 1

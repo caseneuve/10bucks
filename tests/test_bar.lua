@@ -16,6 +16,20 @@ local function fake()
     distributednotifications = { new = function(callback) f.appearance = { callback = callback, start = function() end, stop = function() f.appearanceStopped = true end }; return f.appearance end } }
 end
 return {
+  ["BAR-008: text and both layout icons align vertically within the unchanged 32-point bar"] = function()
+    for _, layout in ipairs({ "stack", "columns" }) do
+      local presentation = Bar.format({ displayId = "built-in", frame = { x = 0, y = 0, w = 400, h = 32 },
+        visible = true, layout = layout, regularPositions = {}, actual = {}, count = 0, timestamp = 0 })
+      assert(presentation.frame.h == 32 and presentation.elements[1].frame.h == 32)
+      assert(presentation.elements[5].frame.x + presentation.elements[5].frame.w == 375)
+      assert(presentation.elements[2].frame.y == 11)
+      assert(presentation.elements[3].frame.y == (layout == "columns" and 12 or 14))
+      for index = 4, 5 do
+        local frame = presentation.elements[index].frame
+        assert(frame.y == 9 and frame.h == 23 and frame.y + frame.h == 32)
+      end
+    end
+  end,
   ["BAR-001 BAR-006: event publication restores an externally hidden canvas without rerendering unchanged content"] = function()
     local f, hs = fake(); local owner = NativeBar.new(hs, function() end):start()
     local presentation = { displayId = "built-in", frame = { x = 0, y = 0, w = 100, h = 32 }, visible = true, elements = {} }
