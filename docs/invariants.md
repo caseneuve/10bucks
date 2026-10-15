@@ -146,7 +146,7 @@ Swapping columns atomically swaps whole ordered stacks and their selections. The
 
 ### COL-008 — Divider
 
-Divider ratio is per Space, physically directional, bounded by configuration, retained through layout switches, and reset only by explicit reset or cold state initialization.
+Divider ratio is per Space, physically directional, bounded by configuration, retained through layout switches, and reset only by explicit reset or cold state initialization. The current composition MUST bound the ratio to 0.30–0.70: four 0.05 steps from 0.50 in either direction; further outward commands leave it at the bound. This fixed limit is the user-approved TODO0005 mitigation (2026-10-15), not adaptive native minimum-size enforcement or a containment guarantee for every window/display.
 
 ### COL-009 — Cold bootstrap
 

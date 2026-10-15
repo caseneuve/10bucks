@@ -730,6 +730,11 @@ return {
   ["SPACE-005 LAY-001 LAY-003 COL-008 WIN-002: composed previous repeats before confirmation and retains inactive Core layouts"] = function()
     local f, ten = workspaceSetup(); focus(ten, 9)
     ten:_submitCommand({ type = 'CycleLayout' })
+    for _, delta in ipairs({ .05, -.05 }) do
+      for _ = 1, 6 do ten:_submitCommand({ type = 'ResizeRatioDelta', delta = delta }) end
+      assert(ten.core:state().coordinators.space.layouts.columns.ratio == (delta > 0 and .70 or .30))
+      ten:_submitCommand({ type = 'ResetRatio' })
+    end
     ten:_submitCommand({ type = 'ResizeRatioDelta', delta = .05 })
     local first = ten.core
     local saved = first:state().coordinators.space
