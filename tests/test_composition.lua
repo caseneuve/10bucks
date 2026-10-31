@@ -1482,7 +1482,7 @@ return {
     local ten = loadConfiguredFile(f, { builtInDisplayUUID = "built-in", canaryInstrumentation = true })
     local status = ten:canaryStatus()
     assert(ten.config.canaryInstrumentation == true)
-    assert(status.enabled and status.started and not status.suspended and status.memberCount == 1 and status.activeTimers == 1)
+    assert(status.enabled and status.started and not status.suspended and status.memberCount == 1 and status.activeTimers == 2) -- clock deadline + one-shot BAR-001 arrival check
     ten:stop(); assert(ten:canaryStatus().started == false)
   end,
   ["Canary A instrumentation exposes only aggregate runtime status"] = function()
@@ -1490,7 +1490,7 @@ return {
     ten:configure({ builtInDisplayUUID = "built-in", canaryInstrumentation = true })
     ten:start()
     local status = ten:canaryStatus()
-    assert(status.enabled and status.started and not status.suspended and status.memberCount == 1 and status.activeTimers == 1)
+    assert(status.enabled and status.started and not status.suspended and status.memberCount == 1 and status.activeTimers == 2) -- clock deadline + one-shot BAR-001 arrival check
     assert(status.counts["event.WindowReady"] == 1 and status.counts.reducerCommitVersions == 1)
     ten:stop(); assert(ten:canaryStatus().started == false)
   end,

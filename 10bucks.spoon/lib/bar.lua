@@ -85,6 +85,6 @@ function Bar.format(view)
   elements[#elements + 1] = { type = "text", frame = { x = 34, y = TOP_PADDING + CONTENT_OFFSET, w = math.max(0, clockX - 46), h = contentHeight },
     text = desktopText(view) .. truncate(title(view.actual), 90) .. "  (" .. (view.position or 0) .. "/" .. view.count .. ") ", textColor = palette.text, textFont = "Menlo", textSize = 13, textLineBreak = "truncateTail" }
   elements[#elements + 1] = { type = "text", frame = { x = clockX, y = TOP_PADDING + CONTENT_OFFSET, w = 168, h = contentHeight }, text = os.date("%a, %d %b, %H:%M", math.floor(view.timestamp)), textColor = palette.text, textFont = "Menlo", textSize = 13, textAlignment = "right" }
-  return { displayId = view.displayId, frame = frame(view.frame), visible = view.visible, elements = elements }
+  return { displayId = view.displayId, spaceId = view.activeSpaceId, frame = frame(view.frame), visible = view.visible, elements = elements }
 end
 return Bar

@@ -57,3 +57,6 @@ or corrective reload are required.
 Keep legacy occurrence as reported provenance, not proof of shared code/cause.
 Do not add permanent production diagnostics or silently force host reloads.
 User notes request tracking only; native reproduction later in the owned VM.
+
+## 2026-10-31 diagnosis
+Verified: the failing canvas keeps canJoinAllSpaces plus the WS sticky tag but is pinned to a subset of Spaces. A fresh canvas joins all Spaces and restores pixels. Fix: one-shot settled occlusion check per regular-Space arrival replaces the canvas (BAR-001). The originating trigger is still unknown. Automatic-path live acceptance is pending a natural recurrence.

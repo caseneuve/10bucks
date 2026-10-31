@@ -7,12 +7,12 @@ local function fake()
   local canvas = { level = function(self) return self end, behavior = function(self) return self end, clickActivating = function(self) return self end,
     canvasMouseEvents = function(self) f.mouseEvents = true; return self end, mouseCallback = function(self, cb) f.mouse = cb; return self end,
     frame = function(self) f.frames = f.frames + 1; return self end, replaceElements = function(self) f.replaces = f.replaces + 1; return self end,
-    isShowing = function() return f.showing == true end,
+    isShowing = function() return f.showing == true end, isOccluded = function() return f.occluded == true end,
     show = function(self) f.shows = f.shows + 1; f.showing = true; return self end, hide = function(self) f.hides = f.hides + 1; f.showing = false; return self end,
     delete = function() f.deleted = f.deleted + 1 end }
   f.canvas, f.now, f.pointer = canvas, 1, { x = 40, y = 40 }
   return f, { canvas = { new = function() return canvas end }, mouse = { absolutePosition = function() f.pointerReads = (f.pointerReads or 0) + 1; return f.pointer end },
-    timer = { secondsSinceEpoch = function() return f.now end, doAfter = function(_, fn) f.deadline = fn; return timer() end, doEvery = function(_, fn) f.every = fn; return timer() end },
+    timer = { secondsSinceEpoch = function() return f.now end, doAfter = function(delay, fn) if delay == .5 then f.participation = fn else f.deadline = fn end; return timer() end, doEvery = function(_, fn) f.every = fn; return timer() end },
     distributednotifications = { new = function(callback) f.appearance = { callback = callback, start = function() end, stop = function() f.appearanceStopped = true end }; return f.appearance end } }
 end
 return {
@@ -93,5 +93,20 @@ return {
     assert(f.replaces == 1 and f.shows == 1 and f.mouseEvents and f.pointerReads == 1)
     f.deadline(); assert(updates == 1 and f.every)
     owner:stop(); assert(f.deleted == 1 and f.timers[2].stopped)
+  end,
+  ["BAR-001: settled occluded canvas on a regular-Space arrival is replaced once, never polled"] = function()
+    local f, hs = fake(); local owner = NativeBar.new(hs, function() end):start()
+    local function on(space) return { displayId = "built-in", spaceId = space, frame = { x = 0, y = 0, w = 100, h = 32 }, visible = true, elements = {} } end
+    owner:present(on(1)); assert(f.shows == 1 and f.participation and owner:timerCount() == 2)
+    local check = f.participation; f.participation = nil; check()
+    assert(f.deleted == 0 and owner:timerCount() == 1, "participating canvas is retained")
+    owner:present(on(1)); assert(not f.participation, "same-Space publication does not schedule another check")
+    owner:present(on(2)); f.occluded = true; check = f.participation; f.participation = nil; check()
+    assert(f.deleted == 1 and f.shows == 2 and f.replaces == 2 and f.frames == 2, "pinned canvas is replaced and shown")
+    assert(not f.participation, "replacement does not loop on the same arrival")
+    owner:present(on(3)); check = f.participation; owner:present({ displayId = "built-in", spaceId = nil, frame = on(3).frame, visible = false, elements = {} })
+    check(); assert(f.deleted == 1, "fullscreen hide cancels the pending check")
+    owner:present(on(3)); assert(f.participation, "return from fullscreen checks again")
+    owner:stop(); assert(owner:timerCount() == 0)
   end,
 }

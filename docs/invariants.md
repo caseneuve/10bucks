@@ -330,7 +330,7 @@ Keep `hs.chooser` and its observed `Cmd+1…9` current-visible-row selection beh
 
 ### BAR-001 — Spaces and native UI
 
-One overlay-level canvas joins all regular Spaces and remains visible in Mission Control/App Exposé. It is hidden on native fullscreen/tiled Spaces.
+One overlay-level canvas joins all regular Spaces and remains visible in Mission Control/App Exposé. It is hidden on native fullscreen/tiled Spaces. macOS can pin a canvas that still has `canJoinAllSpaces` to a subset of Spaces. Showing it again does not fix that, but a fresh canvas does. So once per regular-Space arrival (and after handoff), a settled check (one-shot, 0.5 s) replaces an occluded canvas that should be visible. This is not a poll.
 
 ### BAR-002 — Native menu-bar handoff
 
