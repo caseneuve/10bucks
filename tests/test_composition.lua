@@ -1662,6 +1662,37 @@ return {
     assert(writes[1].x == 10 and writes[1].w == 200 and writes[1].y == 32 and writes[1].h == 68)
     ten:stop()
   end,
+  ["WIN-005 STATE-005 LIFE-004: desktop entry retires only explicitly stopped retained apps through lifecycle reduction"] = function()
+    for _, outcome in ipairs({ "stopped", "live", "hidden", "fullscreen", "pid-reused", "unknown", "error" }) do
+      local f, element = fakeHs()
+      local app, queries = f.window:application(), 0
+      app.isRunning = function()
+        queries = queries + 1
+        if outcome == "error" then error("uncertain") end
+        if outcome == "unknown" then return nil end
+        return outcome ~= "stopped"
+      end
+      local ten = load(f); ten:start()
+      local original = ten.core
+      assert(queries == 0, "startup must not run entry liveness")
+      element.isValid = function() return nil end
+      if outcome == "hidden" then f.life.callback(nil, hs.application.watcher.hidden, app) end
+      if outcome == "fullscreen" then f.fullscreen = true; f.windowWatcher.callback(nil, "AXWindowResized") end
+      f.members, f.owners, f.focusedWindow = {}, {}, nil
+      f.activeSpace = "next-space"; f.contextWatcher.callback()
+      assert(queries == 1)
+      local retained = outcome ~= "stopped"
+      assert((original:state().manager.windows[9] ~= nil) == retained)
+      assert((ten.host.appResources[8] ~= nil) == retained)
+      assert((ten.handleRegistry:target(9) ~= nil) == retained)
+      assert((ten.windows:handleForId(9) ~= nil) == retained)
+      assert((#ten.chooserRows > 0) == retained)
+      ten.windows:discover() -- another entry boundary, not a retry
+      assert(queries == (retained and 2 or 1))
+      ten:stop()
+      assert(ten.host == nil)
+    end
+  end,
   ["regular Spaces retain independent Core state across A-to-B-to-A activation"] = function()
     local f = fakeHs(); local ten = load(f); ten:start()
     local firstCore, oldWindowWatcher, oldSpaceWatcher = ten.core, f.windowWatcher.callback, f.contextWatcher.callback

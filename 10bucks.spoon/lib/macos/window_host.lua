@@ -400,10 +400,45 @@ function Host:_attachApp(app, callback)
   return record
 end
 
+function Host:_publishTermination(record)
+  local callback, owner, generation, context = self.applicationCallback, self.applicationOwner, self.generation, self.context
+  if not callback or not self:appCurrent(record.pid, record.lease) or self.appResources[record.pid] ~= record then return end
+  for id, token in pairs(self.readiness) do if token.appRecord == record then self:_cancelReadiness(id) end end
+  if self.presentationApp == record.app then self:_observePresentation(nil, nil, nil, nil) end
+  if self.generation ~= generation or self.context ~= context or self.applicationOwner ~= owner
+    or not self:appCurrent(record.pid, record.lease) or self.appResources[record.pid] ~= record then return end
+  callback({ kind = "terminated", pid = record.pid, resource = record.lease })
+end
+
+function Host:_checkRetainedApplications()
+  local generation, context, callback, owner = self.generation, self.context, self.applicationCallback, self.applicationOwner
+  local function current()
+    return self.started and self.generation == generation and self.context == context and self.applicationOwner == owner
+  end
+  if not callback then return current() end
+  local records = {}
+  for _, record in pairs(self.appResources) do records[#records + 1] = record end
+  for _, record in ipairs(records) do
+    if not current() then return false end
+    if record.active and self.appResources[record.pid] == record then
+      self:_record("targetedApplicationLivenessQueries")
+      local running = call(record.app, "isRunning")
+      if not current() then return false end
+      -- HS 1.1.1 checks PID existence: true (including PID reuse) is not
+      -- lifetime proof. Only explicit false retires; errors/nil retain.
+      if running == false and record.active and self.appResources[record.pid] == record then
+        self:_publishTermination(record)
+      end
+    end
+  end
+  return current()
+end
+
 function Host:subscribeApplications(callback)
-  local generation = self.generation
+  local generation, owner = self.generation, {}
+  self.applicationCallback, self.applicationOwner = callback, owner
   local watcher = self.hs.application.watcher.new(function(_, event, app)
-    if not self.started or generation ~= self.generation or not app then return end
+    if not self.started or generation ~= self.generation or self.applicationOwner ~= owner or not app then return end
     local pid = call(app, "pid")
     if event == self.hs.application.watcher.launched then
       if self.windowCallback then
@@ -440,9 +475,7 @@ function Host:subscribeApplications(callback)
       -- object to equal the retained live resource. Mismatch is uncertainty;
       -- a later independent discovery may attach only after this lifetime ends.
       if record and record.active and record.app == app then
-        for id, token in pairs(self.readiness) do if token.appRecord == record then self:_cancelReadiness(id) end end
-        if self.presentationApp == app then self:_observePresentation(nil, nil, nil, nil) end
-        callback({ kind = "terminated", pid = pid, resource = record.lease })
+        self:_publishTermination(record)
       end
     elseif event == self.hs.application.watcher.hidden then
       local target = self.validityTarget
@@ -454,7 +487,14 @@ function Host:subscribeApplications(callback)
       if record and record.active and record.app == app then callback({ kind = "unhidden", pid = pid, resource = record.lease }) end
     end
   end)
-  return self:_startOwned(watcher)
+  local subscription = self:_startOwned(watcher)
+  if not self.started or self.generation ~= generation then
+    if self.applicationOwner == owner then self.applicationCallback, self.applicationOwner = nil, nil end
+  end
+  return { detach = function()
+    if self.applicationOwner == owner then self.applicationCallback, self.applicationOwner = nil, nil end
+    subscription.detach()
+  end }
 end
 
 function Host:discoveryStatus()
@@ -591,6 +631,8 @@ function Host:_bootstrapRegular(callback)
 end
 
 function Host:subscribeExistingWindows(callback, bootstrap, attempt)
+  if bootstrap == false and (attempt == nil or attempt == 1) and self.context.regularSpaceId
+    and not self:_checkRetainedApplications() then return { detach = function() end } end
   self.windowCallback = callback
   if bootstrap ~= false then
     self:_bootstrapRegular(callback)
@@ -741,6 +783,7 @@ end
 function Host:stop()
   if not self.started then return self end
   self.started = false; self.generation = self.generation + 1
+  self.applicationCallback, self.applicationOwner = nil, nil
   self:_cancelValidity()
   if self.startupTimer then pcall(self.startupTimer.stop, self.startupTimer); self.startupTimer = nil end
   if self.discoveryJob then call(self.discoveryJob, "cancel"); self.discoveryJob = nil end

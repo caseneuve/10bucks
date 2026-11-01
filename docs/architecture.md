@@ -166,7 +166,7 @@ Under the **Target adapter policy**, a window leaves durable state only after th
 
 - normalized direct UI-element destruction (`AXUIElementDestroyed`)
 - normalized owning-application termination
-- a targeted native membership/liveness query only when a future slice has proved that specific query necessary and non-destructive
+- a targeted native membership/liveness query only when proved necessary and non-destructive; regular-desktop arrival checks retained owning applications once, and explicit `isRunning() == false` routes through application termination (see [POC-025](pocs/025-ended-application-retirement.md)). True, including PID reuse, and nil/errors retain membership.
 
 The first two are policy-selected removal inputs, not a POC-verified callback-reliability guarantee.
 

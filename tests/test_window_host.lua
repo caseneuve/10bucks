@@ -904,6 +904,43 @@ return {
     assert(f.scans == scans and f.membershipQueries == memberships and f.ownerQueries == owners)
     host:stop()
   end,
+  ["STATE-005 LIFE-004: entry app liveness is bounded and rejects reentrant authority changes"] = function()
+    for _, mode in ipairs({ "stop", "restart", "context", "record", "callback", "retirement-stop", "retry" }) do
+      local f, app = fake()
+      local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+      local events, queries = {}, 0
+      local callback = function(event)
+        events[#events + 1] = event
+        if mode == "retirement-stop" then host:stop() end
+      end
+      local subscription = host:subscribeApplications(callback)
+      local record = host:_acceptApp(app)
+      app.isRunning = function()
+        queries = queries + 1
+        if mode == "stop" then host:stop()
+        elseif mode == "restart" then host:stop():start(); host:subscribeApplications(callback)
+        elseif mode == "context" then host:setContext({ displayId = "d", regularSpaceId = 11 })
+        elseif mode == "record" then host.appResources[7] = { pid = 7, app = app, active = true, lease = 999 }
+        elseif mode == "callback" then host:subscribeApplications(callback); subscription.detach() end
+        return false
+      end
+      f.members = {}
+      local before = f.membershipQueries
+      host:subscribeExistingWindows(function() error("unexpected readiness") end, false)
+      assert(queries == 1)
+      assert(#events == ((mode == "retirement-stop" or mode == "retry") and 1 or 0))
+      if mode ~= "record" and mode ~= "retry" then assert(f.membershipQueries == before, "stale pass must not continue discovery") end
+      if mode == "record" then assert(host.appResources[7].lease == 999 and record.active) end
+      if mode == "callback" then assert(host.applicationCallback == callback, "old detach cannot clear replacement owner") end
+      if mode == "retry" then
+        host:subscribeExistingWindows(function() end, false, 2)
+        host:subscribeExistingWindows(function() end, false, 3)
+        assert(queries == 1, "activation retries must not repeat app liveness")
+      end
+      host:stop()
+      assert(host.applicationCallback == nil and host.applicationOwner == nil)
+    end
+  end,
   ["host caches known handles, clears destruction/termination, and owns watchers once"] = function()
     local f, app, element = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start(); local events = {}
     host:subscribeApplications(function(e) events[#events + 1] = e end); host:subscribeExistingWindows(function(e) events[#events + 1] = e end)
