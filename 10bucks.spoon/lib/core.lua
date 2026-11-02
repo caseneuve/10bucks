@@ -197,9 +197,15 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
       manager = setDesired(manager, spaceId, transaction.id, false, selectedGroup(coordinator))
     end
   end
-  if transaction.type == "WindowMinimized"
-    and selectedId(coordinator) == transaction.id and not availability(manager)[transaction.id] then
-    recoveryGroup = selectedGroup(coordinator)
+  local minimizedSelection = transaction.type == "WindowMinimized"
+    and selectedId(coordinator) == transaction.id and not availability(manager)[transaction.id]
+  if minimizedSelection then recoveryGroup = selectedGroup(coordinator) end
+  if not sameData(availability(before), availability(manager)) then
+    coordinator = Coordinator.reduce(coordinator,
+      { type = "AvailabilityChanged", sourceGroup = recoveryGroup, recoverSource = minimizedSelection or removedSelected }, newIds,
+      context(manager, displayId, spaceId), dependencies)
+  end
+  if minimizedSelection then
     coordinator = Coordinator.reduce(coordinator, { type = "RecoverSource", sourceGroup = recoveryGroup }, newIds,
       context(manager, displayId, spaceId), dependencies)
     removedSelected = true
@@ -249,7 +255,7 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
   end
   -- Admission/removal are propagated explicitly above, focus observations use
   -- ManagedFocusObserved, and layout activation synchronizes internally. Do not
-  -- run a blanket synchronization for title/lifecycle callbacks: one commonly
+  -- run a blanket synchronization for title callbacks: one commonly
   -- arrives between admission and native focus completion and would overwrite
   -- the newer desired selection with stale actual focus.
   return { manager = manager, coordinators = { [spaceId] = coordinator } }

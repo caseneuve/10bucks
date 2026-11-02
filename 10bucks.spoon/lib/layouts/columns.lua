@@ -1,5 +1,6 @@
 -- Pure columns layout. `stacks` is ordered by physical direction: left then
--- right. Availability is ephemeral and never changes this durable structure.
+-- right. Unavailable members stay managed; visible-column loss rebalances
+-- available survivors in the reducer, never in projection.
 local Columns = { id = "columns" }
 
 function Columns.supports(eventType)
@@ -7,6 +8,7 @@ function Columns.supports(eventType)
     or eventType == "FocusNext" or eventType == "FocusPrevious" or eventType == "FocusLeftGroup"
     or eventType == "FocusRightGroup" or eventType == "RecoverSource" or eventType == "MoveFocusedToOther" or eventType == "SwapGroups"
     or eventType == "ResizeRatio" or eventType == "ResizeRatioDelta" or eventType == "ResetRatio" or eventType == "Synchronize"
+    or eventType == "AvailabilityChanged"
 end
 
 local function validId(value)
@@ -110,6 +112,61 @@ local function stackHasAvailable(stack, availability)
     if isAvailable(availability, memberId) then return true end
   end
   return false
+end
+
+-- Refill a visually empty side with the newest available survivor. Unavailable
+-- members keep their assignments; they must not prevent a visible split.
+local function rebalanceAvailable(state, context, recoverSource)
+  if #state.stacks == 0 then return state end
+  local availability = context.availableMembers
+  if #state.stacks == 1 then
+    local count, newest = 0, nil
+    for index, id in ipairs(state.stacks[1].members) do
+      if isAvailable(availability, id) then count = count + 1; newest = index end
+    end
+    if count < 2 then return state end
+    local stacks = copyStacks(state.stacks)
+    local id = table.remove(stacks[1].members, newest)
+    local active = stacks[1].selectedId == id and 2 or 1
+    if active == 2 then
+      for index = #stacks[1].members, 1, -1 do
+        if isAvailable(availability, stacks[1].members[index]) then stacks[1].selectedId = stacks[1].members[index]; break end
+      end
+    end
+    stacks[2] = { members = { id }, selectedId = id }
+    return copyState(state, stacks, recoverSource or active)
+  end
+  local left, right = stackHasAvailable(state.stacks[1], availability), stackHasAvailable(state.stacks[2], availability)
+  if left == right then return state end
+  local source, destination = left and 1 or 2, left and 2 or 1
+  local count, newest = 0, nil
+  for index, id in ipairs(state.stacks[source].members) do
+    if isAvailable(availability, id) then count = count + 1; newest = index end
+  end
+  if count < 2 then
+    if state.activeStack == source then return state end
+    return copyState(state, nil, source)
+  end
+  local stacks = copyStacks(state.stacks)
+  -- Normalization is physical: all but the newest available member go left.
+  local moved = {}
+  for index = #stacks[source].members, 1, -1 do
+    local id = stacks[source].members[index]
+    if isAvailable(availability, id) and ((source == 1 and index == newest) or (source == 2 and index ~= newest)) then
+      table.insert(moved, 1, table.remove(stacks[source].members, index))
+    end
+  end
+  local selected = stacks[source].selectedId
+  for _, id in ipairs(moved) do stacks[destination].members[#stacks[destination].members + 1] = id end
+  stacks[destination].selectedId = moved[#moved]
+  if stackIndexForMember({ stacks = stacks }, selected) ~= source then
+    for index = #stacks[source].members, 1, -1 do
+      local id = stacks[source].members[index]
+      if isAvailable(availability, id) then stacks[source].selectedId = id; break end
+    end
+  end
+  local active = recoverSource or stackIndexForMember({ stacks = stacks }, state.stacks[state.activeStack].selectedId)
+  return copyState(state, stacks, active or source)
 end
 
 local function requireValid(state, memberIds, context, level)
@@ -235,6 +292,10 @@ function Columns.reduce(state, event, context)
   local config, configError = ratioConfig(context)
   if not config then error(configError, 2) end
 
+  if event.type == "AvailabilityChanged" then
+    return rebalanceAvailable(state, context, event.recoverSource and event.sourceGroup or nil)
+  end
+
   if event.type == "Synchronize" then
     local expected, err = memberSet(event.memberIds)
     if not expected then error(err, 2) end
@@ -251,7 +312,7 @@ function Columns.reduce(state, event, context)
     if context and validId(context.focusedMemberId) and stackIndexForMember(nextState, context.focusedMemberId) then
       nextState = Columns.reduce(nextState, { type = "ManagedFocusObserved", memberId = context.focusedMemberId }, context)
     end
-    return nextState
+    return rebalanceAvailable(nextState, context)
   end
 
   if event.type == "Admit" then
@@ -266,7 +327,15 @@ function Columns.reduce(state, event, context)
       stacks[2] = { members = { event.memberId }, selectedId = event.memberId }
       return copyState(state, stacks, 2)
     end
+    local left, right = stackHasAvailable(stacks[1], context.availableMembers), stackHasAvailable(stacks[2], context.availableMembers)
+    -- Admission uses visible occupancy, excluding the new member itself.
     local active = state.activeStack
+    if left ~= right and isAvailable(context.availableMembers, event.memberId) then
+      if right then stacks[1], stacks[2] = stacks[2], stacks[1] end
+      active = 2
+    elseif not left and not right and isAvailable(context.availableMembers, event.memberId) then
+      active = 1
+    end
     local target = stacks[active]
     target.members[#target.members + 1] = event.memberId
     target.selectedId = event.memberId
@@ -289,34 +358,14 @@ function Columns.reduce(state, event, context)
       if #stacks == 0 then
         active = nil
       else
-        local survivor = stacks[1]
-        -- A permanent removal must not leave columns visually identical to
-        -- stack when at least two durable windows survive. Normalize surviving
-        -- content to physical left and split its newest member to the right.
-        if #survivor.members >= 2 then
-          local rightId = table.remove(survivor.members)
-          local activeId = survivor.selectedId
-          if activeId == rightId then
-            survivor.selectedId = survivor.members[#survivor.members]
-          end
-          stacks[2] = { members = { rightId }, selectedId = rightId }
-          if removedActiveStack then
-            -- Replace the emptied active physical side and keep focus there.
-            active = stackIndex
-          elseif activeId == rightId then
-            active = 2
-          else
-            active = 1
-          end
-        else
-          active = 1
-        end
+        active = 1
       end
     else
       if stack.selectedId == event.memberId then stack.selectedId = stack.members[#stack.members] end
       if event.recoverSource == true then active = stackIndex end
     end
-    return copyState(state, stacks, active)
+    local nextState = copyState(state, stacks, active)
+    return rebalanceAvailable(nextState, context, removedActiveStack and stackIndex or nil)
   end
 
   if event.type == "RecoverSource" then

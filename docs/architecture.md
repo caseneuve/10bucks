@@ -138,7 +138,7 @@ The exact representation should remain as small as the reducer permits. It must 
 alive ≠ visible ≠ onscreen ≠ in active Space ≠ available to j/k
 ```
 
-Lifecycle conditions are independent observations, not one mutually exclusive enum. For example, a minimized window may also belong to a hidden application. Availability is derived: a managed member is available to tile/navigate only when no condition makes it unavailable.
+Lifecycle conditions are independent observations, not one mutually exclusive enum. For example, a minimized window may also belong to a hidden application. Availability is derived: a managed member is available to tile/navigate only when no condition makes it unavailable. Core forwards availability changes to the active layout through capability dispatch; columns normalizes available survivors when a visible column disappears (COL-004), before projection/effects. Unavailable managed members do not reserve hidden columns.
 
 ### Durable versus observed data
 

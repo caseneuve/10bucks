@@ -105,32 +105,52 @@ return {
     assertValid(state, { "one", "two", "three", "four" })
   end,
 
-  ["COL-004 WIN-002 WIN-004 STATE-006 ENV-004: temporary-empty projection is full width and restores physical split without reassignment"] = function()
+  ["COL-004 WIN-004 STATE-006 ENV-004: column loss normalizes available survivors and restore retains the result"] = function()
     local state = Columns.initialState({ "one", "two", "three" }, context())
     local before = { stacks = {
       { members = { "one", "two" }, selectedId = "two" },
       { members = { "three" }, selectedId = "three" },
     }, activeStack = 2, ratio = 0.5 }
     local workArea = { x = 10, y = 20, w = 1000, h = 600 }
-    local onlyLeft = Columns.project(state, available("one", "two"), workArea, context())
-    equal(#onlyLeft, 2)
-    for _, intent in ipairs(onlyLeft) do
-      equal(intent.displayId, "built-in")
-      equal(intent.spaceId, "space-1")
-      assert(deepEqual(intent.frame, workArea))
-    end
+    local ctx = context({ availableMembers = available("one", "two") })
+    local normalized = Columns.reduce(state, { type = "AvailabilityChanged", sourceGroup = 2, recoverSource = true }, ctx)
     assert(deepEqual(state, before))
+    assert(deepEqual(normalized.stacks[1].members, { "one" }))
+    assert(deepEqual(normalized.stacks[2].members, { "three", "two" }))
+    equal(normalized.activeStack, 2)
+    local split = Columns.project(normalized, ctx.availableMembers, workArea, ctx)
+    equal(#split, 2)
+    assert(deepEqual(split[1].frame, { x = 10, y = 20, w = 500, h = 600 }))
+    assert(deepEqual(split[2].frame, { x = 510, y = 20, w = 500, h = 600 }))
+    ctx.availableMembers = available("one", "two", "three")
+    assert(Columns.reduce(normalized, { type = "AvailabilityChanged" }, ctx) == normalized)
+    equal(#Columns.project(normalized, ctx.availableMembers, workArea, ctx), 3)
+  end,
 
-    local restored = Columns.project(state, available("one", "three"), workArea, context())
-    equal(#restored, 2)
-    assert(deepEqual(restored[1].frame, { x = 10, y = 20, w = 500, h = 600 }))
-    assert(deepEqual(restored[2].frame, { x = 510, y = 20, w = 500, h = 600 }))
-    assert(deepEqual(state, before))
+  ["COL-002 COL-004: right-only visible admission normalizes left and ignores unavailable occupancy"] = function()
+    local ctx = context({ availableMembers = available("two", "three") })
+    local state = Columns.initialState({ "one", "two" }, context())
+    state = Columns.reduce(state, { type = "AvailabilityChanged" }, ctx)
+    state = Columns.reduce(state, { type = "Admit", memberId = "three" }, ctx)
+    assert(deepEqual(state.stacks[1].members, { "two" }))
+    assert(deepEqual(state.stacks[2].members, { "one", "three" }))
+    equal(state.activeStack, 2)
+    assertValid(state, { "one", "two", "three" }, ctx)
+  end,
+
+  ["COL-005 WIN-004: removal splits available survivors, not the newest minimized member"] = function()
+    local state = Columns.initialState({ "one", "two", "hidden", "three" }, context())
+    local ctx = context({ availableMembers = available("one", "two") })
+    state = Columns.reduce(state, { type = "Remove", memberId = "three" }, ctx)
+    assert(deepEqual(state.stacks[1].members, { "one", "hidden" }))
+    assert(deepEqual(state.stacks[2].members, { "two" }))
+    assertValid(state, { "one", "two", "hidden" }, ctx)
   end,
 
   ["COL-005: permanent-empty removal re-splits two or more surviving windows"] = function()
+    local ctx = context({ availableMembers = available("one", "two") })
     local state = Columns.initialState({ "one", "two", "three" }, context())
-    state = Columns.reduce(state, { type = "Remove", memberId = "three" }, context())
+    state = Columns.reduce(state, { type = "Remove", memberId = "three" }, ctx)
     equal(#state.stacks, 2)
     assert(deepEqual(state.stacks[1].members, { "one" }))
     assert(deepEqual(state.stacks[2].members, { "two" }))
@@ -145,7 +165,7 @@ return {
   ["COL-005 FOCUS-004: removing sole focused column member keeps that physical column active after re-split"] = function()
     local state = Columns.initialState({ "one", "two", "three" }, context())
     equal(state.activeStack, 2)
-    state = Columns.reduce(state, { type = "Remove", memberId = "three" }, context())
+    state = Columns.reduce(state, { type = "Remove", memberId = "three" }, context({ availableMembers = available("one", "two") }))
     equal(#state.stacks, 2)
     equal(state.activeStack, 2)
     equal(state.stacks[2].selectedId, "two")

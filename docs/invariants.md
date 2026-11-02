@@ -64,15 +64,15 @@ An excluded window is outside layout membership, chooser results, and managed fo
 
 ### WIN-002 — Stable order
 
-Focus, z-order, Space activation, snapshots, reflow, title changes, and availability changes MUST NOT reorder a stack.
+Focus, z-order, Space activation, snapshots, reflow, and title changes MUST NOT reorder a stack. Availability changes preserve survivor order except for the visible-column normalization required by COL-004.
 
 ### WIN-003 — Admission order
 
-A newly created or post-start discovered window appends according to the active layout's admission policy and receives managed selection/focus intent. Cold-bootstrap discovery appends without requesting focus merely because it was discovered; actual managed focus determines bootstrap selection as specified by COL-009. Only explicit structural commands may otherwise change layout order/grouping.
+A newly created or post-start discovered window appends according to the active layout's admission policy and receives managed selection/focus intent. Cold-bootstrap discovery appends without requesting focus merely because it was discovered; actual managed focus determines bootstrap selection as specified by COL-009. Only explicit structural commands and COL-004/COL-005 visible-column normalization may otherwise change layout order/grouping.
 
 ### WIN-004 — Temporary unavailability
 
-Minimizing a window, hiding its application, or manually native-fullscreening an admitted window MUST retain its layout membership and exact stable slot.
+Minimizing a window, hiding its application, or manually native-fullscreening an admitted window MUST retain its managed membership. Unavailable members retain their assignments; available survivors may change columns under COL-004. Restore MUST NOT undo that normalization.
 
 ### WIN-005 — Destruction
 
@@ -118,23 +118,23 @@ Stack layout has one stable stack. Every currently available member receives the
 
 ### COL-001 — Column structure
 
-Columns layout owns at most two non-empty durable stacks. It MUST NOT retain an empty durable stack merely as a positional placeholder.
+Columns means visible columns: at most two stacks with available members. Retained unavailable members are managed windows, not hidden columns, and MUST NOT count as an occupied column for admission or prevent normalization. Durable assignment stacks MUST remain non-empty.
 
 ### COL-002 — First split
 
-When only one occupied column exists, the next newly admitted window MUST normalize the existing stack to the physical left and create/focus a right stack. This applies even when the existing stack contains more than one member.
+When only one visible column exists, the next newly admitted available window MUST normalize the existing visible stack to the physical left and create/focus a right stack. This applies even when the existing stack contains more than one member.
 
 ### COL-003 — Normal admission
 
-When both columns exist, a new window appends to the currently active column and receives selection/focus intent.
+When both visible columns exist, a new window appends to the currently active column and receives selection/focus intent.
 
-### COL-004 — Temporary empty projection
+### COL-004 — Availability-driven column loss
 
-If one column has no currently available members only because its durable members are minimized/hidden/fullscreen, the available column projects full width. Restoring availability recreates the split without state reassignment.
+When minimizing, app hiding, or native fullscreen leaves a column with no available members, apply the same visible-survivor normalization as COL-005: with at least two available survivors, keep all but the newest available survivor on the physical left and move the newest to the right, preserving survivor order. With one available survivor, project one full-width column; the next available admission follows COL-002. With none, project no columns. Unavailable windows remain managed with their retained assignments and lifecycle flags; they do not reserve a hidden column. Restore uses the resulting assignments and MUST NOT move normalized survivors back. Focused minimize recovery stays on the physical source side when normalization supplies a replacement; background availability changes MUST NOT request focus. This user-approved correction (2026-11-01) replaces exact-slot restoration of available survivors.
 
 ### COL-005 — Permanent empty column
 
-Destroying or cross-Space-moving the last durable member removes that column. If at least two durable windows survive in the other column, columns immediately normalizes them back to two non-empty physical columns by retaining their order, keeping all but the newest on the left, and moving the newest to the right. With only one survivor, one column remains and the next admission follows COL-002. If the destroyed window had managed focus, recovery remains on its physical source column when that column has or receives a replacement; it selects the most recently confirmed focused available survivor in that column, falling back to the last available member in stable order when no survivor has focus history. It MUST NOT jump to the other column merely because macOS reported a transient fallback focus first.
+Destroying or cross-Space-moving the last durable member removes that column. If at least two available windows survive in the other column, columns immediately normalizes them back to two visible physical columns by retaining their order, keeping all but the newest available member on the left, and moving the newest available member to the right. With only one available survivor, one visible column remains and the next admission follows COL-002. If the destroyed window had managed focus, recovery remains on its physical source column when that column has or receives a replacement; it selects the most recently confirmed focused available survivor in that column, falling back to the last available member in stable order when no survivor has focus history. It MUST NOT jump to the other column merely because macOS reported a transient fallback focus first.
 
 ### COL-006 — Move between columns
 

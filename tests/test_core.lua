@@ -50,6 +50,67 @@ local function frames(intents)
 end
 
 return {
+  ["COL-004 COL-005 LIFE-001 FOCUS-004 STATE-002: minimizing sole right member re-splits before effects, restore and admission keep visible columns"] = function()
+    local observed, core
+    core = new(function(intents) observed = intents end)
+    for _, id in ipairs({ "A", "B", "C" }) do core:submit(bootstrapReady(id)) end
+    core:submit({ type = "ActualFocusChanged", id = "C" })
+    core:submit({ type = "CycleLayout" })
+    assert(core:submit({ type = "WindowMinimized", id = "C" }))
+    local layout = core:state().coordinators["space-1"].layouts.columns
+    equal(table.concat(layout.stacks[1].members, ","), "A")
+    equal(table.concat(layout.stacks[2].members, ","), "C,B")
+    equal(layout.activeStack, 2)
+    equal(core:state().manager.focus.desiredBySpace["space-1"].targetId, "B")
+    equal(#frames(observed), 2)
+    for _, frame in ipairs(frames(observed)) do equal(frame.frame.w, 500) end
+    core:submit({ type = "ActualFocusChanged", id = "B" })
+    core:submit({ type = "WindowRestored", id = "C" })
+    core:submit({ type = "ActualFocusChanged", id = "C" })
+    core:submit({ type = "WindowMinimized", id = "C" })
+    equal(#frames(observed), 2)
+    for _, frame in ipairs(frames(observed)) do equal(frame.frame.w, 500) end
+    core:submit(ready("D"))
+    layout = core:state().coordinators["space-1"].layouts.columns
+    equal(table.concat(layout.stacks[2].members, ","), "C,B,D")
+    equal(#frames(observed), 3)
+    for _, frame in ipairs(frames(observed)) do equal(frame.frame.w, 500) end
+    assert(core:state().manager.windows.C.lifecycle.minimized)
+  end,
+
+  ["COL-002 COL-004 LIFE-001: one visible survivor then new admission recreates a split despite retained minimized members"] = function()
+    local observed
+    local core = new(function(intents) observed = intents end)
+    core:submit(bootstrapReady("A")); core:submit(bootstrapReady("B"))
+    core:submit({ type = "ActualFocusChanged", id = "B" }); core:submit({ type = "CycleLayout" })
+    core:submit({ type = "WindowMinimized", id = "B" })
+    equal(#frames(observed), 1); equal(frames(observed)[1].frame.w, 1000)
+    core:submit(ready("C"))
+    equal(#frames(observed), 2)
+    for _, frame in ipairs(frames(observed)) do equal(frame.frame.w, 500) end
+    local layout = core:state().coordinators["space-1"].layouts.columns
+    equal(table.concat(layout.stacks[1].members, ","), "A")
+    equal(table.concat(layout.stacks[2].members, ","), "B,C")
+  end,
+
+  ["COL-004 LIFE-002 FS-002 FOCUS-006: background left column loss preserves actual focus and normalizes newest available survivor right"] = function()
+    for _, event in ipairs({ { type = "ApplicationHidden", pid = 1 }, { type = "WindowEnteredNativeFullscreen", id = "A" }, { type = "WindowMinimized", id = "A" } }) do
+      local observed
+      local core = new(function(intents) observed = intents end)
+      for index, id in ipairs({ "A", "B", "C" }) do core:submit(bootstrapReady(id, index)) end
+      core:submit({ type = "ActualFocusChanged", id = "C" }); core:submit({ type = "CycleLayout" })
+      core:submit({ type = "MoveFocusedToOther", memberId = "B" })
+      core:submit({ type = "ActualFocusChanged", id = "B" })
+      core:submit({ type = "ActualFocusChanged", id = "C" })
+      core:submit(event)
+      local layout = core:state().coordinators["space-1"].layouts.columns
+      equal(table.concat(layout.stacks[1].members, ","), "A,C")
+      equal(table.concat(layout.stacks[2].members, ","), "B")
+      equal(layout.activeStack, 1)
+      equal(#frames(observed), 2)
+      for _, intent in ipairs(observed) do assert(intent.kind ~= "focus") end
+    end
+  end,
   ["COL-006 STATE-002: move effects see complete C,A|B state and split geometry"] = function()
     local checking, observed, core
     core = new(function(intents)
