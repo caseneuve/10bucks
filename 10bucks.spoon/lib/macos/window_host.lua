@@ -689,7 +689,10 @@ function Host:subscribeExistingWindows(callback, bootstrap, attempt)
         timer = self.hs.timer.doAfter(0.1, function()
           if self.discoveryTimer ~= timer then return end
           self.discoveryTimer = nil
-          if self.started and generation == self.generation and self.context == context then
+          local current = self.context
+          if self.started and generation == self.generation and current
+            and current.displayId == context.displayId and current.regularSpaceId == context.regularSpaceId
+            and current.spaceType == context.spaceType then
             self:subscribeExistingWindows(callback, false, attempt + 1)
           end
         end)
@@ -725,7 +728,9 @@ function Host:setContext(context)
   for id, token in pairs(self.readiness) do
     if sameScope then token.context = context else self:_cancelReadiness(id) end
   end
-  if self.discoveryTimer then self.discoveryTimer:stop(); self.discoveryTimer = nil end
+  -- Geometry/duplicate observations on this desktop must not cancel its finite
+  -- discovery attempt. Only departure invalidates the outstanding retry.
+  if not sameScope and self.discoveryTimer then self.discoveryTimer:stop(); self.discoveryTimer = nil end
   self.context = context
   if sameScope and self.validityTarget then self.validityTarget.context = context
   else self:_cancelValidity() end

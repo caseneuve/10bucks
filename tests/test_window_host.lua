@@ -596,6 +596,27 @@ return {
     old = timers[4]; host:stop(); before = hints; old.callback()
     assert(hints == before and old.stopped)
   end,
+  ["DISC-001 DISC-002 PERF-001: same-desktop context refresh preserves entry retry and discovers delayed windows"] = function()
+    local f, app = fake()
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+    local timers, events, exposed = {}, {}, false
+    f.hs.timer = { doAfter = function(_, callback)
+      local timer = { callback = callback, stop = function(self) self.stopped = true end }
+      timers[#timers + 1] = timer; return timer
+    end }
+    f.hs.window.list = function() return exposed and { { kCGWindowNumber = 9, kCGWindowOwnerPID = 7 } } or {} end
+    f.hs.application.applicationForPID = function() return app end
+    host:subscribeExistingWindows(function(event) events[#events + 1] = event end, false)
+    assert(#timers == 1 and #events == 0)
+    for i = 1, 3 do host:setContext({ displayId = "d", regularSpaceId = 9, workArea = { w = i } }) end
+    assert(host.discoveryTimer == timers[1] and not timers[1].stopped, "same-scope observation canceled delayed discovery")
+    exposed = true
+    timers[1].callback()
+    assert(host.handles[9] and #events == 1 and events[1].kind == "ready")
+    assert(not host.discoveryTimer and #timers == 1)
+    host:stop()
+  end,
+
   ["PERF-002 DISC-001: activation scans only hinted unknown owners and never all running applications"] = function()
     local f, app = fake(); local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
     local events = {}

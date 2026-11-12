@@ -146,6 +146,54 @@ byte-identical ignored archive and immutable failed artifacts remain. No permane
 product diagnostics or extra polling. Native source/readiness faults have pure
 coverage, not broad real-app certification.
 
+## Desktop-entry retry cancellation correction — 2026-11-01
+
+**Verified incident:** running frozen commit4bcef66 tracked only one D3 window
+while an independent bounded native lookup resolved additional eligible Finder
+and Chrome windows with no membership. The same process later tracked six D3
+windows after ordinary user desktop use, without reload or corrective effects.
+The startup attempt remained settled/incomplete56 unresolved. Missing membership
+explains ineffective j/k and absence of a split; no captured trace proves the
+original callback sequence or cause of the separately reported keyboard lag.
+
+**Verified source defect:** regular entry schedules at most two100ms retries when
+native exposure is delayed. `Host:setContext` canceled that timer even on a
+same-desktop refresh. `_applyContext` handles such a refresh with reflow, not
+rediscovery. Thus an early incomplete scan plus a duplicate/geometry context
+observation can abort recovery and leave ordinary windows undiscovered until a
+later entry or targeted lifecycle/readiness event. `hs.window.list(true)` is
+onscreen-only (recorded above), so native Space membership alone is insufficient
+to find those windows during entry animation. Startup is a separate best-effort
+path; this correction does not make startup complete.
+
+**Correction:** retain the existing finite entry retry on same-scope observations;
+its callback checks display/regular-Space/type rather than context-table identity.
+Departure and shutdown still cancel, the three-attempt budget is unchanged, and
+no new scan, timer class, polling, or synchronous native work is added. A focused
+regression fails before the change (same-scope refresh canceled retry), passes
+afterward and confirms delayed admission. Existing departure/stop tests pass;
+**360 Lua tests pass**, whitespace clean.
+
+**Native acceptance:** reused owned guest10bucks-run-ft-eaa07ef31097, AX granted,
+Secure Input off, three preexisting ordinary windows. Frozen candidate and two
+owned fixture windows: B omitted from startup inventory, first entry owner hint
+suppressed, same-scope context observation, then native hint restored before the
+original retry. The retry remained owned, admitted B, and independent native
+readback confirmed A-left/B-right split and actual B focus. No test frame/focus
+repair was applied. This controlled event-boundary test proves the corrected
+mechanism, not the exact historical host callback sequence or native animation.
+No keyboard/latency certification or lag-fix claim.
+
+First run setup failed because startup's actual-focus probe admitted B; original
+failure retained. Second run suppressed only that startup observation to isolate
+the entry retry, and passed. Production bytes unchanged between runs. Both runs:
+fixture quit acknowledged/exit0, mailbox claims absent, candidate/timer stopped,
+validity/discovery resources drained. Final guest retained three preexisting
+windows. Ignored frozen/hash/controller/result artifacts:
+`.pi/d3-retry-freeze-r{1,2}/`, `.pi/d3-retry-r{1,2}.sha256`,
+`.pi/d3-retry-native.lua`, `.pi/d3-retry-native-r{1,2}.json` and
+`.pi/d3-retry-{before,after,final}.log`. No host reload/hotpatch performed.
+
 ## Review and cleanup
 
 327 Lua /66 Python checks, Lua/native syntax, Swift fixture build and whitespace
