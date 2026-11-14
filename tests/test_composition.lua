@@ -901,6 +901,7 @@ return {
       local dead=windows[count]:id(); local lease=ten.host.handles[dead].lease
       assert(mailbox and ten.host.validityTarget.id==dead)
       rows={{token=token,status='invalid',error=-25202}}
+      elements[windows[count]].isValid=function()return false end
       mailbox() -- no window/app callback, no reducer death injection
       local state=ten.core:state()
       assert(not state.manager.windows[dead] and not ten.host.handles[dead])

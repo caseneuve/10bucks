@@ -231,10 +231,38 @@ return {
     assert(host.handles[9])
     rows = {{ token = target.token + 1, status = "invalid", error = -25202 }}; callback()
     assert(host.handles[9])
-    rows = {{ token = target.token, status = "invalid", error = -25202 }}; callback()
+    rows = {{ token = target.token, status = "invalid", error = -25202 }}
+    f.hs.axuielement.windowElement(f.window).isValid = function() return false end
+    callback()
     assert(not host.handles[9] and events[#events].kind == "destroyed" and events[#events].resource == target.lease)
     assert(stops == 0); callback(); host:stop(); assert(stops == 1)
   end,
+  ["STATE-004 WIN-004 LIFE-004: locked session invalidity retains membership and stale mailbox invalidity is reconfirmed after unlock"] = function()
+    local f, app, element = fake(); f.window.isFullScreen = function() return false end
+    local locked, valid, callback, rows = false, true, nil, {}
+    f.hs.caffeinate = { sessionProperties = function() return { CGSSessionScreenIsLocked = locked, kCGSSessionOnConsoleKey = true } end }
+    element.isValid = function() return valid end
+    f.hs.timer = { doEvery = function(_, cb) callback = cb; return { stop = function() end } end }
+    local worker = { set = function() end, poll = function() return rows end, stop = function() end }
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }, nil, nil, { create = function() return worker end }):start()
+    host:subscribeExistingWindows(function() end);host:subscribeWindow(f.window, function() end)
+    host:enableManaged(9, host.handles[9].lease)
+    local destroyed = 0
+    host.windowCallback = function(event) if event.kind == "destroyed" then destroyed = destroyed + 1 end end
+    f.focusedWindow = f.window;host:observeFocus()
+    local token = host.validityTarget.token
+    locked, valid = true, false
+    rows = {{ token = token, status = "invalid", error = -25202 }}
+    callback();host:observeFocus()
+    assert(destroyed == 0 and host.handles[9])
+    locked, valid = false, true
+    callback() -- queued lock-era result delivered after unlock
+    assert(destroyed == 0 and host.handles[9])
+    valid = false;callback()
+    assert(destroyed == 1, "real unlocked destruction must still retire")
+    host:stop()
+  end,
+
   ["LIFE-004 FOCUS-004: mailbox rejects reentrant focus scope lease stop and unavailable targets"] = function()
     for _,mode in ipairs({ "focus", "scope", "lease", "stop", "minimized", "hidden", "fullscreen" }) do
       local f, app = fake(); f.window.isFullScreen = function() return false end

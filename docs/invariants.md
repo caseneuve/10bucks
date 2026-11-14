@@ -42,7 +42,7 @@ Absence from `_orderedwinids()`, visible/eligible/onscreen windows, the active S
 
 ### STATE-005 — Uncertainty is non-destructive
 
-When window liveness is uncertain, 10bucks MUST retain the member rather than corrupt a potentially live layout. Permanent removal requires an authoritative event or POC-validated targeted check.
+When window liveness is uncertain, 10bucks MUST retain the member rather than corrupt a potentially live layout. Permanent removal requires an authoritative event or POC-validated targeted check. AX invalidity while the session is locked/off-console is not destruction evidence: exact window handles may revive after unlock. Delayed worker invalidity MUST be reconfirmed on the retained exact resource in the current usable session before removal (POC-027).
 
 ### STATE-006 — Projection purity
 

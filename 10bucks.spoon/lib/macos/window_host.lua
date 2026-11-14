@@ -878,10 +878,10 @@ function Host:_trackValidity()
     for _, row in ipairs(rows) do
       if row.token == target.token and row.status == "invalid" and row.error == -25202
         and self:_validityCurrent(target) and self.windowCallback then
-        self:_cancelValidity()
-        self:_record("asynchronousValidityRemovals")
-        self.windowCallback({ kind = "destroyed", id = target.id, resource = target.lease,
-          observationOrigin = "asynchronousValidity", presentationResource = self.presentationLease })
+        -- A mailbox result may have been sampled while the screen was locked.
+        -- Reconfirm the exact resource in the current usable session before
+        -- treating it as destruction; lock-invalid AX handles can revive.
+        self:_checkWindowValidity(target.id, target.record)
         return
       end
     end
@@ -952,16 +952,25 @@ function Host:_checkPreviousFocus()
   if record and record.handle == self.presentationWindow then self:_checkWindowValidity(id, record) end
 end
 
+function Host:_sessionAllowsValidity()
+  local caffeinate = self.hs.caffeinate
+  if not caffeinate or type(caffeinate.sessionProperties) ~= "function" then return true end
+  local properties = moduleCall(caffeinate.sessionProperties)
+  return type(properties) == "table" and properties.CGSSessionScreenIsLocked ~= true
+    and properties.kCGSSessionOnConsoleKey == true
+end
+
 function Host:_checkWindowValidity(id, record)
   if not self.windowCallback or not record or self.handles[id] ~= record or not record.active
     or record.checkingValidity or not self.managedObservers[id] then return end
   local element = record.element
-  if not element or type(element.isValid) ~= "function" then return end
+  if not element or type(element.isValid) ~= "function" or not self:_sessionAllowsValidity() then return end
   self:_record("targetedValidityQueries")
   -- Only the API's explicit InvalidUIElement result is removal evidence.
   -- nil/errors, hidden/minimized status and snapshot absence retain uncertainty.
   local ok, valid = pcall(element.isValid, element)
   if not ok or valid ~= false then return ok and valid == true end
+  if not self:_sessionAllowsValidity() then return end
   record.checkingValidity = true
   local emitted, failure = pcall(self.windowCallback, { kind = "destroyed", id = id,
     resource = record.lease, presentationResource = self.presentationId == id and self.presentationWindow == record.handle and self.presentationLease or nil })
