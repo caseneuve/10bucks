@@ -854,10 +854,18 @@ return {
     assert(ten:_submitCommand(previous))
     assert(f.focuses == focuses + 1 and ten.focusHistory:pending().requireActiveSpace)
     assert(ten:_submitCommand(previous) and f.focuses == focuses + 1 and f.opens == 1)
+    for _, command in ipairs({ { type = 'FocusRegularPosition', position = 2 },
+      { type = 'FocusRelativeRegular', delta = 1 }, { type = 'CreateRegularDesktop' } }) do
+      local accepted, reason = ten:_submitCommand(command)
+      assert(not accepted and reason == 'desktop-switch-pending')
+      assert(f.opens == 1 and not ten.workspace:state().switch.inFlight and ten.focusHistory:pending().requireActiveSpace)
+    end
     assert(ten.workspace:state().confirmedSpaceId == 'space' and ten.workspace:state().previousSpaceId == 'full')
     f.activeSpace = 'full'; f.contextWatcher.callback()
     assert(not ten.focusHistory:pending() and ten.workspace:state().confirmedSpaceId == 'full'
       and ten.workspace:state().previousSpaceId == 'space')
+    assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 }))
+    f:confirm('next-space')
     ten:stop()
   end,
   ["FOCUS-005 CMD-005: desktop command cancels already-issued global previous authority without native reversal"] = function()

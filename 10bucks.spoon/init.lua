@@ -524,7 +524,10 @@ end
 function Tenbucks:_focusPreviousFullscreen(spaceId)
   if self.workspace:state().switch.inFlight then return false, "desktop-switch-pending" end
   local pending = self.focusHistory:pending()
-  if pending and pending.requireActiveSpace and pending.spaceId == spaceId then return true end
+  if pending and pending.requireActiveSpace then
+    if pending.spaceId == spaceId then return true end
+    return false, "desktop-switch-pending"
+  end
   -- Confirmed fullscreen readiness also retains a route for windows with a
   -- saved regular placement. Never discover or restore a window for history.
   for _, record in ipairs(self.focusHistory:unplacedTargets()) do
@@ -567,6 +570,8 @@ function Tenbucks:_submitCommand(command)
           if not regular then return self:_focusPreviousFullscreen(state.previousSpaceId) end
         end
       end
+      local pending = self.focusHistory:pending()
+      if pending and pending.requireActiveSpace then return false, "desktop-switch-pending" end
       self:_cancelManagedFocus()
       if not previous then self:_contextChanged(Context.snapshot(hs, self.config.builtInDisplayUUID)) end
       return self.workspace:submit(command)
