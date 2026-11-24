@@ -126,7 +126,7 @@ ManagerState = {
   displays = {
     [displayId] = {
       activeRegularSpaceId = 1234,
-      previousRegularSpaceId = 5678,
+      previousSpaceId = 5678,
     },
   },
 }
@@ -150,7 +150,7 @@ Durable:
 - per-Space membership and active layout
 - layout-owned stable order, grouping, selection, and divider
 - managed focus history
-- current/previous confirmed regular desktop; confirmed fullscreen departure makes the departed regular desktop the previous target without adding fullscreen to regular history
+- current/previous distinct confirmed native Space (regular or fullscreen), with the last confirmed regular desktop retained for cyclic navigation
 
 Ephemeral adapter data:
 
@@ -221,7 +221,7 @@ Keyboard concurrency is explicit:
 | Stack/group focus (`j/k/h/l`) | Every keypress updates committed desired selection; only the newest focus request remains authoritative. |
 | Relative desktop focus (`n/p`) | Advance from the pending desired destination, not the last confirmed desktop. Thus `n,n` from 1 desires 3 and `n,p` desires 1. Native switching remains serialized and intermediate destinations coalesce. |
 | Numbered desktop focus | Replace the pending desired destination with that absolute existing position. |
-| Previous regular desktop (`0`) | Resolve from confirmed regular-desktop history, including the regular desktop most recently departed into fullscreen. Fullscreen identities remain excluded. Repeated invocation before confirmation targets the same previous desktop. Native switching remains serialized. |
+| Previous desktop (`0`) | Return to the last distinct confirmed native Space, regular or fullscreen (SPACE-005). Repeated invocation before confirmation targets the same destination. |
 | Chooser/previous-window focus | The latest explicit target wins. Repeated previous-window before actual focus confirmation resolves from unchanged actual history and therefore targets the same previous window. |
 | Create/delete Space | Reject another structural mutation and any command that would change regular Space until completion/failure. Same-Space layout/focus commands remain available. |
 | Toggle fullscreen for the same target | Reject another toggle until completion/failure. |
@@ -413,7 +413,7 @@ not part of the current implementation queue:
 - open chooser
 - toggle native fullscreen for a managed target
 - focus numbered regular desktop 1–9
-- toggle previous confirmed regular desktop (`0`)
+- toggle previous confirmed native desktop (`0`)
 - **Deferred:** move focused managed regular window to an existing regular desktop without following
 - cyclic previous/next regular desktop
 - create next regular desktop
