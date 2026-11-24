@@ -197,19 +197,22 @@ end
 
 -- Candidate lifetime is independent of provisional focus leases. A failed
 -- focus probe may forget its handle without cancelling this creation token.
-function Host:_creationReady(window, origin, callback)
+function Host:_creationReady(window, origin, callback, waitForCreation)
   local id, app = call(window, "id"), call(window, "application")
   if id == nil then return end
   local old = self.readiness[id]
   if old and old.window == window and old.app == app then
-    if origin == "created" then old.origin = "created" end
+    if origin == "created" then
+      old.origin = "created"
+      if old.onCreation then old.onCreation() end
+    end
     return
   end
   self:_cancelReadiness(id)
   local record = self:_acceptApp(app)
   if not record then return end
   local token = { id = id, window = window, app = app, pid = record.pid, appRecord = record,
-    generation = self.generation, context = self.context, attempts = 0, origin = origin,
+    generation = self.generation, context = self.context, attempts = waitForCreation and 1 or 0, origin = origin,
     element = moduleCall(self.hs.axuielement.windowElement, window) }
   self.readiness[id] = token
   local attempt
@@ -220,25 +223,14 @@ function Host:_creationReady(window, origin, callback)
       error(err, 0)
     end
   end
-  attempt = function()
-    if not self:_readinessCurrent(token) then
-      if self.readiness[id] == token then self:_cancelReadiness(id) end
-      return
-    end
-    token.attempts = token.attempts + 1
-    local outcome = self:_ready(window, token.origin, callback, nil, token)
-    if self.readiness[id] ~= token then return end
-    if not self:_readinessCurrent(token) then
-      if self.readiness[id] == token then self:_cancelReadiness(id) end
-      return
-    end
-    if outcome ~= "uncertain" or token.attempts >= 3 or not (self.hs.timer and self.hs.timer.doAfter) then
+  local function schedule(awaitCreation)
+    if token.attempts >= 3 or not (self.hs.timer and self.hs.timer.doAfter) then
       self:_cancelReadiness(id); return
     end
     local timer, attemptNumber = nil, token.attempts
     timer = self.hs.timer.doAfter(0.1, function()
       if self.readiness[id] ~= token or token.timer ~= timer or token.attempts ~= attemptNumber then return end
-      token.timer = nil
+      token.timer, token.onCreation = nil, nil
       guardedAttempt()
     end)
     if not timer then error("creation readiness timer allocation failed", 0) end
@@ -248,8 +240,28 @@ function Host:_creationReady(window, origin, callback)
       return
     end
     token.timer = timer
+    if awaitCreation then
+      token.onCreation = function()
+        token.timer, token.onCreation = nil, nil
+        pcall(timer.stop, timer)
+        guardedAttempt()
+      end
+    end
   end
-  guardedAttempt()
+  attempt = function()
+    if not self:_readinessCurrent(token) then
+      if self.readiness[id] == token then self:_cancelReadiness(id) end
+      return
+    end
+    token.attempts = token.attempts + 1
+    local outcome = self:_ready(window, token.origin, callback, nil, token)
+    if self.readiness[id] ~= token then return end
+    if not self:_readinessCurrent(token) or (outcome ~= "uncertain" and outcome ~= "await-creation") then
+      self:_cancelReadiness(id); return
+    end
+    schedule(outcome == "await-creation")
+  end
+  if waitForCreation then schedule(true) else guardedAttempt() end
 end
 
 function Host:_ready(window, origin, callback, membershipSet, token)
@@ -275,11 +287,13 @@ function Host:_ready(window, origin, callback, membershipSet, token)
     -- No native operation between the pure authority check and publication.
   end
   -- Publication may defer; keep the same candidate identity and retry budget.
-  local ok, accepted = pcall(callback, { kind = "ready", metadata = metadata, handle = window, resource = record.lease, appResource = record.appLease })
-  if token and accepted ~= "uncertain" and self.readiness[id] == token then self:_cancelReadiness(id) end
+  local ok, accepted = pcall(callback, { kind = "ready", metadata = metadata, handle = window, resource = record.lease,
+    appResource = record.appLease, creationGraceElapsed = token and token.attempts > 1 })
+  local deferred = accepted == "uncertain" or accepted == "await-creation"
+  if token and not deferred and self.readiness[id] == token then self:_cancelReadiness(id) end
   if not ok then error(accepted, 0) end
-  if accepted == "excluded" then return "excluded" end
-  return accepted == "uncertain" and "uncertain" or (accepted == false and "rejected" or "ready")
+  if deferred or accepted == "excluded" then return accepted end
+  return accepted == false and "rejected" or "ready"
 end
 
 function Host:subscribeWindow(window, callback)
@@ -715,7 +729,12 @@ function Host:probeReadiness(id, callback)
     local admitted = callback(metadata, record.handle, record.lease, record.appLease)
     -- Admission does not change MRU. Observe again only after the independent
     -- fullscreen readiness transaction, guarding against intervening focus.
-    if admitted == true and spaceType == "fullscreen" then self:observeFocus(id) end
+    if admitted == true and spaceType == "fullscreen" then self:observeFocus(id)
+    elseif admitted == "await-creation" and self.windowCallback and self:current(id, record.lease, record.appLease, record.pid) then
+      -- Native focus can precede AXWindowCreated. Only an unknown window
+      -- matching the create rule gets this one initial readiness grace.
+      self:_creationReady(record.handle, "targetedReadiness", self.windowCallback, true)
+    end
   else callback(nil, nil, record and record.lease, record and record.appLease) end
   return { detach = function() end }
 end
@@ -1018,6 +1037,31 @@ function Host:observeFocus(expectedId)
     resource = record and record.lease, appResource = appRecord and appRecord.lease, presentationResource = self.presentationLease })
   self:_trackValidity()
   return true
+end
+
+function Host:requestCreationFullscreen(event, fallback)
+  local id, pid = event.id, event.application.pid
+  local record = self.handles[id]
+  if not record or not record.subscription then return end
+  local function current()
+    return self.handles[id] == record and self:current(id, event.resource, event.appResource, pid)
+  end
+  if not current() then return end
+  local element, window = record.element, record.handle
+  local owner, kind = self:_owner(id)
+  if owner ~= event.spaceId or kind ~= "user" or call(window, "id") ~= id
+    or call(window, "isFullScreen") ~= false or call(window, "isMinimized") ~= false
+    or call(element, "isValid") ~= true or call(element, "isAttributeSettable", "AXFullScreen") ~= true
+    or not current() then return end
+  -- The setter acknowledges the write, not the Space transition. The resize
+  -- and Space/focus boundaries can confirm early; the deadline only re-reads.
+  local timer = moduleCall(self.hs.timer.doAfter, 2, function() if current() then fallback() end end)
+  if not timer then return end
+  local deadline = self:_own(timer)
+  if not current() or not call(element, "setAttributeValue", "AXFullScreen", true) then
+    deadline.detach(); return
+  end
+  return deadline
 end
 
 function Host:unminimize(window, lease, spaceId, authorized)

@@ -64,7 +64,7 @@ function Config.build(override)
     assert(type(override.hotkeys) == "table", "hotkeys must be a table")
     for name, binding in pairs(override.hotkeys) do assert(config.hotkeys[name] ~= nil, "10bucks Canary A does not support hotkeys." .. tostring(name)); config.hotkeys[name] = copy(binding) end
   end
-  -- RULE-001: deliberately exact, data-only schema; fullscreen effects are deferred.
+  -- RULE-001: deliberately exact, data-only schema.
   if override.rules ~= nil then
     assert(type(override.rules) == "table" and getmetatable(override.rules) == nil, "config.rules must be a plain array")
     for _, rule in pairs(override.rules) do
@@ -77,8 +77,8 @@ function Config.build(override)
   for _, rule in ipairs(config.rules) do
     assert(type(rule) == "table", "rule must be a table")
     for key in pairs(rule) do assert(key == "match" or key == "action", "unsupported rule field") end
-    assert(rule.action ~= "nativeFullscreenOnCreate", "nativeFullscreenOnCreate is unsupported until fullscreen effects are implemented")
-    assert(rule.action == "manage" or rule.action == "exclude", "rule action must be manage or exclude")
+    assert(rule.action == "manage" or rule.action == "exclude" or rule.action == "nativeFullscreenOnCreate",
+      "rule action must be manage, exclude, or nativeFullscreenOnCreate")
     assert(type(rule.match) == "table", "rule.match must be a table")
     for field, value in pairs(rule.match) do
       assert((field == "bundleID" or field == "title" or field == "titlePrefix") and type(value) == "string", "rule.match supports bundleID/title exact strings and literal titlePrefix only")

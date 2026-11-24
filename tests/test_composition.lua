@@ -195,7 +195,108 @@ local function chooserUI()
   return n
 end
 
+local function fullscreenCreationFixture(bootstrap)
+  local f, element = fakeHs()
+  if not bootstrap then f.members = {} end
+  local timers = {}
+  hs.timer.doAfter = function(delay, callback)
+    local timer = { callback = callback, stop = function(self) self.stopped = true end }
+    timers[delay] = timer
+    return timer
+  end
+  hs.spaces.spaceType = function(id) return id == "full" and "fullscreen" or "user" end
+  local ten = load(f):configure({ builtInDisplayUUID = "built-in", rules = {
+    { match = { bundleID = "app" }, action = "nativeFullscreenOnCreate" },
+    { match = {}, action = "exclude" },
+  } }):start()
+  f.fullscreenWrites = 0
+  element.setAttributeValue = function(self, attribute, enabled)
+    assert(attribute == "AXFullScreen" and enabled == true)
+    assert(not ten.core:state().manager.windows[9] and not ten.handleRegistry:target(9))
+    f.fullscreenWrites = f.fullscreenWrites + 1
+    -- A nested native callback can still see the old regular ownership.
+    ten.host:observeFocus()
+    assert(not ten.core:state().manager.windows[9] and f.frames == 0)
+    if not f.rejectFullscreen then return self end
+  end
+  return f, ten, timers
+end
+
 return {
+  ["FS-004 RULE-004: first-match creation wins over early focus without tiling, and exit uses actual regular owner"] = function()
+    local f, ten, timers = fullscreenCreationFixture(false)
+    local source = ten.core
+    f.focusedWindow = f.window
+    f.appWatcher.callback(f.window, "AXFocusedWindowChanged")
+    assert(timers[0.1] and not source:state().manager.windows[9] and f.fullscreenWrites == 0)
+    f.appWatcher.callback(f.window, "AXWindowCreated")
+    assert(timers[0.1].stopped)
+    timers[0.1].callback() -- stale grace callback is inert
+    assert(f.fullscreenWrites == 1 and timers[2] and not timers[2].stopped)
+    f.appWatcher.callback(f.window, "AXWindowCreated")
+    assert(f.fullscreenWrites == 1 and not source:state().manager.windows[9] and f.frames == 0)
+    f.fullscreen, f.owners = true, {}
+    f.windowWatcher.callback(nil, "AXWindowResized")
+    assert(not ten.focusHistory:unplacedTarget(9) and not timers[2].stopped)
+    f.owners, f.activeSpace = { "full" }, "full"
+    f.topology = { { ManagedSpaceID = "space", type = 0 }, { ManagedSpaceID = "full", type = 4 },
+      { ManagedSpaceID = "next-space", type = 0 } }
+    f.contextWatcher.callback()
+    assert(ten.suspended and ten.focusHistory:unplacedTarget(9) and timers[2].stopped)
+    assert(not source:state().manager.windows[9] and not ten.cores.full and f.frames == 0)
+    f.fullscreen, f.owners, f.activeSpace, f.members = false, { "next-space" }, "next-space", { 9 }
+    f.contextWatcher.callback()
+    f.windowWatcher.callback(nil, "AXWindowResized")
+    f.appWatcher.callback(f.window, "AXWindowCreated")
+    assert(not ten.focusHistory:unplacedTarget(9) and not source:state().manager.windows[9])
+    assert(ten.core:state().manager.windows[9].placementSpaceId == "next-space")
+    assert(f.fullscreenWrites == 1 and f.frames > 0)
+    ten:stop()
+  end,
+  ["FS-004: rejected and unconfirmed writes fall back once to actual regular readiness"] = function()
+    for _, mode in ipairs({ "rejected", "timeout", "destroyed" }) do
+      local f, ten, timers = fullscreenCreationFixture(false)
+      f.rejectFullscreen = mode == "rejected"
+      f.appWatcher.callback(f.window, "AXWindowCreated")
+      assert(timers[2] and f.fullscreenWrites == 1)
+      if mode == "timeout" then
+        assert(not ten.core:state().manager.windows[9] and f.frames == 0)
+        timers[2].callback()
+      elseif mode == "destroyed" then
+        f.windowWatcher.callback(nil, "AXUIElementDestroyed")
+        assert(timers[2].stopped)
+        timers[2].callback() -- queued callback cannot revive a dead lease
+      end
+      assert(timers[2].stopped and not ten.focusHistory:unplacedTarget(9))
+      if mode == "destroyed" then
+        assert(not ten.core:state().manager.windows[9] and f.frames == 0)
+      else
+        f.appWatcher.callback(f.window, "AXWindowCreated")
+        assert(ten.core:state().manager.windows[9] and f.frames > 0 and f.fullscreenWrites == 1)
+      end
+      ten:stop()
+    end
+  end,
+  ["RULE-004: bootstrap, visits, and readiness after grace adopt normally despite late creation notifications"] = function()
+    for _, mode in ipairs({ "bootstrap", "visit", "late" }) do
+      local f, ten, timers = fullscreenCreationFixture(mode == "bootstrap")
+      if mode == "visit" then
+        f.owners, f.activeSpace, f.members = { "next-space" }, "next-space", { 9 }
+        f.ownerRows = { { kCGWindowNumber = 9, kCGWindowOwnerPID = 8 } }
+        f.contextWatcher.callback()
+        assert(not timers[0.1])
+      elseif mode == "late" then
+        f.focusedWindow = f.window
+        f.appWatcher.callback(f.window, "AXFocusedWindowChanged")
+        assert(not ten.core:state().manager.windows[9])
+        timers[0.1].callback()
+      end
+      assert(ten.core:state().manager.windows[9] and f.frames > 0)
+      f.appWatcher.callback(f.window, "AXWindowCreated")
+      assert(f.fullscreenWrites == 0 and not timers[2] and ten.core:state().manager.windows[9])
+      ten:stop()
+    end
+  end,
   ["CHOOSE-001 CHOOSE-002 DISC-001: best-effort chooser opens confirmed cache while pending or incomplete"] = function()
     local f = fakeHs(); f.members = { 9, 10 }
     local ten = load(f)

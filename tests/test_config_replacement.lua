@@ -51,8 +51,9 @@ return {
     local prefix = { rules = { { match = { titlePrefix = "Utility: " }, action = "exclude" } } }
     assert(Config.build(prefix).rules[1].match.titlePrefix == "Utility: ")
     assert(not pcall(Config.build, { rules = { { match = { titlePrefix = false }, action = "exclude" } } }))
+    local spawn = { match = {}, action = "nativeFullscreenOnCreate" }
+    assert(Config.build({ rules = { spawn } }).rules[1].action == spawn.action)
     for _, rule in ipairs({
-      { match = {}, action = "nativeFullscreenOnCreate" },
       { match = { titlePattern = "Utility.*" }, action = "exclude" },
       { match = { title = false }, action = "manage" },
       { match = {}, action = "exclude", predicate = function() return true end },

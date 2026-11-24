@@ -100,7 +100,7 @@ end
 
 -- RULE-001/002: user rules only narrow generic eligibility. An unavailable
 -- specified field blocks later rules only when this rule could still match.
-function Rules.filter(metadata, rules, generic)
+function Rules.filter(metadata, rules, generic, creationGraceElapsed)
   if generic.action ~= "manage" then return generic end
   for _, rule in ipairs(rules) do
     local mismatch, unknown = false, false
@@ -113,6 +113,17 @@ function Rules.filter(metadata, rules, generic)
     end
     if not mismatch then
       if unknown then return { action = "defer", reason = "unknown-rule-field" } end
+      if rule.action == "nativeFullscreenOnCreate" then
+        -- RULE-004 / FS-004: management is durable; the first readiness may
+        -- additionally request fullscreen, but discovery never does.
+        if metadata.spaceType == "user" and not metadata.nativeFullscreen then
+          if metadata.origin == "targetedReadiness" and not creationGraceElapsed then
+            return { action = "defer", reason = "await-creation" }
+          end
+          if metadata.createdAfterStart then return { action = "manage", createFullscreen = true } end
+        end
+        return { action = "manage" }
+      end
       return { action = rule.action }
     end
   end

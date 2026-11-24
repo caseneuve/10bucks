@@ -83,6 +83,12 @@ function Windows:_retain(id, handle, pid, resource, appResource, generation)
   return subscription, true
 end
 
+local function clearCreationFullscreen(entry)
+  local pending = entry.creationFullscreen
+  entry.creationFullscreen = nil
+  if pending then detach(pending.deadline) end
+end
+
 function Windows:_discardProvisional(id, resource)
   local entry = self.cache[id]
   if entry and entry.resource == resource then return false end
@@ -107,8 +113,10 @@ function Windows:_readyTransaction(observation, generation)
   end
   event.resource, event.appResource = observation.resource, observation.appResource
   -- STATE-002: composition commits the exact lifetime decision before attachment.
-  event.decision = self.native.decide(event)
-  if event.decision.action == "defer" then return "uncertain" end
+  event.decision = self.native.decide(event, observation.creationGraceElapsed)
+  if event.decision.action == "defer" then
+    return event.decision.reason == "await-creation" and "await-creation" or "uncertain"
+  end
   local retained, created = nil, false
   if observation.handle ~= nil then
     retained, created = self:_retain(event.id, observation.handle, event.application.pid, observation.resource, observation.appResource, generation)
@@ -138,6 +146,26 @@ function Windows:_readyTransaction(observation, generation)
     if fullscreenChanged then
       self:_probe(event.id, generation, true)
       return false
+    end
+    -- FS-004: no membership or effects from regular readiness while a
+    -- creation request is unsettled. Confirmed fullscreen needs no slot.
+    if entry.creationFullscreen then
+      if event.metadata.spaceType ~= "fullscreen" then return false end
+      clearCreationFullscreen(entry)
+    elseif event.decision.createFullscreen then
+      local pending = {}
+      entry.creationFullscreen = pending
+      local function fallback()
+        if not self:_active(generation) or self.cache[event.id] ~= entry
+          or entry.creationFullscreen ~= pending then return end
+        clearCreationFullscreen(entry)
+        self:_probe(event.id, generation, true)
+      end
+      local deadline = self.native.requestCreationFullscreen(event, fallback)
+      if entry.creationFullscreen ~= pending then detach(deadline)
+      elseif deadline then pending.deadline = deadline
+      else fallback() end
+      return false -- never publish the pre-request ownership snapshot
     end
     entry.managed = event.decision.action == "manage"
   end
@@ -212,6 +240,7 @@ function Windows:_application(observation, generation)
     local ok, err = pcall(self._emit, self, event)
     for id, entry in pairs(self.cache) do
       if entry.pid == observation.pid and entry.appResource == observation.resource then
+        clearCreationFullscreen(entry)
         detach(entry.subscription); self.cache[id] = nil
       end
     end
@@ -241,7 +270,10 @@ function Windows:_window(observation, generation)
       applicationPid = observation.applicationPid, resource = observation.resource,
       appResource = observation.appResource, presentationResource = observation.presentationResource,
       nativeFullscreen = observation.nativeFullscreen == true })
-    if observation.id ~= nil then self:_probe(observation.id, generation) end
+    if observation.id ~= nil then
+      local entry = self.cache[observation.id]
+      self:_probe(observation.id, generation, entry and entry.creationFullscreen ~= nil)
+    end
     return
   end
   if observation.kind == "destroyed" and validId(observation.id) then
@@ -252,7 +284,8 @@ function Windows:_window(observation, generation)
     local ok, err = pcall(self._emit, self, event)
     -- Sink reduction/routing happens synchronously above. Release is protected
     -- even if that sink rejects the fact.
-    if entry then detach(entry.subscription); self.cache[observation.id] = nil end
+    clearCreationFullscreen(entry)
+    detach(entry.subscription); self.cache[observation.id] = nil
     if self.native.releaseWindow then self.native.releaseWindow(observation.id, observation.resource) end
     if not ok then error(err, 0) end
     return
@@ -266,6 +299,10 @@ function Windows:_window(observation, generation)
       local field = (observation.kind == "minimized" or observation.kind == "restored") and "minimized" or "nativeFullscreen"
       entry.availability = entry.availability or {}
       entry.availability[field] = observation.kind == "minimized" or observation.kind == "enteredNativeFullscreen"
+      return
+    end
+    if entry.creationFullscreen and observation.kind == "enteredNativeFullscreen" then
+      self:_probe(observation.id, generation, true)
       return
     end
     self:_emit({ type = types[observation.kind], id = observation.id, resource = observation.resource,
@@ -317,7 +354,10 @@ function Windows:stop()
   self.started = false
   self.generation = self.generation + 1
   for _, subscription in ipairs(self.subscriptions) do detach(subscription) end
-  for _, entry in pairs(self.cache) do detach(entry.subscription) end
+  for _, entry in pairs(self.cache) do
+    clearCreationFullscreen(entry)
+    detach(entry.subscription)
+  end
   for subscription in pairs(self.probeSubscriptions) do detach(subscription) end
   self.subscriptions, self.probeSubscriptions, self.probing, self.cache = {}, {}, {}, {}
   return self

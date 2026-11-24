@@ -625,10 +625,11 @@ function Tenbucks:_startHost(context)
       probeReadiness = function(id, callback) return host:probeReadiness(id, callback) end,
       releaseWindow = function(id, lease) return host:releaseWindow(id, lease) end,
       releaseApplication = function(pid, lease) return host:releaseApplication(pid, lease) end,
-      decide = function(event)
+      requestCreationFullscreen = function(...) return host:requestCreationFullscreen(...) end,
+      decide = function(event, creationGraceElapsed)
         local prior = Rules.action(records, event.id, event.resource, event.appResource, event.application.pid)
         if records[event.id] and not prior then return { action = "defer", reason = "conflicting-resource" } end
-        event.decision = prior and { action = prior } or Rules.filter(event.metadata, self.config.rules, event.decision)
+        event.decision = prior and { action = prior } or Rules.filter(event.metadata, self.config.rules, event.decision, creationGraceElapsed)
         records = Rules.reduce(records, event)
         return event.decision
       end,
