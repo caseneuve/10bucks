@@ -499,6 +499,7 @@ local function sample()
             d.fullscreenNoPlacement=not placed and unplaced~=nil and route~=nil and record~=nil and record.active
                 and record.lease==route.lease and record.handle==s.windows.A and record.element==s.axes.A
                 and record.pid==s.ownerPids.A and unplaced.target.spaceId==route.spaceId
+            d.fullscreenExcludedOwner=s.excludeFullscreenOwner and not placed and unplaced==nil and route==nil or nil
         end
         if d.visible then
             for i=1,6 do -- five owned aliases plus an overflow sentinel
@@ -1094,7 +1095,8 @@ bootstrap=function()
     local config={builtInDisplayUUID=s.screen:getUUID(),canaryInstrumentation=true}
     if s.managedWindowChooser then
         if not s.coldStart then
-            config.rules={{match={bundleID='dev.10bucks.functional-fixture',title='10bucks fixture B'},action='exclude'}}
+            config.rules={{match={bundleID='dev.10bucks.functional-fixture',
+                title=s.excludeFullscreenOwner and '10bucks fixture A' or '10bucks fixture B'},action='exclude'}}
         end
         s.chooserCompletions={}; s.chooserMeasurements={}
         s.chooserSelectOriginal=s.candidate._chooseWindow
@@ -1371,8 +1373,9 @@ bootstrap=function()
     end
     local _,unknown=candidateSnapshot()
     if s.fullscreenChooser then
-        assert(s.candidate.suspended and s.candidate.focusHistory:unplacedTarget(nativeNumber('A')),
-            'independent_fullscreen_admission_required')
+        local admitted=s.candidate.focusHistory:unplacedTarget(nativeNumber('A'))~=nil
+        assert(s.candidate.suspended and admitted~=s.excludeFullscreenOwner,
+            'fullscreen_admission_disagrees_with_test_rule')
     else
         assert(s.candidate.context and s.candidate.context.regularSpaceId~=nil
             and not s.candidate.suspended,'regular_space_required')
@@ -1458,6 +1461,7 @@ function M.start(o)
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
         columnMovement=o.columnMovement==true,closeInvestigation=o.closeRecoveryInvestigation==true,coldStart=o.coldStart==true,fullscreenChooser=o.fullscreenChooser==true,managedWindowChooser=o.managedWindowChooser==true,configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
+        excludeFullscreenOwner=o.excludeFullscreenOwner==true,
         initialLayout=o.initialLayout or 'columns',ghosttyEnabled=o.ghostty==true,ownedDisposable=o.ownedDisposable==true,cleanSeedTerminal=o.cleanSeedTerminal==true,originalPointer=copy(hs.mouse.absolutePosition()),
         sequence=0,actionSequence=0,windows={},axes={},byId={},ownerPids={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}

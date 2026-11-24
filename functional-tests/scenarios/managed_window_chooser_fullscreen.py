@@ -5,6 +5,7 @@ The regular scenario separately covers retained placement and hidden/minimized r
 """
 import time
 from scenarios.columns_close_recovery import sampling_gate
+from scenarios.desktop_switching import trace_check
 from scenarios.managed_window_chooser import checkpoint
 
 SCENARIO_ID = 'managed-window-chooser-fullscreen'
@@ -47,22 +48,31 @@ def run(driver, *, clock=time.monotonic, sleep=time.sleep):
     check('cleanup owns open fullscreen chooser')
 
 
-def previous_desktop_visit(driver, *, clock=time.monotonic, sleep=time.sleep):
+def previous_desktop_visit(driver, *, excluded=False, clock=time.monotonic, sleep=time.sleep):
     """SPACE-005: visit an already existing fullscreen Space, then toggle 0 twice."""
     driver.preflight()
-    gate = sampling_gate(driver, scenario_id='previous-desktop-fullscreen-visit', clock=clock, sleep=sleep)
+    case = 'excluded-owner' if excluded else 'chooser-visit'
+    gate = sampling_gate(driver, scenario_id='previous-desktop-' + case, clock=clock, sleep=sleep)
     native_a = {'A': {'fullscreen': True, 'minimized': False, 'hidden': False,
                       'identityMatch': True, 'owner': 'F1'}}
     initial_topology = None
 
-    def check(name, desktop, *, previous=None, **kwargs):
+    def check(name, desktop, *, previous=None, fullscreen_return=False, **kwargs):
         expected = checkpoint(['A', 'C'], desktop=desktop, native=native_a, **kwargs)
 
         def matches(o):
             n = o.diagnostics.get('nativeDesktop', {})
             order, types = n.get('order', []), n.get('types', [])
             history = o.diagnostics.get('workspace', {}).get('history', {})
-            return (expected(o) and (previous is None or history == {'current': desktop, 'previous': previous})
+            if fullscreen_return:
+                start = len(last.diagnostics['workspaceTrace'])
+                before = last.diagnostics['instrumentation']['counts'].get('focusRequests', 0)
+                after = o.diagnostics['instrumentation']['counts'].get('focusRequests', 0)
+                if before != after or not trace_check(o, start, ('focusPreviousDesktop',), ('F1',), source='D1'):
+                    return False
+            return (expected(o) and (not excluded or
+                    o.diagnostics.get('chooser', {}).get('fullscreenExcludedOwner') is True)
+                    and (previous is None or history == {'current': desktop, 'previous': previous})
                     and n.get('count') == len(order) == len(types) == 4
                     and n.get('regular') == ['D1', 'D2', 'D3']
                     and set(order) == {'F1', 'D1', 'D2', 'D3'}
@@ -79,6 +89,13 @@ def previous_desktop_visit(driver, *, clock=time.monotonic, sleep=time.sleep):
         driver.hotkey(command)
         return (command, count)
 
+    if excluded:
+        last = check('D1 after leaving existing excluded-owner F1', 'D1', visible=False,
+                     previous='F1', receipt=press('focusDesktop1'))
+        check('one previous returns to exact excluded-owner F1', 'F1', visible=False, focus='A',
+              previous='D1', fullscreen_return=True, receipt=press('focusPreviousDesktop'))
+        return
+
     for target, previous in (('D2', 'F1'), ('D1', 'D2')):
         last = check('native ' + target + ' while A remains fullscreen on F1', target, visible=False,
                      previous=previous, receipt=press('focusDesktop' + target[-1]))
@@ -92,4 +109,5 @@ def previous_desktop_visit(driver, *, clock=time.monotonic, sleep=time.sleep):
     last = check('one previous from F1 returns to native D1', 'D1', visible=False,
                  previous='F1', receipt=press('focusPreviousDesktop'), completion=completions, pending=False)
     check('one previous from D1 returns to existing native F1 and exact focus A', 'F1', visible=False,
-          previous='D1', receipt=press('focusPreviousDesktop'), focus='A', completion=completions, pending=False)
+          previous='D1', fullscreen_return=True, receipt=press('focusPreviousDesktop'), focus='A',
+          completion=completions, pending=False)
