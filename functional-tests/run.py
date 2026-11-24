@@ -53,6 +53,8 @@ def main():
                           help='check previous toggling after an existing fullscreen chooser visit')
     previous.add_argument('--previous-desktop-excluded', action='store_true',
                           help='check return to the existing fullscreen Space of a rule-excluded window')
+    parser.add_argument('--minimized-restoration', action='store_true',
+                        help='check known minimized-window restoration through chooser and previous window')
     parser.add_argument('--benchmark-mode', choices=['warm', 'cold'])
     parser.add_argument('--close-case', choices=['normal', 'excluded', 'deliberate-b', 'deliberate-c'],
                         help='required fresh-run case for close-recovery-investigation')
@@ -60,6 +62,8 @@ def main():
     if (args.previous_desktop_visit or args.previous_desktop_excluded) and (
             args.scenario != 'managed-window-chooser-fullscreen' or args.demo or args.bar_capture):
         parser.error('previous-desktop checks require managed-window-chooser-fullscreen without demo/bar capture')
+    if args.minimized_restoration and (args.scenario != 'managed-window-chooser' or args.demo or args.bar_capture):
+        parser.error('--minimized-restoration requires managed-window-chooser without demo/bar capture')
     investigation = args.scenario == 'close-recovery-investigation'
     if investigation != bool(args.close_case):
         parser.error('--close-case is required only for close-recovery-investigation')
@@ -330,13 +334,15 @@ def main():
         ssh(f"mkdir -m 700 {control}")
         hs('ft=dofile("' + guest_root + ('/functional-tests/benchmarks/guest.lua' if rules_benchmark else '/functional-tests/benchmarks/desktop_guest.lua' if desktop_benchmark else '/functional-tests/guest.lua') + '"); return hs.json.encode(ft.start({'
            f'sourceRoot="{guest_root}", executable="{guest_root}/Fixture.app/Contents/MacOS/Fixture",'
-           f'excludeFullscreenOwner={str(args.previous_desktop_excluded).lower()},'
+           f'excludeFullscreenOwner={str(args.previous_desktop_excluded).lower()},minimizedRestoration={str(args.minimized_restoration).lower()},'
            f'controlDir="{control}/control",run="{nonce}",outputDir="{guest_results}",initialLayout="{"stack" if args.scenario in ("stack-columns-membership","column-movement","ghostty-column-normalization","close-recovery-investigation") else "columns"}",columnMovement={str(args.scenario == "column-movement").lower()},closeRecoveryInvestigation={str(investigation).lower()},configuredRules={str(args.scenario == "configured-rules").lower()},coldStart={str(args.scenario == "managed-window-chooser-cold-start").lower()},fullscreenChooser={str(args.scenario == "managed-window-chooser-fullscreen").lower()},managedWindowChooser={str(args.scenario in ("managed-window-chooser","managed-window-chooser-cold-start","managed-window-chooser-fullscreen")).lower()},desktopSwitching={str(args.scenario in ("managed-window-chooser-fullscreen","managed-window-chooser-cold-start","managed-window-chooser","configured-rules","desktop-switching","desktop-creation","desktop-creation-race")).lower()},desktopCreation={str(args.scenario in ("desktop-creation","desktop-creation-race")).lower()},desktopFullscreen={str(args.desktop_fullscreen).lower()},ghostty={str(args.scenario.startswith("ghostty-")).lower()},ownedDisposable=true,cleanSeedTerminal={str(not bool(args.reuse_debug)).lower()}' + '}))')
         driver = Driver()
         if rules_benchmark:
             module.run(driver, mode=args.benchmark_mode)
         elif args.desktop_fullscreen:
             module.fullscreen(driver)
+        elif args.minimized_restoration:
+            module.minimized_restoration(driver)
         elif args.previous_desktop_visit or args.previous_desktop_excluded:
             module.previous_desktop_visit(driver, excluded=args.previous_desktop_excluded)
         elif desktop_benchmark:

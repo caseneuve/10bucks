@@ -19,7 +19,7 @@ typedef struct { lua_Integer token; AXError error; double at, cost; } Row;
 typedef struct {
     pthread_mutex_t lock;
     atomic_uint refs;
-    bool active, inflight, drained;
+    bool active, inflight, drained, restoreBusy, restoreQueued;
     uint64_t generation;
     AXUIElementRef target;
     lua_Integer token;
@@ -71,6 +71,7 @@ static void stopProbe(Probe *p) {
     AXUIElementRef target = p->target;
     dispatch_source_t timer = p->timer;
     p->active = false; p->generation++; p->target = NULL; p->timer = NULL;
+    p->restoreQueued = false;
     p->count = 0;
     pthread_mutex_unlock(&p->lock);
     if (target) CFRelease(target);
@@ -105,17 +106,18 @@ static int create(lua_State *L) {
     dispatch_resume(p->timer); // serial source coalesces ticks; no query overlap
     return 1;
 }
+static AXUIElementRef retainedElement(lua_State *L) {
+    void *ud = luaL_checkudata(L, 2, "hs.axuielement");
+    luaL_argcheck(L, lua_rawlen(L, 2) == sizeof(AXUIElementRef), 2, "AX userdata size mismatch");
+    AXUIElementRef target = *(AXUIElementRef *)ud;
+    luaL_argcheck(L, target && CFGetTypeID(target) == AXUIElementGetTypeID(), 2, "AX type mismatch");
+    CFRetain(target);
+    return target;
+}
 static int set(lua_State *L) {
     Probe *p = check(L);
     lua_Integer token = luaL_checkinteger(L, 3);
-    AXUIElementRef target = NULL;
-    if (!lua_isnil(L, 2)) {
-        void *ud = luaL_checkudata(L, 2, "hs.axuielement");
-        luaL_argcheck(L, lua_rawlen(L, 2) == sizeof(AXUIElementRef), 2, "AX userdata size mismatch");
-        target = *(AXUIElementRef *)ud;
-        luaL_argcheck(L, target && CFGetTypeID(target) == AXUIElementGetTypeID(), 2, "AX type mismatch");
-        CFRetain(target);
-    }
+    AXUIElementRef target = lua_isnil(L, 2) ? NULL : retainedElement(L);
     pthread_mutex_lock(&p->lock);
     if (!p->active) {
         pthread_mutex_unlock(&p->lock);
@@ -126,6 +128,40 @@ static int set(lua_State *L) {
     p->target = target; p->token = token; p->generation++; p->count = 0;
     pthread_mutex_unlock(&p->lock);
     if (old) CFRelease(old);
+    return 0;
+}
+// One explicit write at a time. The exact restore notification, not the
+// AX setter's return, is the completion boundary for managed focus.
+static int unminimize(lua_State *L) {
+    Probe *p = check(L);
+    AXUIElementRef target = retainedElement(L);
+    pthread_mutex_lock(&p->lock);
+    if (!p->active || p->restoreBusy) {
+        pthread_mutex_unlock(&p->lock);
+        CFRelease(target); lua_pushboolean(L, false); return 1;
+    }
+    p->restoreBusy = p->restoreQueued = true;
+    atomic_fetch_add(&p->refs, 1);
+    dispatch_async(p->queue, ^{
+        pthread_mutex_lock(&p->lock);
+        bool issue = p->active && p->restoreQueued;
+        p->restoreQueued = false;
+        pthread_mutex_unlock(&p->lock);
+        if (issue) AXUIElementSetAttributeValue(target, kAXMinimizedAttribute, kCFBooleanFalse);
+        CFRelease(target);
+        pthread_mutex_lock(&p->lock);
+        p->restoreBusy = false;
+        pthread_mutex_unlock(&p->lock);
+        releaseProbe(p);
+    });
+    pthread_mutex_unlock(&p->lock);
+    lua_pushboolean(L, true); return 1;
+}
+static int cancelRestore(lua_State *L) {
+    Probe *p = check(L);
+    pthread_mutex_lock(&p->lock);
+    p->restoreQueued = false; // an already-issued write cannot be recalled
+    pthread_mutex_unlock(&p->lock);
     return 0;
 }
 static int poll(lua_State *L) {
@@ -152,7 +188,7 @@ static int poll(lua_State *L) {
 static int status(lua_State *L) {
     Probe *p = check(L);
     pthread_mutex_lock(&p->lock);
-    bool active = p->active, inflight = p->inflight, drained = p->drained;
+    bool active = p->active, inflight = p->inflight || p->restoreBusy, drained = p->drained && !p->restoreBusy;
     unsigned queued = p->count, dropped = p->dropped;
     pthread_mutex_unlock(&p->lock);
     lua_createtable(L, 0, 5);
@@ -182,7 +218,8 @@ __attribute__((visibility("default"))) int luaopen_ax_validity(lua_State *L) {
     luaL_newmetatable(L, TAG);
     lua_pushcfunction(L, gc); lua_setfield(L, -2, "__gc");
     lua_newtable(L);
-    const luaL_Reg methods[] = {{"set", set}, {"poll", poll}, {"stop", stop}, {"status", status}, {NULL, NULL}};
+    const luaL_Reg methods[] = {{"set", set}, {"poll", poll}, {"stop", stop}, {"status", status},
+        {"unminimize", unminimize}, {"cancelRestore", cancelRestore}, {NULL, NULL}};
     luaL_setfuncs(L, methods, 0); lua_setfield(L, -2, "__index"); lua_pop(L, 1);
     lua_newtable(L); lua_pushcfunction(L, create); lua_setfield(L, -2, "create"); return 1;
 }

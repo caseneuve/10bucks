@@ -79,7 +79,8 @@ local function validState(state)
     end
   end
   if state.pending ~= nil and (type(state.pending) ~= "table" or not validId(state.pending.windowId)
-    or not validId(state.pending.spaceId)) then
+    or not validId(state.pending.spaceId)
+    or (state.pending.restoreLease ~= nil and not validId(state.pending.restoreLease))) then
     return false, "pending global focus is malformed"
   end
   return true
@@ -124,7 +125,7 @@ function FocusHistory.reduce(state, event)
   if event.type == "Observe" then
     local observed = target(event.target)
     if state.unplaced[observed.windowId] and state.unplaced[observed.windowId].uncertain then return state end
-    if state.pending and not sameTarget(state.pending, observed) then return state end
+    if state.pending and (state.pending.restoreLease or not sameTarget(state.pending, observed)) then return state end
     local newest = state.entries[#state.entries]
     if not state.pending and newest and sameTarget(newest, observed) then return state end
     local nextState = copy(state)
@@ -137,6 +138,7 @@ function FocusHistory.reduce(state, event)
   if event.type == "Request" then
     local requested = target(event.target)
     local nextState = copy(state)
+    requested.restoreLease = event.restoreLease
     nextState.pending = requested
     return nextState
   end
@@ -197,7 +199,9 @@ function FocusHistory.reduce(state, event)
     for _, entry in ipairs(nextState.entries) do
       if entry.windowId == descriptor.windowId then entry.spaceId = descriptor.spaceId end
     end
-    if nextState.pending and nextState.pending.windowId == descriptor.windowId then nextState.pending = descriptor end
+    if nextState.pending and nextState.pending.windowId == descriptor.windowId then
+      nextState.pending = not nextState.pending.restoreLease and descriptor or nil
+    end
     return nextState
   end
 
@@ -213,7 +217,9 @@ function FocusHistory.reduce(state, event)
     for _, entry in ipairs(nextState.entries) do
       if entry.windowId == promoted.windowId then entry.spaceId = promoted.spaceId end
     end
-    if nextState.pending and nextState.pending.windowId == promoted.windowId then nextState.pending = promoted end
+    if nextState.pending and nextState.pending.windowId == promoted.windowId then
+      nextState.pending = not nextState.pending.restoreLease and promoted or nil
+    end
     return nextState
   end
 
@@ -317,12 +323,12 @@ function FocusHistory:relocate(targetValue)
 end
 
 -- Commit a new global request before its native focus effect is issued.
-function FocusHistory:request(requested)
-  self:_submit({ type = "Request", target = target(requested) })
+function FocusHistory:request(requested, restoreLease)
+  self:_submit({ type = "Request", target = target(requested), restoreLease = restoreLease })
 end
 
 function FocusHistory:pending()
-  return self.committed.pending and target(self.committed.pending) or nil
+  return copy(self.committed.pending)
 end
 
 function FocusHistory:cancel()

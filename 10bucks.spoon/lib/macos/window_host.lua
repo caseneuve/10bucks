@@ -793,7 +793,7 @@ function Host:stop()
   if self.startupTimer then pcall(self.startupTimer.stop, self.startupTimer); self.startupTimer = nil end
   if self.discoveryJob then call(self.discoveryJob, "cancel"); self.discoveryJob = nil end
   self.startupDiscovery = { pending = false, complete = false, unresolvedCount = 0, reason = "stopped" }
-  local worker = self.validityWorker; self.validityWorker = nil
+  local worker = self.validityWorker; self.validityWorker, self.restoreWorker = nil, nil
   if worker and not pcall(worker.stop, worker) then self.validityError = "worker_stop_failed" end
   for id in pairs(self.readiness) do self:_cancelReadiness(id) end
   if self.discoveryTimer then self.discoveryTimer:stop(); self.discoveryTimer = nil end
@@ -830,6 +830,16 @@ function Host:_validityCurrent(target)
     and self.presentationId == target.id
 end
 
+function Host:_ensureValidityWorker()
+  if self.validityWorker then return self.validityWorker end
+  local generation = self.generation
+  local factory = self.nativeValidity or require("lib.macos.ax_validity")
+  local worker = factory.create()
+  if not self.started or generation ~= self.generation then worker:stop(); return end
+  self.validityWorker = worker
+  return worker
+end
+
 function Host:_trackValidity()
   local id = self.presentationId
   local record = id and self.handles[id]
@@ -852,13 +862,8 @@ function Host:_trackValidity()
     spaceId = self.context.regularSpaceId }
   self.validityTarget = target
   local ok, failure = pcall(function()
-  local worker = self.validityWorker
-  if not worker then
-    local factory = self.nativeValidity or require("lib.macos.ax_validity")
-    worker = factory.create()
-    if not self:_validityCurrent(target) then worker:stop(); return end
-    self.validityWorker = worker
-  end
+  local worker = self:_ensureValidityWorker()
+  if not worker or not self:_validityCurrent(target) then return end
   worker:set(target.element, target.token)
   if not self:_validityCurrent(target) then
     if self.validityWorker == worker then worker:set(nil, target.token) end
@@ -1015,7 +1020,35 @@ function Host:observeFocus(expectedId)
   return true
 end
 
-function Host:focus(window, lease, spaceId, fullscreen, fullscreenOwner)
+function Host:unminimize(window, lease, spaceId, authorized)
+  local id = call(window, "id")
+  local record = id and self.handles[id]
+  local app = record and self.appResources[record.pid]
+  local function current()
+    return record and self.handles[id] == record and lease ~= nil and record.handle == window
+      and self:current(id, lease, record.appLease, record.pid) and authorized()
+  end
+  if not current() or self:_checkWindowValidity(id, record) ~= true then return false end
+  local owner, kind = self:_owner(id)
+  if owner ~= spaceId or kind ~= "user" or call(window, "isFullScreen") ~= false
+    or call(window, "isMinimized") ~= true or call(app and app.app, "isHidden") ~= false
+    or not current() then return false end
+  local ok, accepted = pcall(function()
+    local worker = self:_ensureValidityWorker()
+    if not worker or not current() then return false end
+    if not worker:unminimize(record.element) then return false end
+    self.restoreWorker = worker
+    return true
+  end)
+  return ok and accepted == true
+end
+
+function Host:cancelRestore()
+  local worker = self.restoreWorker; self.restoreWorker = nil
+  if worker then worker:cancelRestore() end
+end
+
+function Host:focus(window, lease, spaceId, fullscreen, fullscreenOwner, restoredAuthority)
   local requestedId = call(window, "id")
   if requestedId == nil then return end
   local record = self.handles[requestedId]
@@ -1031,6 +1064,11 @@ function Host:focus(window, lease, spaceId, fullscreen, fullscreenOwner)
       if not owner or nativeFullscreen ~= (fullscreen == true)
         or (fullscreen and (kind ~= "fullscreen" or (fullscreenOwner and owner ~= fullscreenOwner)))
         or (not fullscreen and (kind ~= "user" or owner ~= spaceId)) then return end
+      if restoredAuthority then
+        local app = self.appResources[record.pid]
+        if call(window, "isMinimized") ~= false or call(app and app.app, "isHidden") ~= false
+          or not restoredAuthority() then return end
+      end
       if not self:current(requestedId, lease, record.appLease, record.pid) then return end
     end
   end

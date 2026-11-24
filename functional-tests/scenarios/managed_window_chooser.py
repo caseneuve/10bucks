@@ -1,4 +1,4 @@
-"""CHOOSE-001..004 actual native UI oracle; hidden/minimized restoration is deferred.
+"""CHOOSE-001..004 actual native UI oracle; hidden restoration is deferred.
 
 Uses the ordinary 5s/250ms/150ms sampler. No quotas, benchmark controller,
 cache assertions, corrective focus, or programmatic chooser selection.
@@ -186,8 +186,12 @@ def run(driver, *, clock=time.monotonic, sleep=time.sleep):
                     raise AssertionError('fullscreen choice changed retained placement/layout order')
             open_chooser('unchanged fullscreen target')
             select('chooserEnter', 'A', focus='A', desktop='F1', native={'A': {field: True}})
+        elif field == 'minimized':
+            # Restoration has a focused scenario below with an untouched peer.
+            driver.hotkey('chooserCancel')
+            check('minimized chooser cancellation', visible=False, native={'A': {field: True}})
         else:
-            # Hidden/minimized restoration remains explicitly outside this slice.
+            # Hidden restoration remains explicitly outside this slice.
             select('chooserEnter', 'A', accepted=False, reason='chooser-restoration-deferred',
                    focus=before.focused, frames=before.frames, native={'A': {field: True}})
         driver.fixture_action(enable, 'A')
@@ -202,3 +206,53 @@ def run(driver, *, clock=time.monotonic, sleep=time.sleep):
     open_chooser('close removes only C')
     # Leave the native UI open deliberately: ordinary runner finally cleanup
     # must hide/delete it and release default restoration bookkeeping.
+
+
+def minimized_restoration(driver, *, clock=time.monotonic, sleep=time.sleep):
+    """WIN-004 / FOCUS-003/005/006: restore only the selected known member."""
+    driver.preflight()
+    gate = sampling_gate(driver, scenario_id='minimized-restoration', clock=clock, sleep=sleep)
+    aliases = ['A', 'D', 'C']
+    completions = []
+
+    def check(name, *, minimized=None, peer=None, stack=False, **kwargs):
+        native = {a: {'identityMatch': True, 'hidden': False, 'fullscreen': False} for a in aliases}
+        if minimized is not None:
+            native['A']['minimized'] = minimized
+        if peer is not None:
+            native['D']['minimized'] = peer
+        expected = checkpoint(aliases, native=native, completion=completions, desktop='D1', **kwargs)
+
+        def matches(o):
+            retained = o.diagnostics.get('retained', {}).get('D1', {})
+            return (expected(o) and o.managed == frozenset(aliases) and not o.closed
+                    and retained.get('order') == aliases
+                    and (not stack or retained.get('layout') == 'stack'
+                         and retained.get('layouts', {}).get('stack', {}).get('members') == aliases))
+
+        return gate(name, matches)
+
+    for alias in aliases:
+        driver.create(alias)
+        gate('exact native admission ' + alias, lambda o: o.focused == alias and alias in o.managed)
+    driver.hotkey('cycleLayout')
+    check('known windows retain exact stack slots; C is focused', visible=False, focus='C',
+          stack=True, minimized=False, peer=False)
+    driver.fixture_action('minimize', 'D')
+    check('independent peer D minimized', visible=False, focus='C', stack=True, minimized=False, peer=True)
+    driver.fixture_action('minimize', 'A')
+    check('target A also minimized', visible=False, focus='C', stack=True, minimized=True, peer=True)
+    driver.hotkey('chooseWindow')
+    check('real chooser still lists A and D in order', stack=True, minimized=True, peer=True)
+    driver.hotkey('chooserEnter')
+    completions.append({'alias': 'A', 'accepted': True})
+    check('chooser restores exact A, not D', visible=False, focus='A', pending=False, stack=True,
+          minimized=False, peer=True)
+    driver.fixture_action('focus', 'C')
+    check('actual focus C after A seeds previous-window target', visible=False, focus='C', stack=True, peer=True)
+    driver.fixture_action('minimize', 'A')
+    before = check('A minimized again without changing actual focus C', visible=False, focus='C',
+                   stack=True, minimized=True, peer=True)
+    driver.hotkey('focusManagedPrevious')
+    check('previous-window restores exact A, not D', visible=False, focus='A', pending=False, stack=True,
+          minimized=False, peer=True, receipt=('focusManagedPrevious', before.commands_received.get('focusManagedPrevious', 0)+1))

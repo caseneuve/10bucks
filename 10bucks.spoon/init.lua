@@ -152,7 +152,7 @@ function Tenbucks:_flushCoreIntents(entries)
           local target = { windowId = intent.windowId, spaceId = intent.spaceId }
           local pending = self.focusHistory:pending()
           if self:_targetIsManaged(target) and (not pending or pending.windowId ~= target.windowId or pending.spaceId ~= target.spaceId) then
-            if self.managedFocusTimer then self.managedFocusTimer:stop(); self.managedFocusTimer = nil end
+            self:_stopManagedFocusTimer()
             self.focusHistory:request(target)
           end
         end
@@ -292,6 +292,7 @@ end
 function Tenbucks:_afterCoreEvent(event, eventCore)
   if event.type == "WindowDestroyed" then
     self.focusHistory:remove(event.id)
+    if not self.focusHistory:pending() then self:_stopManagedFocusTimer() end
   elseif event.type == "ActualFocusChanged" then
     local window = eventCore and eventCore:state().manager.windows[event.id]
     local unplaced = self.focusHistory:unplacedTarget(event.id)
@@ -299,9 +300,7 @@ function Tenbucks:_afterCoreEvent(event, eventCore)
       or (window and { windowId = event.id, spaceId = window.placementSpaceId })
     if target and self:_targetIsManaged(target) then
       self.focusHistory:observe(target)
-      if not self.focusHistory:pending() and self.managedFocusTimer then
-        self.managedFocusTimer:stop(); self.managedFocusTimer = nil
-      end
+      if not self.focusHistory:pending() then self:_stopManagedFocusTimer() end
     end
   end
 end
@@ -338,6 +337,13 @@ function Tenbucks:_deliverEvent(event, handle)
 
   if event.type == "ApplicationHidden" or event.type == "ApplicationUnhidden" or event.type == "ApplicationTerminated" then
     if event.type ~= "ApplicationTerminated" then self.focusHistory:observeLifecycle(event) end
+    if event.type ~= "ApplicationUnhidden" then
+      local pending = self.focusHistory:pending()
+      if pending and pending.restoreLease then
+        local _, window = self:_coreForManagedWindow(pending.windowId, pending.restoreLease)
+        if window and window.application.pid == event.pid then self:_cancelManagedFocus() end
+      end
+    end
     self:_withEffectBatch(function()
       local removed = {}
       for _, core in pairs(self.cores or {}) do
@@ -412,7 +418,7 @@ function Tenbucks:_deliverEvent(event, handle)
   local eventCore = nil
   if event.type == "ActualFocusChanged" then
     local pending = self.focusHistory:pending()
-    if pending and pending.windowId ~= event.id then self:_publishBar(); return true end
+    if pending and (pending.restoreLease or pending.windowId ~= event.id) then self:_publishBar(); return true end
     eventCore = self:_coreForManagedWindow(event.id, event.resource) or self.core
   elseif event.id then
     eventCore = self:_coreForManagedWindow(event.id, event.resource)
@@ -427,6 +433,7 @@ function Tenbucks:_deliverEvent(event, handle)
   else
     if eventCore then self:_submitCore(eventCore, event) end
     self:_afterCoreEvent(event, eventCore)
+    if event.type == "WindowRestored" then self:_focusRestoredTarget(event) end
     if event.type == "WindowTitleChanged" and self.handleRegistry:matches(event.id, event.resource) then
       self:_updateChooser({ type = "Title", windowId = event.id, lease = event.resource, title = event.title })
     end
@@ -441,11 +448,34 @@ function Tenbucks:_focusManagedPrevious()
   return self:_focusManagedTarget(target)
 end
 
-function Tenbucks:_cancelManagedFocus()
+function Tenbucks:_stopManagedFocusTimer()
   if self.managedFocusTimer then self.managedFocusTimer:stop(); self.managedFocusTimer = nil end
+  if self.host then self.host:cancelRestore() end
+end
+
+function Tenbucks:_cancelManagedFocus()
+  self:_stopManagedFocusTimer()
   self.focusHistory:cancel()
   for _, core in pairs(self.cores or {}) do
     self:_submitCore(core, { type = "FocusRequestCancelled", spaceId = core.spaceId })
+  end
+end
+
+function Tenbucks:_focusRestoredTarget(event)
+  local pending, timer = self.focusHistory:pending(), self.managedFocusTimer
+  if not timer or not pending or pending.windowId ~= event.id or not pending.restoreLease
+    or pending.restoreLease ~= event.resource then return end
+  local target = self.handleRegistry:target(event.id, event.resource)
+  local handle = target and target.spaceId == pending.spaceId and self:_targetIsManaged(target)
+    and self.handleRegistry:resolve(target)
+  local function authorized() return self.managedFocusTimer == timer and self:_targetIsManaged(target) end
+  -- The lifecycle fact already committed. Only actual focus can now settle history.
+  self.focusHistory:request(pending)
+  local ok, requested
+  if handle then ok, requested = pcall(self.host.focus, self.host, handle, event.resource, pending.spaceId, false, nil, authorized) end
+  if (not ok or requested == nil) and self.managedFocusTimer == timer then
+    self:_cancelManagedFocus()
+    if hs.alert then hs.alert.show("10bucks: Could not focus the restored window. Try selecting it again.") end
   end
 end
 
@@ -453,20 +483,32 @@ function Tenbucks:_focusManagedTarget(target)
   if not self.host or not self:_targetIsManaged(target) then return false, "stale-chooser-target" end
   local targetCore, window = self:_coreForManagedWindow(target.windowId, target.lease)
   local unplaced = self.focusHistory:unplacedTarget(target.windowId)
-  if (window and (window.lifecycle.minimized or window.lifecycle.appHidden))
-    or (unplaced and (unplaced.minimized or unplaced.appHidden)) then
-    return false, "previous-managed-window-unavailable"
+  if (window and window.lifecycle.appHidden) or (unplaced and unplaced.appHidden) then
+    return false, "managed-window-hidden"
+  end
+  local restoring = window and window.lifecycle.minimized
+  if (unplaced and unplaced.minimized) or (restoring and window.lifecycle.nativeFullscreen) then
+    return false, "chooser-restoration-deferred"
+  end
+  if restoring then
+    if self.workspace and self.workspace:state().switch.inFlight then return false, "desktop-switch-pending" end
+    local exact = self.handleRegistry:target(target.windowId, target.lease)
+    if not exact or exact.spaceId ~= target.spaceId then return false, "stale-chooser-target" end
+    target = exact
+    local pending = self.focusHistory:pending()
+    if pending and pending.windowId == target.windowId and pending.spaceId == target.spaceId
+      and pending.restoreLease == target.lease then return true end
   end
   -- A global target supersedes local requests in other scopes. Retire their
   -- reducer authority, not just the old native effect, before requesting focus.
   for _, core in pairs(self.cores or {}) do
-    if core ~= targetCore then
+    if core ~= targetCore or restoring then
       local accepted, failure = core:submit({ type = "FocusRequestCancelled", spaceId = core.spaceId })
       if not accepted then return false, failure end
     end
   end
-  self.focusHistory:request(target)
-  if self.managedFocusTimer then self.managedFocusTimer:stop() end
+  self:_stopManagedFocusTimer()
+  self.focusHistory:request(target, restoring and target.lease or nil)
   local timer
   timer = hs.timer.doAfter(5, function()
     if self.managedFocusTimer ~= timer then return end
@@ -480,6 +522,12 @@ function Tenbucks:_focusManagedTarget(target)
   self.managedFocusTimer = timer
   local handle = self.handleRegistry:resolve(target)
   if not handle then self:_cancelManagedFocus(); return false, "stale-chooser-target" end
+  if restoring then
+    local function authorized() return self.managedFocusTimer == timer and self:_targetIsManaged(target) end
+    if self.host:unminimize(handle, target.lease, target.spaceId, authorized) then return true end
+    if self.managedFocusTimer == timer then self:_cancelManagedFocus() end
+    return false, "managed-restore-failed"
+  end
   if targetCore then
     local accepted, failure = targetCore:submit({ type = "FocusTarget", windowId = target.windowId })
     if not accepted then self:_cancelManagedFocus(); return false, failure end
@@ -506,10 +554,6 @@ function Tenbucks:_chooseWindow(choice)
   if not target or not self:_targetIsManaged(target) then return false, "stale-chooser-target" end
   local core, window = self:_coreForManagedWindow(target.windowId, target.lease)
   local unplaced = self.focusHistory:unplacedTarget(target.windowId)
-  if (window and (window.lifecycle.minimized or window.lifecycle.appHidden))
-    or (unplaced and (unplaced.minimized or unplaced.appHidden)) then
-    return false, "chooser-restoration-deferred"
-  end
   if not window and not unplaced then return false, "stale-chooser-target" end
   local operation = self.workspace and self.workspace:state().switch.inFlight
   if operation then
@@ -689,6 +733,7 @@ function Tenbucks:_contextChanged(context)
       local requestedWindow
       if pending then local _; _, requestedWindow = self:_coreForManagedWindow(pending.windowId) end
       if pending and pending.spaceId == previous and not (requestedWindow and requestedWindow.lifecycle.nativeFullscreen) then
+        self:_stopManagedFocusTimer()
         self.focusHistory:cancel()
       end
       local old = self.cores[previous]

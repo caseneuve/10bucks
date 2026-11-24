@@ -1,7 +1,8 @@
 local failures = {
   ["stale-chooser-target"] = "This window is no longer available. Visit it, then reopen the chooser.",
-  ["chooser-restoration-deferred"] = "Unhide the application and restore the window from the Dock, then try again.",
-  ["previous-managed-window-unavailable"] = "Unhide the application and restore the window from the Dock, then try again.",
+  ["chooser-restoration-deferred"] = "Restore the fullscreen window manually, then try again.",
+  ["managed-window-hidden"] = "Unhide the application, then try again.",
+  ["managed-restore-failed"] = "Could not restore this window. Visit it, then try again.",
   ["desktop-switch-pending"] = "Wait for the desktop switch to finish, then choose the window again.",
   ["desktop-creation-pending"] = "Wait for desktop creation to finish, then choose the window again.",
   ["managed-focus-failed"] = "Could not focus this window. Visit it, then try again.",

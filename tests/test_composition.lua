@@ -277,19 +277,68 @@ return {
     f.life.callback(nil, hs.application.watcher.terminated, f.window:application())
     assert(#ui.rows == 0); ten:stop()
   end,
-  ["CHOOSE-003 FOCUS-006: unavailable selection preserves pending authority and retained rows"] = function()
-    local f = fakeHs(); local ten = load(f):start(); local ui = chooserUI()
-    ten:_submitCommand({ type = "OpenWindowChooser" }); local choice = ui.rows[1]
-    for _, event in ipairs({ { type = "WindowMinimized", id = 9 },
-      { type = "ApplicationHidden", pid = 8 } }) do
-      if event.id then event.resource = choice.lease end
-      ten:_submitEvent(event)
-      ten.focusHistory:request({ windowId = 9, spaceId = "space" })
+  ["LIFE-001 LIFE-002 FOCUS-005 FOCUS-006: explicit restore commits exact target and awaits actual focus"] = function()
+    for _, viaPrevious in ipairs({ false, true }) do
+      local f, ten = workspaceSetup(); local ui = chooserUI()
+      ten:_submitCommand({ type = "OpenWindowChooser" }); local choice = ui.rows[1]
+      local app = f.window:application()
+      local peer = { id = function() return 10 end, setFrame = function() end }
+      ten:_submitEvent({ type = "WindowReady", id = 10, displayId = 'built-in', spaceId = 'space',
+        application = { pid = 8 }, resource = 100, appResource = ten.host.appResources[8].lease }, peer)
+      focus(ten, 9); focus(ten, 10)
+      local minimized, hidden, restores = true, false, 0
+      f.window.isMinimized = function() return minimized end
+      app.isHidden = function() return hidden end
+      f.windowWatcher.callback(nil, 'AXWindowMiniaturized')
+      ten:_submitEvent({ type = 'WindowMinimized', id = 10, resource = 100 })
+      local function select()
+        if viaPrevious then return ten:_submitCommand({ type = 'FocusManagedPrevious' }) end
+        return ten:_chooseWindow(choice)
+      end
+      local worker = validityFake().create()
+      local cancels = 0
+      worker.unminimize = function(_, element)
+        assert(element == ten.host.handles[9].element and ten.focusHistory:pending().windowId == 9)
+        restores = restores + 1 -- positive readback and notification follow asynchronously
+        return true
+      end
+      worker.cancelRestore = function() cancels = cancels + 1 end
+      ten.host.nativeValidity = { create = function() return worker end }
       local focuses = f.focuses
-      assert(not ten:_chooseWindow(choice))
-      assert(f.focuses == focuses and ten.focusHistory:pending().windowId == 9 and #ui.rows == 1)
+      f.life.callback(nil, hs.application.watcher.hidden, app)
+      local accepted, reason = select()
+      assert(not accepted and reason == 'managed-window-hidden' and not ten.focusHistory:pending())
+      f.life.callback(nil, hs.application.watcher.unhidden, app)
+      hidden = true -- native state beats stale application lifecycle cache
+      assert(not select() and restores == 0 and f.focuses == focuses)
+      hidden = false
+      assert(select() and select() and restores == 1 and f.focuses == focuses)
+      focus(ten, 9) -- native focus may arrive before authoritative restore
+      assert(ten.focusHistory:pending().restoreLease == choice.lease and ten.focusHistory:snapshot()[2].windowId == 10)
+      ten:_submitEvent({ type = 'WindowRestored', id = 9, resource = 100 })
+      assert(f.focuses == focuses and ten.focusHistory:pending().restoreLease == choice.lease)
+      minimized = false
+      f.windowWatcher.callback(nil, 'AXWindowDeminiaturized')
+      local state = ten.core:state()
+      assert(f.focuses == focuses + 1 and not state.manager.windows[9].lifecycle.minimized
+        and state.manager.windows[10].lifecycle.minimized)
+      assert(ten.focusHistory:pending().windowId == 9 and ten.focusHistory:snapshot()[2].windowId == 10)
+      f.focusedWindow = f.window; ten.host:observeFocus()
+      assert(not ten.focusHistory:pending() and ten.focusHistory:snapshot()[2].windowId == 9)
+      local order = ten.core:state().coordinators.space.layouts.stack.members
+      assert(#order == 2 and order[1] == 9 and order[2] == 10 and #ui.rows == 2)
+      if not viaPrevious then
+        minimized = true; f.windowWatcher.callback(nil, 'AXWindowMiniaturized')
+        assert(select() and restores == 2)
+        local previousCancels = cancels
+        f:fire(5)
+        assert(not ten.focusHistory:pending() and cancels == previousCancels + 1)
+        focuses = f.focuses
+        minimized = false; f.windowWatcher.callback(nil, 'AXWindowDeminiaturized')
+        assert(f.focuses == focuses, 'late restore must not reissue expired focus')
+      end
+      ten:stop()
     end
-    ten:stop()
   end,
   ["CHOOSE-003 FOCUS-006: current-resource cross-scope selection commits latest target without reordering"] = function()
     local f = fakeHs(); local ten = load(f):start(); local ui = chooserUI()
@@ -989,7 +1038,7 @@ return {
       ten:stop()
     end
   end,
-  ["FOCUS-005 CMD-001: unavailable previous target rejects before installing stranded global pending"] = function()
+  ["FOCUS-005 LIFE-001: failed native restore preflight clears pending without focusing"] = function()
     local f = fakeHs(); local ten = load(f); ten:start()
     focus(ten, 9)
     local other = { frame = function() return f.actual end, setFrame = function() end }
@@ -998,7 +1047,7 @@ return {
     focus(ten, 10)
     ten:_submitEvent({ type = "WindowMinimized", id = 9, resource = ten.handleRegistry:target(9).lease })
     local accepted, reason = ten:_submitCommand({ type = "FocusManagedPrevious" })
-    assert(not accepted and reason == "previous-managed-window-unavailable" and not ten.focusHistory:pending())
+    assert(not accepted and reason == "managed-restore-failed" and not ten.focusHistory:pending())
     ten:stop()
   end,
   ["STATE-002 PERF-003 FOCUS-006: stale frame readback skips old geometry but preserves current focus"] = function()

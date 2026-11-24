@@ -1461,7 +1461,7 @@ function M.start(o)
     s={running=true,phase='ready',dir=o.controlDir,run=o.run,outputDir=o.outputDir,
         sourceRoot=o.sourceRoot,executable=o.executable,screen=screens[1],started=now(),
         columnMovement=o.columnMovement==true,closeInvestigation=o.closeRecoveryInvestigation==true,coldStart=o.coldStart==true,fullscreenChooser=o.fullscreenChooser==true,managedWindowChooser=o.managedWindowChooser==true,configuredRules=o.configuredRules==true,creationFrames={},desktopSwitching=o.desktopSwitching==true,desktopCreation=o.desktopCreation==true,createdNativeIds={},desktopFullscreen=o.desktopFullscreen==true,desktopAliases={},workspaceTrace={},keyEvents={},syntheticKeys={},
-        excludeFullscreenOwner=o.excludeFullscreenOwner==true,
+        excludeFullscreenOwner=o.excludeFullscreenOwner==true,minimizedRestoration=o.minimizedRestoration==true,
         initialLayout=o.initialLayout or 'columns',ghosttyEnabled=o.ghostty==true,ownedDisposable=o.ownedDisposable==true,cleanSeedTerminal=o.cleanSeedTerminal==true,originalPointer=copy(hs.mouse.absolutePosition()),
         sequence=0,actionSequence=0,windows={},axes={},byId={},ownerPids={},destroyed={},receipts={},chords={},
         cleanup={},trace={},dropped=0,sampleId=0,readyDeadline=now()+3,originalBind=hs.hotkey.bind}
@@ -1557,6 +1557,14 @@ end
 function M.command(op,alias,commands)
     assert(s and s.running and s.phase=='active' and not s.error,'controller_not_active')
     assert(not s.pending and not s.keyPending and not s.ghosttyPending and not s.lifecycleSetup,'action_pending')
+    if s.minimizedRestoration and (op=='chooserEnter' or op=='focusManagedPrevious') then
+        -- The fixture's AppKit publisher can pause during native restore animation.
+        -- Begin final focus/slot sampling only after a fresh exact native restore
+        -- readback, within the existing lifecycle settlement budget.
+        local started=now()
+        s.lifecycleSetup={alias='A',field='minimized',wanted=false,afterSequence=assert(s.nativeSnapshotSequence),
+            started=started,deadline=started+3}
+    end
     if op=='createGhostty' then
         assert(s.ghosttyEnabled and s.ownedDisposable and type(alias)=='string' and alias:match('^[A-C]$')
             and not s.windows[alias],'ghostty_alias_rejected')
