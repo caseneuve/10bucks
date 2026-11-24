@@ -1,6 +1,6 @@
 ---
 title: Chooser reaches target desktop but focuses a different column member
-status: open
+status: blocked
 priority: high
 type: bug
 labels: []
@@ -61,6 +61,11 @@ retained selection B, and chooser target A, WHEN a real chooser selection reques
 A from S and T activates, THEN native focus settles on exact A, matching confirmation
 clears A's pending request, B does not supersede it through fallback/activation,
 and column order is unchanged. Repeat with a later explicit target superseding A.
+
+## 2026-11-24 triage
+On hold for observation: the user thinks this has already been addressed. No
+specific fix or same-column native acceptance has been verified for this report.
+Resume if it recurs.
 
 ## Notes
 
