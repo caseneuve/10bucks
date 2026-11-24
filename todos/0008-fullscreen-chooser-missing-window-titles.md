@@ -33,6 +33,20 @@ windows expose a nonempty title, or whether acquisition/event/cache handling los
 these titles blank. A simple first-visit metadata delay is therefore insufficient
 to explain the reported persistence; native title availability remains unverified.
 
+## 2026-11-24 host observation
+
+The user reported the same blank-title symptom for Cloudflare WARP. Read-only
+checks on the exact live managed window found an empty native AXTitle and
+Hammerspoon title, an empty cached/projected chooser title, and a nonempty app
+label. The window was on a regular Space and neither native fullscreen check
+reported fullscreen. This case shows no dropped native title and does not resolve
+the earlier fullscreen Signal/Slack reports. No private title text was recorded.
+
+User decision: display the cached app label in brackets when the native title
+is blank. This is display-only: it does not change search or title acquisition.
+A guest native chooser check passed for a synthetic blank row and a named control
+(`vm/results/10bucks-run-ft-eaa07ef31097/chooser-blank-title/`).
+
 ## Acceptance Criteria
 
 - [ ] Distinguish an actually empty/unavailable native title from a nonempty title

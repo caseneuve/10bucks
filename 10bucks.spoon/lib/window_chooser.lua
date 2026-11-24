@@ -101,7 +101,9 @@ function Chooser.filter(rows, query)
   for _, item in ipairs(ranked) do
     local row = item.row
     -- Do not expose cache tables or transient scores to native consumers.
-    choices[#choices + 1] = { text = row.text, subText = row.subText,
+    local text = row.text
+    if not text:find("%S") and row.subText:find("%S") then text = "[" .. row.subText .. "]" end
+    choices[#choices + 1] = { text = text, subText = row.subText,
       windowId = row.windowId, lease = row.lease }
   end
   return choices

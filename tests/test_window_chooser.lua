@@ -124,6 +124,19 @@ return {
     local empty = Rows.filter(rows, nil)
     assert(empty[1].windowId == 1 and empty[2].windowId == 2 and empty[2].lease == 92)
   end,
+  ["CHOOSE-003 CHOOSE-004: blank titles display the bracketed app label without changing search"] = function()
+    local rows = { row(1, 11, "", "Utility"), row(2, 12, "Named", "Utility"),
+      row(3, 13, "  ", "Utility"), row(4, 14, "", "") }
+    local choices = Rows.filter(rows, "")
+    assert(choices[1].text == "[Utility]" and choices[1].subText == "Utility")
+    assert(choices[1].windowId == 1 and choices[1].lease == 11 and rows[1].text == "")
+    assert(choices[2].text == "Named" and choices[3].text == "[Utility]" and choices[4].text == "")
+    assert(#Rows.filter(rows, "[") == 0)
+    local found = Rows.filter(rows, "Utility")
+    assert(#found == 3 and found[1].windowId == 1 and found[2].windowId == 2 and found[3].windowId == 3)
+    rows = Rows.reduce(rows, { type = "Title", windowId = 1, lease = 11, title = "New title" })
+    assert(Rows.filter(rows, "")[1].text == "New title")
+  end,
   ["CHOOSE-001 CHOOSE-003: lifecycle metadata preserves survivors and exact removal"] = function()
     local rows = Rows.reduce({}, { type = "Upsert", row = row(1, 11, "Alpha", "Editor") })
     rows = Rows.reduce(rows, { type = "Upsert", row = row(2, 12, "Beta", "Browser", 9) })
