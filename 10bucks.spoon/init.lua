@@ -298,7 +298,7 @@ function Tenbucks:_afterCoreEvent(event, eventCore)
     local target = (unplaced and not unplaced.uncertain and unplaced.target)
       or (window and { windowId = event.id, spaceId = window.placementSpaceId })
     if target and self:_targetIsManaged(target) then
-      self.focusHistory:observe(target)
+      self.focusHistory:observe(target, self.context and self.context.nativeSpaceId)
       if not self.focusHistory:pending() and self.managedFocusTimer then
         self.managedFocusTimer:stop(); self.managedFocusTimer = nil
       end
@@ -449,7 +449,7 @@ function Tenbucks:_cancelManagedFocus()
   end
 end
 
-function Tenbucks:_focusManagedTarget(target)
+function Tenbucks:_focusManagedTarget(target, requireActiveSpace)
   if not self.host or not self:_targetIsManaged(target) then return false, "stale-chooser-target" end
   local targetCore, window = self:_coreForManagedWindow(target.windowId, target.lease)
   local unplaced = self.focusHistory:unplacedTarget(target.windowId)
@@ -465,7 +465,7 @@ function Tenbucks:_focusManagedTarget(target)
       if not accepted then return false, failure end
     end
   end
-  self.focusHistory:request(target)
+  self.focusHistory:request(target, requireActiveSpace)
   if self.managedFocusTimer then self.managedFocusTimer:stop() end
   local timer
   timer = hs.timer.doAfter(5, function()
@@ -491,7 +491,7 @@ function Tenbucks:_focusManagedTarget(target)
   if not self:_targetIsManaged(target) then self:_cancelManagedFocus(); return false, "stale-chooser-target" end
   local ok, requested = pcall(self.host.focus, self.host, handle, target.lease, target.spaceId,
     (window and window.lifecycle.nativeFullscreen) or unplaced ~= nil,
-    unplaced and unplaced.target.spaceId) -- Native focus may change Spaces.
+    requireActiveSpace and target.spaceId or (unplaced and unplaced.target.spaceId)) -- Native focus may change Spaces.
   if not ok or requested == nil or not self:_targetIsManaged(target) then
     self:_cancelManagedFocus(); return false, "managed-focus-failed"
   end
@@ -521,6 +521,23 @@ function Tenbucks:_chooseWindow(choice)
   return self:_withEffectBatch(function() return self:_focusManagedTarget(target) end)
 end
 
+function Tenbucks:_focusPreviousFullscreen(spaceId)
+  if self.workspace:state().switch.inFlight then return false, "desktop-switch-pending" end
+  local pending = self.focusHistory:pending()
+  if pending and pending.requireActiveSpace and pending.spaceId == spaceId then return true end
+  -- Confirmed fullscreen readiness also retains a route for windows with a
+  -- saved regular placement. Never discover or restore a window for history.
+  for _, record in ipairs(self.focusHistory:unplacedTargets()) do
+    if record.target.spaceId == spaceId and not record.minimized and not record.appHidden then
+      local target = self.handleRegistry:target(record.target.windowId)
+      if target and target.spaceId == spaceId and self:_targetIsManaged(target) then
+        return self:_focusManagedTarget(target, true)
+      end
+    end
+  end
+  return false, "previous-fullscreen-unavailable"
+end
+
 function Tenbucks:_submitCommand(command)
   if command.type == "OpenWindowChooser" then
     if not self.started then return false, "not-started" end
@@ -532,15 +549,26 @@ function Tenbucks:_submitCommand(command)
   end
   local operation = self.workspace and self.workspace:state().switch.inFlight
   if operation and operation.creating and (command.type == "CreateRegularDesktop" or command.type == "FocusRegularPosition"
-    or command.type == "FocusRelativeRegular" or command.type == "FocusPreviousRegular") then
+    or command.type == "FocusRelativeRegular" or command.type == "FocusPreviousDesktop") then
     return false, "desktop-creation-pending"
   end
   if command.type == "CreateRegularDesktop" and operation then return false, "desktop-switch-pending" end
-  if command.type == "FocusRegularPosition" or command.type == "FocusRelativeRegular" or command.type == "FocusPreviousRegular" or command.type == "CreateRegularDesktop" then
+  local previous = command.type == "FocusPreviousDesktop"
+  if previous or command.type == "FocusRegularPosition" or command.type == "FocusRelativeRegular" or command.type == "CreateRegularDesktop" then
     return self:_withEffectBatch(function()
-      self.focusHistory:cancel()
-      for _, core in pairs(self.cores or {}) do self:_submitCore(core, { type = "FocusRequestCancelled", spaceId = core.spaceId }) end
-      self:_contextChanged(Context.snapshot(hs, self.config.builtInDisplayUUID))
+      if previous then
+        self:_contextChanged(Context.snapshot(hs, self.config.builtInDisplayUUID))
+        local state = self.workspace:state()
+        if state.previousSpaceId then
+          local regular = false
+          for _, spaceId in ipairs(state.regularSpaceIds) do
+            if spaceId == state.previousSpaceId then regular = true; break end
+          end
+          if not regular then return self:_focusPreviousFullscreen(state.previousSpaceId) end
+        end
+      end
+      self:_cancelManagedFocus()
+      if not previous then self:_contextChanged(Context.snapshot(hs, self.config.builtInDisplayUUID)) end
       return self.workspace:submit(command)
     end)
   end

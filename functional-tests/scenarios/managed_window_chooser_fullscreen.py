@@ -45,3 +45,51 @@ def run(driver, *, clock=time.monotonic, sleep=time.sleep):
     # Leave UI open to exercise ordinary chooser/native/observer/worker cleanup.
     driver.hotkey('chooseWindow')
     check('cleanup owns open fullscreen chooser')
+
+
+def previous_desktop_visit(driver, *, clock=time.monotonic, sleep=time.sleep):
+    """SPACE-005: visit an already existing fullscreen Space, then toggle 0 twice."""
+    driver.preflight()
+    gate = sampling_gate(driver, scenario_id='previous-desktop-fullscreen-visit', clock=clock, sleep=sleep)
+    native_a = {'A': {'fullscreen': True, 'minimized': False, 'hidden': False,
+                      'identityMatch': True, 'owner': 'F1'}}
+    initial_topology = None
+
+    def check(name, desktop, *, previous=None, **kwargs):
+        expected = checkpoint(['A', 'C'], desktop=desktop, native=native_a, **kwargs)
+
+        def matches(o):
+            n = o.diagnostics.get('nativeDesktop', {})
+            order, types = n.get('order', []), n.get('types', [])
+            history = o.diagnostics.get('workspace', {}).get('history', {})
+            return (expected(o) and (previous is None or history == {'current': desktop, 'previous': previous})
+                    and n.get('count') == len(order) == len(types) == 4
+                    and n.get('regular') == ['D1', 'D2', 'D3']
+                    and set(order) == {'F1', 'D1', 'D2', 'D3'}
+                    and all(t == ('fullscreen' if a == 'F1' else 'user') for a, t in zip(order, types))
+                    and (initial_topology is None or order == initial_topology))
+
+        return gate(name, matches)
+
+    last = check('setup: exact native A already fullscreen before D2', 'F1', visible=False, focus='A')
+    initial_topology = last.diagnostics['nativeDesktop']['order']
+
+    def press(command):
+        count = last.commands_received.get(command, 0) + 1
+        driver.hotkey(command)
+        return (command, count)
+
+    for target, previous in (('D2', 'F1'), ('D1', 'D2')):
+        last = check('native ' + target + ' while A remains fullscreen on F1', target, visible=False,
+                     previous=previous, receipt=press('focusDesktop' + target[-1]))
+    driver.create('C')
+    last = check('regular C focused on D1 before fullscreen visit', 'D1', visible=False, focus='C')
+    check('real chooser shows exact existing A as first row on D1', 'D1', receipt=press('chooseWindow'))
+    driver.hotkey('chooserEnter')
+    completions = [{'alias': 'A', 'accepted': True}]
+    last = check('visit existing F1: native F1 and exact focus A', 'F1', visible=False, focus='A',
+                 previous='D1', completion=completions, pending=False)
+    last = check('one previous from F1 returns to native D1', 'D1', visible=False,
+                 previous='F1', receipt=press('focusPreviousDesktop'), completion=completions, pending=False)
+    check('one previous from D1 returns to existing native F1 and exact focus A', 'F1', visible=False,
+          previous='D1', receipt=press('focusPreviousDesktop'), focus='A', completion=completions, pending=False)

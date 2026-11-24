@@ -83,7 +83,7 @@ return {
     assert(Config.build({ hotkeys = { createDesktop = false } }).hotkeys.createDesktop == false)
     for i = 1, 9 do callbacks[tostring(i)](); assert(events[#events].type == "FocusRegularPosition" and events[#events].position == i) end
     events[#events].position = 999; callbacks["9"](); assert(events[#events].position == 9)
-    callbacks["0"](); assert(events[#events].type == "FocusPreviousRegular")
+    callbacks["0"](); assert(events[#events].type == "FocusPreviousDesktop")
     callbacks.n(); assert(events[#events].type == "FocusRelativeRegular" and events[#events].delta == 1)
     callbacks.p(); assert(events[#events].delta == -1)
     callbacks.j(); assert(events[#events].type == "FocusNext")

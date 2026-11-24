@@ -48,10 +48,14 @@ def main():
     parser.add_argument("--reuse-debug", metavar="VM", help="reuse running owned debug guest; reset HS modules, no reboot")
     parser.add_argument('--desktop-fullscreen', action='store_true',
                         help='desktop-only separate owned-fixture fullscreen indexing/retention subcase')
+    parser.add_argument('--previous-desktop-visit', action='store_true',
+                        help='check previous toggling after an existing fullscreen chooser visit')
     parser.add_argument('--benchmark-mode', choices=['warm', 'cold'])
     parser.add_argument('--close-case', choices=['normal', 'excluded', 'deliberate-b', 'deliberate-c'],
                         help='required fresh-run case for close-recovery-investigation')
     args = parser.parse_args()
+    if args.previous_desktop_visit and (args.scenario != 'managed-window-chooser-fullscreen' or args.demo or args.bar_capture):
+        parser.error('--previous-desktop-visit requires managed-window-chooser-fullscreen without demo/bar capture')
     investigation = args.scenario == 'close-recovery-investigation'
     if investigation != bool(args.close_case):
         parser.error('--close-case is required only for close-recovery-investigation')
@@ -328,6 +332,8 @@ def main():
             module.run(driver, mode=args.benchmark_mode)
         elif args.desktop_fullscreen:
             module.fullscreen(driver)
+        elif args.previous_desktop_visit:
+            module.previous_desktop_visit(driver)
         elif desktop_benchmark:
             module.benchmark(driver, mode=args.benchmark_mode)
         elif investigation:

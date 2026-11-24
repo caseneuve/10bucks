@@ -717,7 +717,7 @@ return {
       if case.absolute then assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = case.absolute })) end
       assert(f.opens == 1, 'queued target must not overlap native leg')
       f:confirm('next-space')
-      assert(ten.workspace:state().previousRegularSpaceId == 'space')
+      assert(ten.workspace:state().previousSpaceId == 'space')
       f:confirm(case.final)
       assert(ten.workspace:state().activeRegularSpaceId == case.final and not ten.workspace:state().switch.inFlight)
       assert(#f.presses == 2 and ten.cores.space == first and ten.host == host and ten.windows == windows and f.scans == scans)
@@ -742,15 +742,15 @@ return {
     ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 }); f:confirm('next-space')
     local second = ten.core
     assert(first:state().coordinators.space.layouts.columns.ratio == .55 and ten.cores.space == first)
-    ten:_submitCommand({ type = 'FocusPreviousRegular' }); ten:_submitCommand({ type = 'FocusPreviousRegular' })
+    ten:_submitCommand({ type = 'FocusPreviousDesktop' }); ten:_submitCommand({ type = 'FocusPreviousDesktop' })
     assert(ten.workspace:state().switch.desiredSpaceId == 'space' and f.opens == 2)
     f:confirm('space')
     assert(ten.core == first and ten.cores['next-space'] == second)
     local restored = first:state().coordinators.space
     assert(restored.activeLayoutId == saved.activeLayoutId and restored.layouts.columns.ratio == .55
       and restored.layouts.columns.stacks[1].members[1] == 9 and restored.layouts.stack.members[1] == 9)
-    ten:_submitCommand({ type = 'FocusPreviousRegular' }); f:confirm('next-space')
-    assert(#f.presses == 3 and ten.workspace:state().previousRegularSpaceId == 'space')
+    ten:_submitCommand({ type = 'FocusPreviousDesktop' }); f:confirm('next-space')
+    assert(#f.presses == 3 and ten.workspace:state().previousSpaceId == 'space')
     ten:stop()
   end,
   ["SPACE-006 SPACE-009 FS-003 WIN-005: Dock removal retires saved placement, rejects late readiness, preserves native lease until death"] = function()
@@ -825,9 +825,39 @@ return {
     local op = ten.workspace:state().switch.inFlight
     assert(op.sourceId == 'full' and op.sourceType == 'fullscreen' and op.destinationId == 'next-space')
     f:confirm('next-space')
-    assert(not ten.suspended and ten.core.spaceId == 'next-space' and ten.workspace:state().previousRegularSpaceId == 'space')
+    assert(not ten.suspended and ten.core.spaceId == 'next-space' and ten.workspace:state().previousSpaceId == 'full')
     ten:_submitCommand({ type = 'FocusRelativeRegular', delta = -1 }); f:confirm('space')
     assert(ten.workspace:state().activeRegularSpaceId == 'space')
+    ten:stop()
+  end,
+  ["SPACE-005 STATE-002: previous desktop returns to an existing chooser-visited fullscreen Space"] = function()
+    local f, ten = workspaceSetup()
+    f.topology[#f.topology + 1] = { ManagedSpaceID = 'full', type = 4 }
+    f.topology[#f.topology + 1] = { ManagedSpaceID = 'other-full', type = 4 }
+    hs.spaces.spaceType = function(id) return (id == 'full' or id == 'other-full') and 'fullscreen' or 'user' end
+    f.fullscreen, f.owners = true, { 'full' }
+    ten.host:_ready(f.window, 'targetedReadiness', ten.host.windowCallback)
+    f:activate('next-space'); f:activate('space')
+    local previous = { type = 'FocusPreviousDesktop' }
+    local ui = chooserUI()
+    assert(ten:_submitCommand({ type = 'OpenWindowChooser' }))
+    assert(#ui.rows == 1); ui.complete(ui.rows[1]); assert(not ui.rejection)
+    assert(ten.workspace:state().previousSpaceId == 'next-space', 'focus request is not a native Space visit')
+    f.activeSpace, f.focusedWindow = 'full', f.window; f.contextWatcher.callback()
+    assert(ten.workspace:state().previousSpaceId == 'space')
+    assert(ten:_submitCommand(previous)); f:confirm('space')
+    assert(ten.workspace:state().previousSpaceId == 'full')
+    local focuses = f.focuses
+    f.owners = { 'other-full' }
+    assert(not ten:_submitCommand(previous) and f.focuses == focuses, 'exact fullscreen owner must still match')
+    f.owners, f.focusedWindow = { 'full' }, f.window -- focused-window read arrives ahead of the Space transition
+    assert(ten:_submitCommand(previous))
+    assert(f.focuses == focuses + 1 and ten.focusHistory:pending().requireActiveSpace)
+    assert(ten:_submitCommand(previous) and f.focuses == focuses + 1 and f.opens == 1)
+    assert(ten.workspace:state().confirmedSpaceId == 'space' and ten.workspace:state().previousSpaceId == 'full')
+    f.activeSpace = 'full'; f.contextWatcher.callback()
+    assert(not ten.focusHistory:pending() and ten.workspace:state().confirmedSpaceId == 'full'
+      and ten.workspace:state().previousSpaceId == 'space')
     ten:stop()
   end,
   ["FOCUS-005 CMD-005: desktop command cancels already-issued global previous authority without native reversal"] = function()

@@ -55,20 +55,20 @@ function WorkspaceSwitch.initial(input)
   local active = input.nativeSpaceType == "user" and input.nativeSpaceId or nil
   return { displayId = input.displayId, revision = input.revision, nativeSpaceId = input.nativeSpaceId,
     nativeSpaceType = input.nativeSpaceType, regularSpaceIds = input.regularSpaceIds, fullSpaceIds = input.fullSpaceIds,
-    activeRegularSpaceId = active, lastConfirmedRegularSpaceId = active, previousRegularSpaceId = nil,
-    fullscreenHistoryActive = input.nativeSpaceType == "fullscreen",
+    activeRegularSpaceId = active, lastConfirmedRegularSpaceId = active, confirmedSpaceId = input.nativeSpaceId,
     stopped = false, switch = { nextGeneration = 0 } }
 end
 function WorkspaceSwitch.validate(state)
   if not snapshot(state) or type(state.stopped) ~= "boolean" then return false, "malformed workspace topology" end
-  local regular = dense(state.regularSpaceIds)
-  for _, key in ipairs({ "activeRegularSpaceId", "lastConfirmedRegularSpaceId", "previousRegularSpaceId", "previousBeforeFullscreen" }) do
-    if state[key] ~= nil and not regular[state[key]] then return false, "malformed regular history" end
+  local regular, full = dense(state.regularSpaceIds), dense(state.fullSpaceIds)
+  if (state.lastConfirmedRegularSpaceId ~= nil and not regular[state.lastConfirmedRegularSpaceId])
+    or not full[state.confirmedSpaceId] or (state.previousSpaceId ~= nil
+      and (not full[state.previousSpaceId] or state.previousSpaceId == state.confirmedSpaceId)) then
+    return false, "malformed desktop history"
   end
   if state.activeRegularSpaceId ~= (state.nativeSpaceType == "user" and state.nativeSpaceId or nil) then
     return false, "actual regular scope disagrees with native reality"
   end
-  if type(state.fullscreenHistoryActive) ~= "boolean" then return false, "malformed fullscreen history" end
   local s = state.switch
   if type(s) ~= "table" or not integer(s.nextGeneration)
     or (s.desiredSpaceId ~= nil and not regular[s.desiredSpaceId]) then return false, "malformed switch intent" end
@@ -107,23 +107,12 @@ local function request(state, destination)
   if destination then state.switch.desiredSpaceId = destination; begin(state) end
 end
 local function navigationObserved(state)
-  local active = state.activeRegularSpaceId
-  if not active then
-    if not state.fullscreenHistoryActive then
-      state.previousBeforeFullscreen = state.previousRegularSpaceId
-      state.previousRegularSpaceId = state.lastConfirmedRegularSpaceId
-      state.fullscreenHistoryActive = true
-    end
-  elseif state.fullscreenHistoryActive then
-    if active == state.lastConfirmedRegularSpaceId then state.previousRegularSpaceId = state.previousBeforeFullscreen
-    else state.previousRegularSpaceId = state.lastConfirmedRegularSpaceId end
-    state.lastConfirmedRegularSpaceId = active
-    state.previousBeforeFullscreen = nil
-    state.fullscreenHistoryActive = false
-  elseif active ~= state.lastConfirmedRegularSpaceId then
-    state.previousRegularSpaceId = state.lastConfirmedRegularSpaceId
-    state.lastConfirmedRegularSpaceId = active
+  if state.nativeSpaceId ~= state.confirmedSpaceId then
+    local full = dense(state.fullSpaceIds)
+    state.previousSpaceId = full[state.confirmedSpaceId] and state.confirmedSpaceId or nil
+    state.confirmedSpaceId = state.nativeSpaceId
   end
+  state.lastConfirmedRegularSpaceId = state.activeRegularSpaceId or state.lastConfirmedRegularSpaceId
 end
 
 function WorkspaceSwitch.reduce(state, event)
@@ -134,7 +123,7 @@ function WorkspaceSwitch.reduce(state, event)
   elseif kind == "RegularTopologyObserved" or kind == "RegularSwitchContextRebased" or kind == "RegularCreateTopologyObserved" then
     assert(snapshot(event) and event.displayId == state.displayId, "requires complete topology for this display")
     if event.revision <= state.revision then return state end
-    local op, regular = s.inFlight, dense(event.regularSpaceIds)
+    local op, regular, full = s.inFlight, dense(event.regularSpaceIds), dense(event.fullSpaceIds)
     local created = op and op.creating and op.phase == "adding" and not op.invalidated
       and event.type == "RegularCreateTopologyObserved" and matching(op, event)
       and event.nativeSpaceId == (op.pressSourceId or op.sourceId)
@@ -172,12 +161,13 @@ function WorkspaceSwitch.reduce(state, event)
     state.revision = event.revision; state.nativeSpaceId = event.nativeSpaceId; state.nativeSpaceType = event.nativeSpaceType
     state.regularSpaceIds = event.regularSpaceIds; state.fullSpaceIds = event.fullSpaceIds
     if not regular[state.lastConfirmedRegularSpaceId] then state.lastConfirmedRegularSpaceId = nil end
-    if not regular[state.previousRegularSpaceId] then state.previousRegularSpaceId = nil end
-    if not regular[state.previousBeforeFullscreen] then state.previousBeforeFullscreen = nil end
+    if not full[state.previousSpaceId] then state.previousSpaceId = nil end
     state.activeRegularSpaceId = event.nativeSpaceType == "user" and event.nativeSpaceId or nil
     -- MC presentation is actual native reality, not confirmed navigation. Keep
     -- fullscreen previous/anchor through rebase and duplicate source snapshots.
-    if not (op and op.pressSourceId and not op.invalidated and not confirmed) then navigationObserved(state) end
+    if not (op and op.pressSourceId and not op.invalidated and not confirmed and full[state.confirmedSpaceId]) then
+      navigationObserved(state)
+    end
     if s.desiredSpaceId and not regular[s.desiredSpaceId] then
       s.desiredSpaceId = op and regular[op.destinationId] and op.destinationId or nil
     end
@@ -191,20 +181,22 @@ function WorkspaceSwitch.reduce(state, event)
         generation = s.nextGeneration, revision = state.revision, fullSpaceIds = state.fullSpaceIds,
         regularSpaceIds = state.regularSpaceIds, phase = "requested", invalidated = false }
     end
-  elseif s.inFlight and s.inFlight.creating and (kind == "FocusRegularPosition" or kind == "FocusRelativeRegular" or kind == "FocusPreviousRegular") then
+  elseif s.inFlight and s.inFlight.creating and (kind == "FocusRegularPosition" or kind == "FocusRelativeRegular" or kind == "FocusPreviousDesktop") then
     return state
   elseif kind == "FocusRegularPosition" then
     assert(integer(event.position) and event.position >= 1 and event.position <= 9, "requires position 1..9")
     request(state, state.regularSpaceIds[event.position])
   elseif kind == "FocusRelativeRegular" then
     assert(event.delta == 1 or event.delta == -1, "requires delta +/-1")
-    local anchor = s.desiredSpaceId or (state.fullscreenHistoryActive and state.lastConfirmedRegularSpaceId)
+    local anchor = s.desiredSpaceId or (state.confirmedSpaceId ~= state.nativeSpaceId and state.lastConfirmedRegularSpaceId)
       or state.activeRegularSpaceId or state.lastConfirmedRegularSpaceId
     for i, space in ipairs(state.regularSpaceIds) do
       if space == anchor then request(state, state.regularSpaceIds[(i - 1 + event.delta) % #state.regularSpaceIds + 1]); break end
     end
-  elseif kind == "FocusPreviousRegular" then
-    request(state, state.previousRegularSpaceId)
+  elseif kind == "FocusPreviousDesktop" then
+    for _, spaceId in ipairs(state.regularSpaceIds) do
+      if spaceId == state.previousSpaceId then request(state, spaceId); break end
+    end
   elseif kind == "RegularCreatePressed" then
     if matching(s.inFlight, event) and s.inFlight.creating and not s.inFlight.invalidated then s.inFlight.phase = "adding" end
   elseif kind == "RegularSwitchPressed" then

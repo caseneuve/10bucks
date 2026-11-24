@@ -195,12 +195,12 @@ def fullscreen(driver, *, clock=time.monotonic, sleep=time.sleep):
     def native_full(o):
         return o.diagnostics.get('fixtureNative', {}).get('A') == {'fullscreen': True, 'spaces': ['F1']}
 
-    # Establish a distinguishable confirmed backup before entering fullscreen.
+    # Establish distinguishable regular history before creating fullscreen A.
     for command, target, previous in (('focusDesktop2', 'D2', 'D1'), ('focusDesktop1', 'D1', 'D2')):
         count = last.commands_received.get(command, 0)
         start = len(last.diagnostics.get('workspaceTrace', []))
         driver.hotkey(command)
-        last = gate(command + ' before F1; confirmed history backup ' + previous, lambda o:
+        last = gate(command + ' before F1; confirmed previous ' + previous, lambda o:
                     topology(o, target) and workspace(o, target) and slot(o, False)
                     and o.diagnostics['workspace']['history'].get('previous') == previous
                     and o.commands_received.get(command, 0) == count + 1
@@ -210,17 +210,17 @@ def fullscreen(driver, *, clock=time.monotonic, sleep=time.sleep):
     last = gate('native F1 A; three regular/four full Spaces; saved D1 slot unavailable', lambda o:
                 mixed(o, 'F1') and native_full(o) and o.focused == 'A' and not o.closed
                 and slot(o, True) and not o.diagnostics.get('workspace', {}).get('active')
-                and o.diagnostics.get('workspace', {}).get('history') == {'current': 'D1', 'previous': 'D1'})
+                and o.diagnostics.get('workspace', {}).get('history') == {'current': 'F1', 'previous': 'D1'})
     full_order = deepcopy(last.diagnostics['nativeDesktop']['order'])
     # A second fresh stability window catches snapshots that repeatedly rewrite
-    # the fullscreen return target or consume its confirmed regular backup.
+    # the fullscreen return target.
     last = gate('repeat native F1 snapshots retain previous D1', lambda o:
                 mixed(o, 'F1') and native_full(o) and slot(o, True) and o.focused == 'A'
                 and not o.closed and not o.diagnostics.get('workspace', {}).get('active')
-                and o.diagnostics.get('workspace', {}).get('history') == {'current': 'D1', 'previous': 'D1'})
+                and o.diagnostics.get('workspace', {}).get('history') == {'current': 'F1', 'previous': 'D1'})
     for commands, target, source, previous in (
-            (('focusPreviousDesktop', 'focusPreviousDesktop'), 'D1', 'F1', 'D2'),
-            (('focusPreviousDesktop',), 'D2', 'D1', 'D1'),
+            (('focusPreviousDesktop', 'focusPreviousDesktop'), 'D1', 'F1', 'F1'),
+            (('focusNextDesktop',), 'D2', 'D1', 'D1'),
             (('focusDesktop1',), 'D1', 'D2', 'D2')):
         counts = dict(last.commands_received)
         start = len(last.diagnostics.get('workspaceTrace', []))

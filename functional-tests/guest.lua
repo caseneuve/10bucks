@@ -266,7 +266,7 @@ local function candidateSnapshot()
         local state=runtime:state(); local op=state.switch.inFlight
         diagnostics.workspace={active=desktopAlias(state.activeRegularSpaceId),
             desired=desktopAlias(state.switch.desiredSpaceId),
-            history={current=desktopAlias(state.lastConfirmedRegularSpaceId),previous=desktopAlias(state.previousRegularSpaceId)},
+            history={current=desktopAlias(state.confirmedSpaceId),previous=desktopAlias(state.previousSpaceId)},
             inFlight=op and {source=desktopAlias(op.sourceId),destination=desktopAlias(op.destinationId),
                 generation=op.generation,phase=op.phase,invalidated=op.invalidated},revision=state.revision}
         diagnostics.workspaceTrace=copy(s.workspaceTrace)
@@ -516,6 +516,10 @@ local function sample()
             if native.closed[alias]==nil then
                 local row=native.windows[alias]
                 d.native[alias]={minimized=row.minimized,hidden=row.hidden,fullscreen=row.fullscreen,title=row.title,identityMatch=true}
+                if s.fullscreenChooser and alias=='A' then
+                    local owners=hs.spaces.windowSpaces(nativeNumber(alias)) or {}
+                    d.native[alias].owner=#owners==1 and desktopAlias(owners[1]) or nil
+                end
             end
         end
         diagnostics.chooser=d
