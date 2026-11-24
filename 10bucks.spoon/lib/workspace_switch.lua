@@ -46,6 +46,14 @@ local function snapshot(v)
   if position ~= #v.regularSpaceIds + 1 then return false end
   return (v.nativeSpaceType == "user") == (regular[v.nativeSpaceId] == true)
 end
+-- Creation always selects a new regular Space, not in its opening snapshot.
+function WorkspaceSwitch.destinationType(op)
+  if op.creating then return "user" end
+  for _, space in ipairs(op.regularSpaceIds) do
+    if space == op.destinationId then return "user" end
+  end
+  return "fullscreen"
+end
 local function matching(op, event)
   return op and event.generation == op.generation and event.sourceId == op.sourceId
     and event.sourceType == op.sourceType and event.destinationId == op.destinationId
@@ -71,7 +79,7 @@ function WorkspaceSwitch.validate(state)
   end
   local s = state.switch
   if type(s) ~= "table" or not integer(s.nextGeneration)
-    or (s.desiredSpaceId ~= nil and not regular[s.desiredSpaceId]) then return false, "malformed switch intent" end
+    or (s.desiredSpaceId ~= nil and not full[s.desiredSpaceId]) then return false, "malformed switch intent" end
   local op = s.inFlight
   if op and (not id(op.sourceId) or type(op.sourceType) ~= "string" or (not id(op.destinationId) and not op.creating)
     or not integer(op.generation) or op.generation < 1 or op.generation > s.nextGeneration
@@ -82,7 +90,7 @@ function WorkspaceSwitch.validate(state)
   if op then
     local captured = { displayId = state.displayId, revision = op.revision, nativeSpaceId = op.sourceId,
       nativeSpaceType = op.sourceType, regularSpaceIds = op.regularSpaceIds, fullSpaceIds = op.fullSpaceIds }
-    if not snapshot(captured) or (not op.creating and not dense(op.regularSpaceIds)[op.destinationId]) or op.revision > state.revision then
+    if not snapshot(captured) or (not op.creating and not dense(op.fullSpaceIds)[op.destinationId]) or op.revision > state.revision then
       return false, "malformed captured operation topology"
     end
     if op.pressSourceId ~= nil or op.pressSourceType ~= nil then
@@ -97,7 +105,7 @@ end
 local function begin(state)
   local s = state.switch
   if state.stopped or s.inFlight or not s.desiredSpaceId then return end
-  if s.desiredSpaceId == state.activeRegularSpaceId then s.desiredSpaceId = nil; return end
+  if s.desiredSpaceId == state.nativeSpaceId then s.desiredSpaceId = nil; return end
   s.nextGeneration = s.nextGeneration + 1
   s.inFlight = { sourceId = state.nativeSpaceId, sourceType = state.nativeSpaceType,
     destinationId = s.desiredSpaceId, generation = s.nextGeneration, revision = state.revision,
@@ -133,9 +141,13 @@ function WorkspaceSwitch.reduce(state, event)
       op.destinationId = created; op.phase = "selecting"
       op.selectionFullSpaceIds = event.fullSpaceIds; op.selectionRegularSpaceIds = event.regularSpaceIds
     end
-    local confirmed = matching(op, event) and not op.invalidated and op.phase == "pressed"
-      and event.nativeSpaceType == "user" and event.nativeSpaceId == op.destinationId
-      and regular[op.destinationId] and (not op.creating or (same(event.fullSpaceIds, op.selectionFullSpaceIds)
+    local destinationType = op and WorkspaceSwitch.destinationType(op)
+    local destinationAvailable = op and full[op.destinationId]
+      and ((regular[op.destinationId] == true) == (destinationType == "user"))
+    local destinationObserved = destinationAvailable and event.nativeSpaceId == op.destinationId
+      and event.nativeSpaceType == destinationType
+    local confirmed = destinationObserved and matching(op, event) and not op.invalidated and op.phase == "pressed"
+      and (not op.creating or (same(event.fullSpaceIds, op.selectionFullSpaceIds)
         and same(event.regularSpaceIds, op.selectionRegularSpaceIds)))
     if kind == "RegularSwitchContextRebased" and matching(op, event) and not op.invalidated
       and op.phase == "requested" and op.sourceType == "fullscreen" and not op.pressSourceId
@@ -145,10 +157,9 @@ function WorkspaceSwitch.reduce(state, event)
     end
     local sourceUnchanged = op and event.nativeSpaceId == (op.pressSourceId or op.sourceId)
       and event.nativeSpaceType == (op.pressSourceType or op.sourceType)
-    local destinationObserved = op and event.nativeSpaceId == op.destinationId and event.nativeSpaceType == "user"
     local expectedFull = op and (op.selectionFullSpaceIds or op.fullSpaceIds)
     local expectedRegular = op and (op.selectionRegularSpaceIds or op.regularSpaceIds)
-    local invalid = op and ((op.destinationId and not regular[op.destinationId])
+    local invalid = op and ((op.destinationId and not destinationAvailable)
       or ((op.phase == "requested" or op.phase == "selecting") and (not same(event.fullSpaceIds, expectedFull)
         or not same(event.regularSpaceIds, expectedRegular) or not sourceUnchanged))
       or (op.phase == "adding" and (not sourceUnchanged or ((not same(event.fullSpaceIds, op.fullSpaceIds)
@@ -158,19 +169,20 @@ function WorkspaceSwitch.reduce(state, event)
     if op and not confirmed and invalid then
       op.invalidated = true -- retain barrier until adapter acknowledges cancellation/failure
     end
+    local desired = s.desiredSpaceId
+    if desired and (not full[desired] or (dense(state.regularSpaceIds)[desired] ~= regular[desired])) then
+      s.desiredSpaceId = destinationAvailable and op.destinationId or nil
+    end
     state.revision = event.revision; state.nativeSpaceId = event.nativeSpaceId; state.nativeSpaceType = event.nativeSpaceType
     state.regularSpaceIds = event.regularSpaceIds; state.fullSpaceIds = event.fullSpaceIds
     if not regular[state.lastConfirmedRegularSpaceId] then state.lastConfirmedRegularSpaceId = nil end
     if not full[state.previousSpaceId] then state.previousSpaceId = nil end
     state.activeRegularSpaceId = event.nativeSpaceType == "user" and event.nativeSpaceId or nil
-    -- MC presentation is actual native reality, not confirmed navigation. Keep
-    -- fullscreen previous/anchor through rebase and duplicate source snapshots.
-    if not (op and op.pressSourceId and not op.invalidated and not confirmed and full[state.confirmedSpaceId]) then
-      navigationObserved(state)
-    end
-    if s.desiredSpaceId and not regular[s.desiredSpaceId] then
-      s.desiredSpaceId = op and regular[op.destinationId] and op.destinationId or nil
-    end
+    -- MC presentation is native reality, not confirmed navigation. A fullscreen
+    -- destination also waits for the adapter's MC-dismissed confirmation.
+    local presentation = op and not op.invalidated and not confirmed and full[state.confirmedSpaceId]
+      and (op.pressSourceId or (destinationType == "fullscreen" and destinationObserved and op.phase == "pressed"))
+    if not presentation then navigationObserved(state) end
     if confirmed then s.inFlight = nil; begin(state) end
   elseif state.stopped then
     return state
@@ -188,15 +200,14 @@ function WorkspaceSwitch.reduce(state, event)
     request(state, state.regularSpaceIds[event.position])
   elseif kind == "FocusRelativeRegular" then
     assert(event.delta == 1 or event.delta == -1, "requires delta +/-1")
-    local anchor = s.desiredSpaceId or (state.confirmedSpaceId ~= state.nativeSpaceId and state.lastConfirmedRegularSpaceId)
+    local desiredRegular = dense(state.regularSpaceIds)[s.desiredSpaceId] and s.desiredSpaceId
+    local anchor = desiredRegular or (state.confirmedSpaceId ~= state.nativeSpaceId and state.lastConfirmedRegularSpaceId)
       or state.activeRegularSpaceId or state.lastConfirmedRegularSpaceId
     for i, space in ipairs(state.regularSpaceIds) do
       if space == anchor then request(state, state.regularSpaceIds[(i - 1 + event.delta) % #state.regularSpaceIds + 1]); break end
     end
   elseif kind == "FocusPreviousDesktop" then
-    for _, spaceId in ipairs(state.regularSpaceIds) do
-      if spaceId == state.previousSpaceId then request(state, spaceId); break end
-    end
+    request(state, state.previousSpaceId)
   elseif kind == "RegularCreatePressed" then
     if matching(s.inFlight, event) and s.inFlight.creating and not s.inFlight.invalidated then s.inFlight.phase = "adding" end
   elseif kind == "RegularSwitchPressed" then

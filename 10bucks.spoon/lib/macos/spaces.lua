@@ -246,7 +246,8 @@ function Spaces:observe(context)
     return result
   end
   if not op or not op.pressed or context.displayId ~= op.intent.displayId
-    or context.nativeSpaceType ~= "user" or context.nativeSpaceId ~= op.intent.destinationId then return context end
+    or context.nativeSpaceId ~= op.intent.destinationId
+    or context.nativeSpaceType ~= Workspace.destinationType(op.intent) then return context end
   local ok, visible = pcall(self._missionControl, self)
   if not ok or visible then return context end
   local current = self.dependencies.current()

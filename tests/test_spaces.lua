@@ -135,6 +135,17 @@ return {
     a:dockBoundary(); visible(false)
     assert(a:observe(context).generation == 1 and not a.operation)
   end,
+  ["SPACE-005: fullscreen switch confirms the captured identity and type only after MC dismissal"] = function()
+    local a, intent, timers, _, context, presses, _, _, visible = fixture()
+    intent.destinationId = "F"
+    a:execute(intent); timers[2].callback(); assert(presses() == 1)
+    context.nativeSpaceId = "F"
+    assert(not a:observe(context).generation and a.operation, 'wrong native type must not confirm')
+    context.nativeSpaceType = "fullscreen"; visible(true)
+    assert(not a:observe(context).generation and a.operation, 'visible MC must not confirm')
+    a:dockBoundary(); visible(false)
+    assert(a:observe(context).generation == 1 and not a.operation)
+  end,
   ["CMD-006: AXPress nil false exception retain attempted barrier to native confirmation or timeout"] = function()
     for _, outcome in ipairs({ "nil", "false", "error" }) do
       local a, intent, timers, events, context, presses, _, _, _, setPress = fixture()

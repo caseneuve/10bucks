@@ -79,8 +79,7 @@ local function validState(state)
     end
   end
   if state.pending ~= nil and (type(state.pending) ~= "table" or not validId(state.pending.windowId)
-    or not validId(state.pending.spaceId)
-    or (state.pending.requireActiveSpace ~= nil and type(state.pending.requireActiveSpace) ~= "boolean")) then
+    or not validId(state.pending.spaceId)) then
     return false, "pending global focus is malformed"
   end
   return true
@@ -125,8 +124,7 @@ function FocusHistory.reduce(state, event)
   if event.type == "Observe" then
     local observed = target(event.target)
     if state.unplaced[observed.windowId] and state.unplaced[observed.windowId].uncertain then return state end
-    if state.pending and (not sameTarget(state.pending, observed)
-      or (state.pending.requireActiveSpace and event.activeSpaceId ~= observed.spaceId)) then return state end
+    if state.pending and not sameTarget(state.pending, observed) then return state end
     local newest = state.entries[#state.entries]
     if not state.pending and newest and sameTarget(newest, observed) then return state end
     local nextState = copy(state)
@@ -139,7 +137,6 @@ function FocusHistory.reduce(state, event)
   if event.type == "Request" then
     local requested = target(event.target)
     local nextState = copy(state)
-    requested.requireActiveSpace = event.requireActiveSpace
     nextState.pending = requested
     return nextState
   end
@@ -200,11 +197,7 @@ function FocusHistory.reduce(state, event)
     for _, entry in ipairs(nextState.entries) do
       if entry.windowId == descriptor.windowId then entry.spaceId = descriptor.spaceId end
     end
-    local pending = nextState.pending
-    if pending and pending.windowId == descriptor.windowId then
-      if not pending.requireActiveSpace then nextState.pending = descriptor
-      elseif pending.spaceId ~= descriptor.spaceId then nextState.pending = nil end
-    end
+    if nextState.pending and nextState.pending.windowId == descriptor.windowId then nextState.pending = descriptor end
     return nextState
   end
 
@@ -220,10 +213,7 @@ function FocusHistory.reduce(state, event)
     for _, entry in ipairs(nextState.entries) do
       if entry.windowId == promoted.windowId then entry.spaceId = promoted.spaceId end
     end
-    if nextState.pending and nextState.pending.windowId == promoted.windowId then
-      -- A desktop request cannot follow its window to another Space.
-      nextState.pending = not nextState.pending.requireActiveSpace and promoted or nil
-    end
+    if nextState.pending and nextState.pending.windowId == promoted.windowId then nextState.pending = promoted end
     return nextState
   end
 
@@ -284,8 +274,8 @@ function FocusHistory:observeLifecycle(event)
   self:_submit({ type = event.type, id = event.id, pid = event.pid })
 end
 
-function FocusHistory:observe(observed, activeSpaceId)
-  self:_submit({ type = "Observe", target = target(observed), activeSpaceId = activeSpaceId })
+function FocusHistory:observe(observed)
+  self:_submit({ type = "Observe", target = target(observed) })
 end
 
 function FocusHistory:remove(windowId)
@@ -327,12 +317,12 @@ function FocusHistory:relocate(targetValue)
 end
 
 -- Commit a new global request before its native focus effect is issued.
-function FocusHistory:request(requested, requireActiveSpace)
-  self:_submit({ type = "Request", target = target(requested), requireActiveSpace = requireActiveSpace })
+function FocusHistory:request(requested)
+  self:_submit({ type = "Request", target = target(requested) })
 end
 
 function FocusHistory:pending()
-  return copy(self.committed.pending)
+  return self.committed.pending and target(self.committed.pending) or nil
 end
 
 function FocusHistory:cancel()

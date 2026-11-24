@@ -127,6 +127,35 @@ return {
     submit(m, confirmed)
     assert(not m:state().switch.inFlight and m:state().confirmedSpaceId == "A" and m:state().previousSpaceId == "F")
   end,
+  ["SPACE-005 CMD-005: fullscreen previous uses the same serialized switch generation"] = function()
+    local m = departed(); submit(m, topology(4, "A"))
+    submit(m, { type = "FocusPreviousDesktop" })
+    local op = m:state().switch.inFlight
+    assert(op and op.destinationId == "F" and op.sourceId == "A")
+    submit(m, { type = "FocusPreviousDesktop" })
+    assert(m:state().switch.inFlight.generation == op.generation)
+    command(m, 1)
+    assert(m:state().switch.desiredSpaceId == "B" and m:state().switch.inFlight.generation == op.generation)
+    submit(m, operation(m, "RegularSwitchPressed"))
+    submit(m, topology(5, "F", "fullscreen"))
+    assert(m:state().confirmedSpaceId == "A" and m:state().previousSpaceId == "F")
+    local observed = topology(6, "F", "fullscreen")
+    for k, v in pairs(operation(m, "RegularTopologyObserved")) do observed[k] = v end
+    submit(m, observed)
+    local state = m:state()
+    assert(state.confirmedSpaceId == "F" and state.previousSpaceId == "A" and state.lastConfirmedRegularSpaceId == "A")
+    assert(state.switch.inFlight.generation == op.generation + 1 and state.switch.inFlight.destinationId == "B")
+  end,
+  ["SPACE-005 SPACE-006: incompatible fullscreen destination cannot confirm or become a regular retry"] = function()
+    local m = departed(); submit(m, topology(4, "A"))
+    submit(m, { type = "FocusPreviousDesktop" }); submit(m, operation(m, "RegularSwitchPressed"))
+    local reclassified = fact(5, "F", { "A", "F", "B", "C" }, { "A", "F", "G", "B", "C" })
+    for k, v in pairs(operation(m, "RegularTopologyObserved")) do reclassified[k] = v end
+    submit(m, reclassified)
+    assert(m:state().switch.inFlight.invalidated and not m:state().switch.desiredSpaceId)
+    submit(m, operation(m, "RegularSwitchTimedOut"))
+    assert(not m:state().switch.inFlight and m:state().confirmedSpaceId == "F", 'late reality is not a switch receipt')
+  end,
   ["SPACE-005 SPACE-006: removed fullscreen history, cold start, timeout and external navigation"] = function()
     local m = departed()
     submit(m, topology(4, "A")); assert(m:state().previousSpaceId == "F")

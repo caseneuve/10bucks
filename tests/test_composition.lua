@@ -830,42 +830,21 @@ return {
     assert(ten.workspace:state().activeRegularSpaceId == 'space')
     ten:stop()
   end,
-  ["SPACE-005 STATE-002: previous desktop returns to an existing chooser-visited fullscreen Space"] = function()
+  ["SPACE-005 STATE-002: previous desktop returns by Space identity without a managed fullscreen owner"] = function()
     local f, ten = workspaceSetup()
-    f.topology[#f.topology + 1] = { ManagedSpaceID = 'full', type = 4 }
-    f.topology[#f.topology + 1] = { ManagedSpaceID = 'other-full', type = 4 }
-    hs.spaces.spaceType = function(id) return (id == 'full' or id == 'other-full') and 'fullscreen' or 'user' end
-    f.fullscreen, f.owners = true, { 'full' }
-    ten.host:_ready(f.window, 'targetedReadiness', ten.host.windowCallback)
-    f:activate('next-space'); f:activate('space')
+    table.insert(f.topology, 2, { ManagedSpaceID = 'full', type = 4 })
+    f:activate('next-space'); f:activate('space'); f:activate('full')
     local previous = { type = 'FocusPreviousDesktop' }
-    local ui = chooserUI()
-    assert(ten:_submitCommand({ type = 'OpenWindowChooser' }))
-    assert(#ui.rows == 1); ui.complete(ui.rows[1]); assert(not ui.rejection)
-    assert(ten.workspace:state().previousSpaceId == 'next-space', 'focus request is not a native Space visit')
-    f.activeSpace, f.focusedWindow = 'full', f.window; f.contextWatcher.callback()
     assert(ten.workspace:state().previousSpaceId == 'space')
     assert(ten:_submitCommand(previous)); f:confirm('space')
     assert(ten.workspace:state().previousSpaceId == 'full')
     local focuses = f.focuses
-    f.owners = { 'other-full' }
-    assert(not ten:_submitCommand(previous) and f.focuses == focuses, 'exact fullscreen owner must still match')
-    f.owners, f.focusedWindow = { 'full' }, f.window -- focused-window read arrives ahead of the Space transition
-    assert(ten:_submitCommand(previous))
-    assert(f.focuses == focuses + 1 and ten.focusHistory:pending().requireActiveSpace)
-    assert(ten:_submitCommand(previous) and f.focuses == focuses + 1 and f.opens == 1)
-    for _, command in ipairs({ { type = 'FocusRegularPosition', position = 2 },
-      { type = 'FocusRelativeRegular', delta = 1 }, { type = 'CreateRegularDesktop' } }) do
-      local accepted, reason = ten:_submitCommand(command)
-      assert(not accepted and reason == 'desktop-switch-pending')
-      assert(f.opens == 1 and not ten.workspace:state().switch.inFlight and ten.focusHistory:pending().requireActiveSpace)
-    end
-    assert(ten.workspace:state().confirmedSpaceId == 'space' and ten.workspace:state().previousSpaceId == 'full')
-    f.activeSpace = 'full'; f.contextWatcher.callback()
-    assert(not ten.focusHistory:pending() and ten.workspace:state().confirmedSpaceId == 'full'
-      and ten.workspace:state().previousSpaceId == 'space')
-    assert(ten:_submitCommand({ type = 'FocusRegularPosition', position = 2 }))
-    f:confirm('next-space')
+    assert(ten:_submitCommand(previous) and ten:_submitCommand(previous))
+    assert(f.opens == 2 and #f.presses == 1 and ten.workspace:state().confirmedSpaceId == 'space')
+    assert(not ten:_submitCommand({ type = 'CreateRegularDesktop' }))
+    f:confirm('full')
+    assert(f.focuses == focuses and not ten.focusHistory:pending() and not ten.workspace:state().switch.inFlight)
+    assert(ten.workspace:state().confirmedSpaceId == 'full' and ten.workspace:state().previousSpaceId == 'space')
     ten:stop()
   end,
   ["FOCUS-005 CMD-005: desktop command cancels already-issued global previous authority without native reversal"] = function()
