@@ -134,6 +134,16 @@ return {
     local status = host:discoveryStatus(); status.complete = false; assert(host:discoveryStatus().complete)
     host:stop()
   end,
+  ["DISC-001 FS-005: an inactive fullscreen-only hint reaches exact bootstrap readiness"] = function()
+    local f, host, _, events, _, complete, b, callback = discoveryFixture()
+    f.hs.spaces.allSpaces = function() return { d = { 9, 11 } } end
+    f.hs.spaces.spaceType = function(space) return space == 11 and "fullscreen" or "user" end
+    b.isFullScreen = function() return true end
+    host:subscribeExistingWindows(callback); complete()
+    assert(events[2].metadata.id == 10 and events[2].metadata.spaceId == 11 and events[2].metadata.nativeFullscreen)
+    assert(f.focusRequests == 0)
+    host:stop()
+  end,
   ["DISC-001: terminal exclusion settles while unknown ownership and sink failures remain incomplete"] = function()
     for _, mode in ipairs({ "exclude", "owner", "sink", "poll", "timer", "deadline" }) do
       local f, host, job, _, timers, complete, _, callback = discoveryFixture()
