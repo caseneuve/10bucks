@@ -300,7 +300,7 @@ Optional predicates receive immutable normalized metadata. They MUST NOT receive
 
 ### DISC-001 — Bounded regular-desktop cold bootstrap
 
-MVP performs one bounded best-effort startup discovery across regular desktops, without activating those desktops or requesting focus. Native inventory is a discovery hint, not management or liveness proof; each admission requires confirmed native ownership, eligibility and exact resource identity. Unresolved candidates remain unknown, never guessed, excluded or removed merely to claim completeness. Startup records attempt settlement separately from complete resolution. Confirmed managed chooser rows remain usable while discovery is pending or incomplete; the chooser MUST NOT add discovery warnings or block opening. Regular-desktop activation and native lifecycle events continue incremental discovery afterward, without permanent retry polling. This user-approved MVP does not guarantee every pre-existing window is resolved at cold start. Fullscreen/minimized cold-start discovery remains deferred to TODO0003; already discovered unavailable members retain their existing state.
+MVP performs one bounded best-effort startup discovery across regular desktops, without activating those desktops or requesting focus. Native inventory is a discovery hint, not management or liveness proof; each admission requires confirmed native ownership, eligibility and exact resource identity. Unresolved candidates remain unknown, never guessed, excluded or removed merely to claim completeness. Startup records attempt settlement separately from complete resolution. Confirmed managed chooser rows remain usable while discovery is pending or incomplete; the chooser MUST NOT add discovery warnings or block opening. Regular-desktop activation and native lifecycle events continue incremental discovery afterward, without permanent retry polling. This user-approved MVP does not guarantee every pre-existing window is resolved at cold start. Fullscreen cold-start completeness remains deferred to TODO0003. Passive discovery may expose an ambiguous minimized regular-desktop window to the chooser as specified in CHOOSE-001. Already discovered unavailable members retain their existing state.
 
 ### DISC-002 — Uncertain unavailable windows
 
@@ -312,9 +312,9 @@ Cross-Space chooser/history scope covers all discovered managed windows. It MUST
 
 ## Chooser
 
-### CHOOSE-001 — Managed scope
+### CHOOSE-001 — Managed windows and explicit minimized restoration
 
-Chooser lists discovered managed windows only, across regular and native-fullscreen Spaces, including minimized and app-hidden windows with confirmed ownership. Excluded/transient/undiscovered windows are absent.
+Chooser lists discovered managed windows across regular and native-fullscreen Spaces, including minimized and app-hidden windows with confirmed ownership. One exception: a discovered minimized window with an exact identity, confirmed regular owner, visible application and otherwise eligible metadata may have an ambiguous dialog subrole. List it once, labeled minimized, unless excluded by user rules. Listing is not management: do not tile it, add it to managed history, focus it, or restore it at startup. On explicit selection restore only that resource, and classify it from fresh unminimized metadata: manage an eligible ordinary window, leave a genuine dialog untiled. Restore is not creation. Other excluded/transient/undiscovered windows remain absent.
 
 ### CHOOSE-002 — Cached backend
 
