@@ -66,7 +66,7 @@ An excluded window is outside layout membership, chooser results, and managed fo
 
 Focus, z-order, Space activation, snapshots, reflow, and title changes MUST NOT reorder a stack. Availability changes preserve survivor order except for the visible-column normalization required by COL-004.
 
-A positively identified native window tab group occupies one layout slot. Switching its selected tab changes the target of geometry and `j`/`k`, not the slot's column, order, or bar count. Distinct windows of the same application remain independent. An inactive tab is not a destroyed window; missing Space ownership is not proof of group identity or death.
+A positively identified native window tab group occupies one layout slot. Switching its selected tab changes the target of geometry and `j`/`k`, not the slot's column, order, or bar count. The chooser shows only the selected tab's title and focuses that exact tab; other windows of the same app have their own rows. Distinct windows of the same application remain independent. An inactive tab is not a destroyed window; missing Space ownership is not proof of group identity or death.
 
 ### WIN-003 — Admission order
 

@@ -78,6 +78,8 @@ return {
 
     admit("second", group)
     focus("second", group)
+    assert(core:chooserTabVisible("second") and not core:chooserTabVisible("first"))
+    assert(core:chooserTabVisible("control") and core:chooserTabVisible("left"))
     assert(core:submit({ type = "Reflow" }))
     status = core:status(); equal(status.count, 2); equal(status.position, 1)
     local layout = core:state().coordinators["space-1"].layouts.columns
