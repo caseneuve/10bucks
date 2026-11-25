@@ -37,6 +37,35 @@ local function initial()
 end
 
 return {
+  ["CHOOSE-001 RULE-002: an ambiguous minimized dialog is provisional only with confirmed eligibility and first-match permission"] = function()
+    local input = metadata({ subrole = "AXDialog", minimized = true, appHidden = false, nativeFullscreen = false, spaceType = "user" })
+    local function classify(rules)
+      local event = Rules.ready(input)
+      return Rules.filter(event.metadata, rules or {}, event.decision).action
+    end
+    equal(classify(), "provisional")
+    local exclude = { match = { titlePrefix = "Original" }, action = "exclude" }
+    local create = { match = { bundleID = "example.app" }, action = "nativeFullscreenOnCreate" }
+    equal(classify({ exclude, create }), "exclude")
+    equal(classify({ create, exclude }), "provisional")
+    input.title = nil
+    equal(classify({ exclude, create }), "defer")
+    equal(classify({ { match = { bundleID = "other", title = "Unknown" }, action = "exclude" }, create }), "provisional")
+    for field, wrong in pairs({ role = "AXSheet", subrole = "AXFloatingWindow", modal = true, movable = false, resizable = false,
+      selfProcess = true, appHidden = true, nativeFullscreen = true, spaceType = "fullscreen", minimized = false }) do
+      local original = input[field]
+      input[field] = wrong; assert(classify() ~= "provisional", field)
+      input[field] = nil; assert(classify() ~= "provisional", "unknown " .. field)
+      input[field] = original
+    end
+    input.minimized, input.origin = false, "bootstrap"
+    local restored = Rules.ready(input)
+    equal(restored.decision.action, "exclude")
+    assert(Rules.allowsRestoredDialog(restored.metadata, { create, exclude }))
+    assert(not Rules.allowsRestoredDialog(restored.metadata, { exclude, create }))
+    input.title = "Original title"
+    assert(not Rules.allowsRestoredDialog(Rules.ready(input).metadata, { exclude, create }))
+  end,
   ["RULE-001 RULE-002: titlePrefix is literal case-sensitive conjunctive data with existing unknown and safety semantics"] = function()
     local rules = {
       { match = { bundleID = "example.app", titlePrefix = "[Utility].*" }, action = "exclude" },

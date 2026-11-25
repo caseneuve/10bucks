@@ -80,7 +80,8 @@ local function validState(state)
   end
   if state.pending ~= nil and (type(state.pending) ~= "table" or not validId(state.pending.windowId)
     or not validId(state.pending.spaceId)
-    or (state.pending.restoreLease ~= nil and not validId(state.pending.restoreLease))) then
+    or (state.pending.restoreLease ~= nil and not validId(state.pending.restoreLease))
+    or (state.pending.provisionalPid ~= nil and (not validId(state.pending.provisionalPid) or not state.pending.restoreLease))) then
     return false, "pending global focus is malformed"
   end
   return true
@@ -139,6 +140,7 @@ function FocusHistory.reduce(state, event)
     local requested = target(event.target)
     local nextState = copy(state)
     requested.restoreLease = event.restoreLease
+    requested.provisionalPid = event.provisionalPid
     nextState.pending = requested
     return nextState
   end
@@ -323,8 +325,8 @@ function FocusHistory:relocate(targetValue)
 end
 
 -- Commit a new global request before its native focus effect is issued.
-function FocusHistory:request(requested, restoreLease)
-  self:_submit({ type = "Request", target = target(requested), restoreLease = restoreLease })
+function FocusHistory:request(requested, restoreLease, provisionalPid)
+  self:_submit({ type = "Request", target = target(requested), restoreLease = restoreLease, provisionalPid = provisionalPid })
 end
 
 function FocusHistory:pending()

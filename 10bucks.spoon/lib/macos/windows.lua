@@ -45,9 +45,9 @@ function Windows.new(dependencies)
   }, Windows)
 end
 
-function Windows:handleForId(id)
+function Windows:handleForId(id, provisional)
   local entry = self.cache[id]
-  return entry and entry.managed and entry.handle or nil
+  return entry and (entry.managed or (provisional and entry.provisional)) and entry.handle or nil
 end
 
 function Windows:_active(generation)
@@ -106,16 +106,42 @@ function Windows:_readyTransaction(observation, generation)
     self:_discardProvisional(observation.id, observation.resource)
     return
   end
-  local event = Rules.ready(observation.metadata)
+  local metadata = observation.metadata
+  local cached = self.cache[metadata.id]
+  local provisional = cached and cached.provisional and cached.resource == observation.resource
+  if provisional then
+    -- A previously offered row is never admitted while minimized. Restored
+    -- readiness is passive admission; only the live chooser request may focus.
+    if metadata.minimized ~= false or metadata.appHidden ~= false or metadata.spaceType ~= "user"
+      or metadata.nativeFullscreen ~= false then
+      local candidate = Rules.ready(metadata)
+      if not candidate or candidate.decision.action ~= "provisional" then
+        self:_emit({ type = "ProvisionalUnavailable", id = metadata.id, resource = observation.resource })
+        return "uncertain"
+      end
+    end
+    local copy = {}; for key, value in pairs(metadata) do copy[key] = value end
+    copy.origin = "bootstrap"
+    metadata = copy
+  end
+  local event = Rules.ready(metadata)
   if not event then
     self:_discardProvisional(observation.metadata.id, observation.resource)
     return
   end
   event.resource, event.appResource = observation.resource, observation.appResource
   event.tabGroup, event.tabOwners = observation.tabGroup, observation.tabOwners
+  event.fromProvisional = provisional or nil
+  if event.decision.action == "provisional" and (observation.handle == nil or observation.resource == nil
+    or observation.appResource == nil) then return "uncertain" end
   -- STATE-002: composition commits the exact lifetime decision before attachment.
   event.decision = self.native.decide(event, observation.creationGraceElapsed)
+  if provisional and metadata.minimized and event.decision.action ~= "provisional" then
+    self:_emit({ type = "ProvisionalUnavailable", id = event.id, resource = event.resource })
+    return "uncertain"
+  end
   if event.decision.action == "defer" then
+    if provisional then self:_emit({ type = "ProvisionalUnavailable", id = event.id, resource = event.resource }) end
     return event.decision.reason == "await-creation" and "await-creation" or "uncertain"
   end
   local retained, created = nil, false
@@ -137,6 +163,14 @@ function Windows:_readyTransaction(observation, generation)
   local entry = self.cache[event.id]
   local previouslyManaged = entry and entry.managed
   if entry then
+    if event.decision.action == "provisional" then
+      entry.provisional = true
+      if next(entry.availability or {}) then
+        entry.availability = nil
+        self:_probe(event.id, generation, true)
+        return false
+      end
+    end
     -- FS-002/DISC-002: a transition during attachment invalidates the
     -- pre-attachment ownership fact. Reuse targeted readiness before placement;
     -- never project a regular slot from that stale ownership snapshot.
@@ -180,12 +214,17 @@ function Windows:_readyTransaction(observation, generation)
   if (not ok or accepted == false) and not committed and entry then entry.managed = previouslyManaged end
   if not ok then error(accepted, 0) end
   if accepted == false then return false end
+  if entry and event.decision.action ~= "provisional" then entry.provisional = nil end
+  if event.fromProvisional and event.decision.action == "manage" and self.native.focusPromoted then
+    self.native.focusPromoted(event)
+  end
+  if event.decision.action == "provisional" then return "provisional" end
   return event.decision.action == "exclude" and "excluded" or true
 end
 
 function Windows:_probe(id, generation, force)
   if not self:_active(generation) or not validId(id) or (self.cache[id] and self.cache[id].subscription and not force) or self.probing[id] then return end
-  local hadCachedResource = self.cache[id] ~= nil
+  local cached = self.cache[id]
   self.probing[id] = true
   local subscription, completed = nil, false
   local function completion(metadata, handle, resource, appResource, tabGroup, tabOwners)
@@ -197,6 +236,7 @@ function Windows:_probe(id, generation, force)
     end
     if not self:_active(generation) then return end
     self.probing[id] = nil
+    if cached and (self.cache[id] ~= cached or cached.resource ~= resource) then return end
     if type(metadata) == "table" then
       local normalized = {}
       for key, value in pairs(metadata) do normalized[key] = value end
@@ -207,7 +247,7 @@ function Windows:_probe(id, generation, force)
       normalized.origin = "targetedReadiness"
       return self:_ready({ metadata = normalized, handle = handle, resource = resource, appResource = appResource,
         tabGroup = tabGroup, tabOwners = tabOwners }, generation)
-    elseif not hadCachedResource then
+    elseif not cached then
       self:_discardProvisional(id, resource)
     end
   end
@@ -252,6 +292,11 @@ function Windows:_application(observation, generation)
     self:_emit({ type = "ApplicationHidden", pid = observation.pid, resource = observation.resource })
   elseif observation.kind == "unhidden" then
     self:_emit({ type = "ApplicationUnhidden", pid = observation.pid, resource = observation.resource })
+    for id, entry in pairs(self.cache) do
+      if entry.provisional and entry.pid == observation.pid and entry.appResource == observation.resource then
+        self:_probe(id, generation, true)
+      end
+    end
   end
 end
 
@@ -315,9 +360,12 @@ function Windows:_window(observation, generation)
     end
     self:_emit({ type = types[observation.kind], id = observation.id, resource = observation.resource,
       presentationResource = observation.presentationResource })
-    if observation.kind == "exitedNativeFullscreen" then self:_probe(observation.id, generation, true) end
+    if observation.kind == "exitedNativeFullscreen" or entry.provisional then self:_probe(observation.id, generation, true) end
   elseif observation.kind == "titleChanged" and validId(observation.id) and type(observation.title) == "string" then
     local entry = self.cache[observation.id]
+    if entry and entry.provisional and entry.resource == observation.resource and not entry.attaching then
+      self:_probe(observation.id, generation, true)
+    end
     if observation.presentationResource ~= nil then
       if observation.resource ~= nil and (not entry or entry.resource ~= observation.resource) then return end
       self:_emit({ type = "WindowTitleChanged", id = observation.id, title = observation.title,

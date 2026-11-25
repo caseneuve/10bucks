@@ -38,7 +38,13 @@ local function decision(metadata)
   end
   if metadata.selfProcess then return { action = "exclude", reason = "self-process" } end
   if metadata.role ~= "AXWindow" then return { action = "exclude", reason = "non-standard-role" } end
-  if metadata.subrole ~= "AXStandardWindow" then return { action = "exclude", reason = "transient-subrole" } end
+  local ambiguousMinimized = metadata.subrole == "AXDialog" and metadata.minimized == true
+  if ambiguousMinimized and (metadata.appHidden ~= false or metadata.spaceType ~= "user" or metadata.nativeFullscreen) then
+    return { action = "defer", reason = "unavailable-provisional-window" }
+  end
+  if metadata.subrole ~= "AXStandardWindow" and not ambiguousMinimized then
+    return { action = "exclude", reason = "transient-subrole" }
+  end
   if metadata.modal then return { action = "exclude", reason = "modal" } end
   -- Native fullscreen commonly locks AXPosition. That is not a generic
   -- floating-window exemption: it is acceptable only after both the native
@@ -46,7 +52,7 @@ local function decision(metadata)
   local positionLockedFullscreen = metadata.spaceType == "fullscreen" and metadata.nativeFullscreen
   if not metadata.movable and not positionLockedFullscreen then return { action = "exclude", reason = "not-movable" } end
   if not metadata.resizable then return { action = "exclude", reason = "not-resizable" } end
-  return { action = "manage" }
+  return { action = ambiguousMinimized and "provisional" or "manage" }
 end
 
 function Rules.ready(input)
@@ -92,6 +98,11 @@ function Rules.ready(input)
     createdAfterStart = input.origin == "created",
   }
   local result = decision(metadata)
+  -- Provisional eligibility requires explicitly confirmed native facts; the
+  -- defaults above exist for ordinary readiness, not chooser restoration.
+  if result.action == "provisional" and (input.spaceType ~= "user" or input.nativeFullscreen ~= false) then
+    result = { action = "defer", reason = "unknown-provisional-owner" }
+  end
   return {
     type = "WindowReady", id = metadata.id, application = metadata.application, title = metadata.title,
     displayId = metadata.displayId, spaceId = metadata.spaceId, metadata = metadata, decision = result,
@@ -101,7 +112,7 @@ end
 -- RULE-001/002: user rules only narrow generic eligibility. An unavailable
 -- specified field blocks later rules only when this rule could still match.
 function Rules.filter(metadata, rules, generic, creationGraceElapsed)
-  if generic.action ~= "manage" then return generic end
+  if generic.action ~= "manage" and generic.action ~= "provisional" then return generic end
   for _, rule in ipairs(rules) do
     local mismatch, unknown = false, false
     for field, expected in pairs(rule.match) do
@@ -113,6 +124,7 @@ function Rules.filter(metadata, rules, generic, creationGraceElapsed)
     end
     if not mismatch then
       if unknown then return { action = "defer", reason = "unknown-rule-field" } end
+      if generic.action == "provisional" then return rule.action == "exclude" and { action = "exclude" } or generic end
       if rule.action == "nativeFullscreenOnCreate" then
         -- RULE-004 / FS-004: management is durable; the first readiness may
         -- additionally request fullscreen, but discovery never does.
@@ -127,7 +139,17 @@ function Rules.filter(metadata, rules, generic, creationGraceElapsed)
       return { action = rule.action }
     end
   end
-  return { action = "manage" }
+  return generic
+end
+
+-- A selected, restored dialog may receive native focus, but must not be
+-- admitted. Recheck every other generic fact and the fresh first-match policy.
+function Rules.allowsRestoredDialog(metadata, rules)
+  if metadata.subrole ~= "AXDialog" or metadata.minimized ~= false or metadata.appHidden ~= false
+    or metadata.spaceType ~= "user" or metadata.nativeFullscreen ~= false then return false end
+  local ordinary = {}; for key, value in pairs(metadata) do ordinary[key] = value end
+  ordinary.subrole = "AXStandardWindow"
+  return Rules.filter(ordinary, rules, decision(ordinary)).action == "manage"
 end
 
 -- LIFE-003/STATE-001: the Host-scoped composition owner replaces its map only
@@ -139,7 +161,7 @@ function Rules.reduce(records, event)
     assert(validId(event.id), "rule decision requires window identity")
     if prior then return records end -- conflicting identity remains uncertainty
     local action = event.decision.action
-    if action == "defer" then return records end
+    if action == "defer" or action == "provisional" or (event.fromProvisional and event.metadata.minimized) then return records end
     assert(action == "manage" or action == "exclude", "unsupported rule action")
     assert(validId(event.resource) and validId(event.appResource) and validId(event.application.pid), "rule decision requires lifetime identities")
   elseif event.type == "WindowDestroyed" then

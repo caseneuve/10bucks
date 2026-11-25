@@ -275,6 +275,12 @@ function Tenbucks:_updateChooser(event)
   if self.windowChooser then self.windowChooser:refresh() end
 end
 
+function Tenbucks:_provisionalRow(target)
+  for _, row in ipairs(self.chooserRows) do
+    if row.provisional and row.windowId == target.windowId and row.lease == target.lease then return row end
+  end
+end
+
 function Tenbucks:_cacheReady(event)
   local route = self.handleRegistry:target(event.id, event.resource)
   if route and (type(route.lease) == "number" or type(route.lease) == "string") and self:_targetIsManaged(route) then
@@ -337,6 +343,11 @@ function Tenbucks:_deliverEvent(event, handle)
   end
 
   if event.type == "ApplicationHidden" or event.type == "ApplicationUnhidden" or event.type == "ApplicationTerminated" then
+    if event.type ~= "ApplicationUnhidden" then
+      local pending = self.focusHistory:pending()
+      if pending and pending.provisionalPid == event.pid then self:_cancelManagedFocus() end
+    end
+    if event.type == "ApplicationHidden" then self:_updateChooser({ type = "HideApplication", pid = event.pid }) end
     if event.type ~= "ApplicationTerminated" then self.focusHistory:observeLifecycle(event) end
     if event.type ~= "ApplicationUnhidden" then
       local pending = self.focusHistory:pending()
@@ -378,6 +389,37 @@ function Tenbucks:_deliverEvent(event, handle)
     if handle ~= nil and not self.handleRegistry:remember(event.id, event.spaceId, handle, event.application.pid, event.resource, event.appResource) then
       error("current WindowReady route was refused after preflight", 0)
     end
+  end
+  if event.type == "WindowReady" and readyAction == "provisional" then
+    if handle == nil or not readyRouteAllowed() or not self:_coreForSpace(event.spaceId) then return false end
+    rememberReady()
+    self:_updateChooser({ type = "Upsert", row = { windowId = event.id, lease = event.resource,
+      pid = event.application.pid, text = event.title or "", subText = event.application.name or "", provisional = true } })
+    return true
+  end
+  if event.type == "ProvisionalUnavailable" or (event.type == "WindowReady" and event.fromProvisional and readyAction == "exclude") then
+    local pending = self.focusHistory:pending()
+    self:_updateChooser({ type = "RemoveProvisional", windowId = event.id, lease = event.resource })
+    if pending and pending.provisionalPid and pending.windowId == event.id and pending.restoreLease == event.resource then
+      local timer = self.managedFocusTimer
+      if readyAction == "exclude" and timer and pending.spaceId == event.spaceId
+        and Rules.allowsRestoredDialog(event.metadata, self.config.rules) then
+        local target = self.handleRegistry:target(event.id, event.resource)
+        local handle = target and target.spaceId == event.spaceId and self.handleRegistry:resolve(target)
+        local function authorized()
+          return self.managedFocusTimer == timer and self.handleRegistry:resolve(target) == handle
+        end
+        if handle then
+          local ok, result = pcall(self.host.focus, self.host, handle, event.resource, event.spaceId, false, nil, authorized, true)
+          if (not ok or result == nil) and authorized() and hs.alert then
+            hs.alert.show("10bucks: The dialog was restored but could not be focused. Visit its desktop to use it.")
+          end
+        end
+      end
+      if self.managedFocusTimer == timer then self:_cancelManagedFocus() end
+    end
+    if readyAction == "exclude" then self.handleRegistry:forget(event.id, nil, event.resource) end
+    return true
   end
   if event.type == "WindowReady" and event.metadata and event.metadata.spaceType == "fullscreen" then
     if readyAction ~= "manage" then return true end
@@ -434,7 +476,10 @@ function Tenbucks:_deliverEvent(event, handle)
   else
     if eventCore then self:_submitCore(eventCore, event) end
     self:_afterCoreEvent(event, eventCore)
-    if event.type == "WindowRestored" then self:_focusRestoredTarget(event) end
+    if event.type == "WindowRestored" or event.type == "WindowEnteredNativeFullscreen" then
+      self:_updateChooser({ type = "RemoveProvisional", windowId = event.id, lease = event.resource })
+    end
+    if event.type == "WindowRestored" and eventCore then self:_focusRestoredTarget(event) end
     if event.type == "WindowTitleChanged" and self.handleRegistry:matches(event.id, event.resource) then
       self:_updateChooser({ type = "Title", windowId = event.id, lease = event.resource, title = event.title })
     end
@@ -480,6 +525,44 @@ function Tenbucks:_focusRestoredTarget(event)
   end
 end
 
+function Tenbucks:_requestManagedFocus(target, restoreLease, provisionalPid)
+  self:_stopManagedFocusTimer()
+  self.focusHistory:request(target, restoreLease, provisionalPid)
+  local timer
+  timer = hs.timer.doAfter(5, function()
+    if self.managedFocusTimer ~= timer then return end
+    self.managedFocusTimer = nil
+    local pending = self.focusHistory:pending()
+    if not self.started or not pending or pending.windowId ~= target.windowId or pending.spaceId ~= target.spaceId then return end
+    self:_withEffectBatch(function() self:_cancelManagedFocus() end)
+    self.host:observeFocus() -- reconcile actual state, never retry the effect
+    if hs.alert then hs.alert.show("10bucks: Window focus was not confirmed. Visit the window and try again.") end
+  end)
+  self.managedFocusTimer = timer
+  return timer
+end
+
+function Tenbucks:_restoreProvisional(target, row)
+  local pending = self.focusHistory:pending()
+  if pending and pending.provisionalPid and pending.windowId == target.windowId
+    and pending.restoreLease == target.lease and pending.spaceId == target.spaceId then return true end
+  self:_cancelManagedFocus()
+  local handle = self.handleRegistry:resolve(target)
+  if not handle then return false, "stale-chooser-target" end
+  local timer = self:_requestManagedFocus(target, target.lease, row.pid)
+  local function authorized()
+    return self.managedFocusTimer == timer and self:_provisionalRow(target) ~= nil
+      and self.handleRegistry:resolve(target) == handle
+  end
+  local function eligible(metadata)
+    local event = Rules.ready(metadata)
+    return event and Rules.filter(event.metadata, self.config.rules, event.decision).action == "provisional"
+  end
+  if self.host:unminimize(handle, target.lease, target.spaceId, authorized, eligible) then return true end
+  if self.managedFocusTimer == timer then self:_cancelManagedFocus() end
+  return false, "managed-restore-failed"
+end
+
 function Tenbucks:_focusManagedTarget(target)
   if not self.host or not self:_targetIsManaged(target) then return false, "stale-chooser-target" end
   local targetCore, window = self:_coreForManagedWindow(target.windowId, target.lease)
@@ -508,19 +591,7 @@ function Tenbucks:_focusManagedTarget(target)
       if not accepted then return false, failure end
     end
   end
-  self:_stopManagedFocusTimer()
-  self.focusHistory:request(target, restoring and target.lease or nil)
-  local timer
-  timer = hs.timer.doAfter(5, function()
-    if self.managedFocusTimer ~= timer then return end
-    self.managedFocusTimer = nil
-    local pending = self.focusHistory:pending()
-    if not self.started or not pending or pending.windowId ~= target.windowId or pending.spaceId ~= target.spaceId then return end
-    self:_withEffectBatch(function() self:_cancelManagedFocus() end)
-    self.host:observeFocus() -- reconcile actual state, never retry the effect
-    if hs.alert then hs.alert.show("10bucks: Window focus was not confirmed. Visit the window and try again.") end
-  end)
-  self.managedFocusTimer = timer
+  local timer = self:_requestManagedFocus(target, restoring and target.lease or nil)
   local handle = self.handleRegistry:resolve(target)
   if not handle then self:_cancelManagedFocus(); return false, "stale-chooser-target" end
   if restoring then
@@ -552,6 +623,12 @@ function Tenbucks:_chooseWindow(choice)
     return false, "stale-chooser-target"
   end
   local target = self.handleRegistry:target(choice.windowId, choice.lease)
+  if choice.provisional then
+    local row = target and self:_provisionalRow(target)
+    if not row or not self.host then return false, "stale-chooser-target" end
+    if self.workspace and self.workspace:state().switch.inFlight then return false, "desktop-switch-pending" end
+    return self:_withEffectBatch(function() return self:_restoreProvisional(target, row) end)
+  end
   if not target or not self:_targetIsManaged(target) then return false, "stale-chooser-target" end
   local core, window = self:_coreForManagedWindow(target.windowId, target.lease)
   local unplaced = self.focusHistory:unplacedTarget(target.windowId)
@@ -609,7 +686,11 @@ function Tenbucks:_submitCommand(command)
     if owner ~= self.core or not window or not Model.isAvailable(window) then return false, "actual-focus-is-not-managed" end
     command = { type = command.type, memberId = window.id }
   end
-  return self:_withEffectBatch(function() return self.core:submit(command) end)
+  return self:_withEffectBatch(function()
+    local pending = self.focusHistory:pending()
+    if pending and pending.provisionalPid then self:_cancelManagedFocus() end
+    return self.core:submit(command)
+  end)
 end
 
 function Tenbucks:_startHost(context)
@@ -641,6 +722,7 @@ function Tenbucks:_startHost(context)
         return route ~= nil and self:_targetIsManaged(route)
       end,
       enableManaged = function(...) return host:enableManaged(...) end,
+      focusPromoted = function(event) self:_focusRestoredTarget(event) end,
       record = function(kind) self:_record(kind) end,
       recordEvent = function(eventType) if self.instrumentation then self.instrumentation:recordEvent(eventType) end end,
     }
@@ -652,12 +734,13 @@ function Tenbucks:_startHost(context)
       local observed = event.id and records[event.id]
       local authorized = observed and observed.resource == event.resource
       records = Rules.reduce(records, event)
-      if event.type == "WindowReady" and event.decision.action == "exclude" then return true end
-      if authorized and observed.action == "exclude" then
+      if event.type == "WindowReady" and event.decision.action == "exclude" and not event.fromProvisional then return true end
+      if event.type ~= "WindowReady" and authorized and observed.action == "exclude" then
         self.actualPresentation = Bar.reduceActual(self.actualPresentation, event)
         self:_publishBar(); return true
       end
-      return self:_submitEvent(event, event.id and adapter:handleForId(event.id))
+      return self:_submitEvent(event, event.id and adapter:handleForId(event.id,
+        event.type == "WindowReady" and event.decision.action == "provisional"))
     end })
     self.host, self.windows = host, adapter
     for _, core in pairs(self.cores or {}) do

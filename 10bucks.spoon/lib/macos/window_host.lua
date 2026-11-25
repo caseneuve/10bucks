@@ -359,6 +359,13 @@ function Host:_ready(window, origin, callback, membershipSet, token)
   if token and not self:_readinessCurrent(token) then return "rejected" end
   local metadata = self:_metadata(window, origin, spaceId, spaceType)
   if not metadata then return "uncertain" end
+  -- A membership snapshot is not proof of sole regular ownership for a
+  -- provisional row (or its subsequent independent reclassification).
+  local retained = self.handles[id]
+  if membershipSet and ((metadata.minimized and metadata.subrole == "AXDialog") or (retained and retained.provisional)) then
+    local owner, kind = self:_owner(id)
+    if owner ~= spaceId or kind ~= "user" then return "uncertain" end
+  end
   if token and not self:_readinessCurrent(token) then return "rejected" end
   local record = self:_remember(window)
   if not record then return "rejected" end
@@ -376,7 +383,10 @@ function Host:_ready(window, origin, callback, membershipSet, token)
   local deferred = accepted == "uncertain" or accepted == "await-creation"
   if token and not deferred and self.readiness[id] == token then self:_cancelReadiness(id) end
   if not ok then error(accepted, 0) end
-  if deferred or accepted == "excluded" then return accepted end
+  if deferred then return accepted end
+  if accepted == "provisional" then record.provisional = true
+  elseif accepted == "excluded" or accepted == true then record.provisional = nil end
+  if accepted == "excluded" then return accepted end
   return accepted == false and "rejected" or "ready"
 end
 
@@ -816,6 +826,8 @@ function Host:probeReadiness(id, callback)
     if spaceType == "user" then tabGroup, tabOwners = self:_tabFacts(id, record, true) end
     if not self:current(id, record.lease, record.appLease, record.pid) then return { detach = function() end } end
     local admitted = callback(metadata, record.handle, record.lease, record.appLease, tabGroup, tabOwners)
+    if admitted == "provisional" then record.provisional = true
+    elseif admitted == "excluded" or admitted == true then record.provisional = nil end
     -- Admission does not change MRU. Observe again only after the independent
     -- fullscreen readiness transaction, guarding against intervening focus.
     if admitted == true and spaceType == "fullscreen" then self:observeFocus(id)
@@ -1074,9 +1086,9 @@ function Host:_sessionAllowsValidity()
     and properties.kCGSSessionOnConsoleKey == true
 end
 
-function Host:_checkWindowValidity(id, record)
+function Host:_checkWindowValidity(id, record, provisional)
   if not self.windowCallback or not record or self.handles[id] ~= record or not record.active
-    or record.checkingValidity or not self.managedObservers[id] then return end
+    or record.checkingValidity or not (self.managedObservers[id] or (provisional and record.subscription)) then return end
   local element = record.element
   if not element or type(element.isValid) ~= "function" or not self:_sessionAllowsValidity() then return end
   self:_record("targetedValidityQueries")
@@ -1093,7 +1105,7 @@ function Host:_checkWindowValidity(id, record)
   return false
 end
 
-function Host:observeFocus(expectedId, mainPid)
+function Host:observeFocus(expectedId, mainPid, expectedRecord)
   -- A close can omit AX destruction yet leave an invalid exact AX resource.
   -- Reduce that fact before macOS fallback focus can redirect source recovery.
   if expectedId == nil and not mainPid and self.windowCallback then self:_checkPreviousFocus() end
@@ -1115,6 +1127,7 @@ function Host:observeFocus(expectedId, mainPid)
   -- An expected post-effect read only confirms its matching target; a
   -- nonmatching result is not a no-focus observation.
   if expectedId ~= nil and actualId ~= expectedId then return false end
+  if expectedRecord and (focused ~= expectedRecord.handle or self.handles[actualId] ~= expectedRecord) then return false end
   local app = call(focused, "application")
   local pid = call(app, "pid")
   if mainPid and mainPid ~= pid then return false end
@@ -1159,7 +1172,7 @@ function Host:requestCreationFullscreen(event, fallback)
   return deadline
 end
 
-function Host:unminimize(window, lease, spaceId, authorized)
+function Host:unminimize(window, lease, spaceId, authorized, provisionalEligible)
   local id = call(window, "id")
   local record = id and self.handles[id]
   local app = record and self.appResources[record.pid]
@@ -1167,11 +1180,15 @@ function Host:unminimize(window, lease, spaceId, authorized)
     return record and self.handles[id] == record and lease ~= nil and record.handle == window
       and self:current(id, lease, record.appLease, record.pid) and authorized()
   end
-  if not current() or self:_checkWindowValidity(id, record) ~= true then return false end
+  if not current() or self:_checkWindowValidity(id, record, provisionalEligible ~= nil) ~= true then return false end
   local owner, kind = self:_owner(id)
   if owner ~= spaceId or kind ~= "user" or call(window, "isFullScreen") ~= false
     or call(window, "isMinimized") ~= true or call(app and app.app, "isHidden") ~= false
     or not current() then return false end
+  if provisionalEligible then
+    local metadata = self:_metadata(window, "bootstrap", owner, kind)
+    if not metadata or not provisionalEligible(metadata) then return false end
+  end
   local ok, accepted = pcall(function()
     local worker = self:_ensureValidityWorker()
     if not worker or not current() then return false end
@@ -1187,14 +1204,14 @@ function Host:cancelRestore()
   if worker then worker:cancelRestore() end
 end
 
-function Host:focus(window, lease, spaceId, fullscreen, fullscreenOwner, restoredAuthority)
+function Host:focus(window, lease, spaceId, fullscreen, fullscreenOwner, restoredAuthority, provisional)
   local requestedId = call(window, "id")
   if requestedId == nil then return end
   local record = self.handles[requestedId]
   if lease ~= nil and (not record or record.handle ~= window
     or not self:current(requestedId, lease, record.appLease, record.pid)) then return end
   if record and record.handle == window then
-    local valid = self:_checkWindowValidity(requestedId, record)
+    local valid = self:_checkWindowValidity(requestedId, record, provisional)
     if not record.active or self.handles[requestedId] ~= record then return end
     if lease ~= nil then
       if valid ~= true then return end
@@ -1214,7 +1231,7 @@ function Host:focus(window, lease, spaceId, fullscreen, fullscreenOwner, restore
   self:_record("focusRequests")
   local ok, result = pcall(window.focus, window)
   if not ok or result == false then return end
-  return self:observeFocus(requestedId)
+  return self:observeFocus(requestedId, nil, restoredAuthority and record or nil)
 end
 
 function Host:execute(adapter, intents, current)

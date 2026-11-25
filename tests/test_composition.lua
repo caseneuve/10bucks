@@ -1139,6 +1139,79 @@ return {
       ten:stop()
     end
   end,
+  ["CHOOSE-001 LIFE-001 DISC-002: provisional minimized rows restore exact identity and classify independently"] = function()
+    for _, outcome in ipairs({ "ordinary", "dialog", "dialog-excluded", "superseded", "destroyed", "uncertain" }) do
+      local f = fakeHs()
+      local minimized, subrole, restores, cancels = true, "AXDialog", 0, 0
+      f.activeSpace = "next-space" -- exact owner on the inactive regular desktop
+      hs.spaces.windowsForSpace = function(space) return space == "space" and { 9 } or {} end
+      f.window.isMinimized = function() return minimized end
+      f.window.subrole = function() return subrole end
+      local ten = load(f):configure({ builtInDisplayUUID = "built-in", rules = {
+        { match = { title = "Do not focus" }, action = "exclude" },
+        { match = { bundleID = "app" }, action = "nativeFullscreenOnCreate" },
+      } })
+      f.window.setFullScreen = function() error("restoration must not request creation fullscreen") end
+      local worker = validityFake().create()
+      worker.unminimize = function(_, element)
+        assert(element == ten.host.handles[9].element and ten.focusHistory:pending().restoreLease)
+        restores = restores + 1; return true
+      end
+      worker.cancelRestore = function() cancels = cancels + 1 end
+      ten.nativeValidity = { create = function() return worker end }
+      ten:start()
+      ten.windows:discover(true) -- duplicate delivery must not introduce a second row or request
+      local Chooser = require("lib.window_chooser")
+      local rows = Chooser.filter(ten.chooserRows, "")
+      assert(#rows == 1 and rows[1].provisional and rows[1].subText == "App · Minimized")
+      local choice = rows[1]
+      local route = ten.handleRegistry:target(9, choice.lease)
+      assert(route.spaceId == "space" and not ten.cores.space:state().manager.windows[9])
+      assert(not ten.windows:handleForId(9) and f.frames == 0 and f.focuses == 0 and restores == 0)
+      assert(#ten.focusHistory:snapshot() == 0 and not ten:_chooseWindow({ windowId = 9, lease = choice.lease + 1, provisional = true }))
+      local app = f.window:application()
+      app.isHidden = function() return true end
+      f.life.callback(nil, hs.application.watcher.hidden, app)
+      assert(#ten.chooserRows == 0 and not ten:_chooseWindow(choice))
+      app.isHidden = function() return false end
+      f.life.callback(nil, hs.application.watcher.unhidden, app)
+      assert(#ten.chooserRows == 1 and ten.chooserRows[1].lease == choice.lease)
+      assert(ten:_chooseWindow(choice) and ten:_chooseWindow(choice) and restores == 1)
+      local lifecycle = f.windowWatcher.callback
+      f.focusedWindow = f.window; ten.host:observeFocus()
+      assert(not ten.cores.space:state().manager.windows[9] and #ten.focusHistory:snapshot() == 0)
+      f.focusedWindow = nil
+      if outcome == "superseded" then
+        ten:_submitCommand({ type = "FocusNext" })
+        assert(not ten.focusHistory:pending() and cancels == 1)
+      elseif outcome == "destroyed" then
+        lifecycle(nil, 'AXUIElementDestroyed')
+      elseif outcome == "uncertain" then
+        f.owners = { "space", "next-space" }
+      end
+      minimized = false
+      if outcome == "dialog-excluded" then f.window.title = function() return "Do not focus" end
+      elseif outcome ~= "dialog" then subrole = "AXStandardWindow" end
+      f.window.focus = function()
+        assert((ten.cores.space:state().manager.windows[9] ~= nil) == (outcome ~= "dialog"), "commit before focus")
+        f.focuses = f.focuses + 1
+        f.activeSpace = "space"; f.focusedWindow = f.window
+      end
+      lifecycle(nil, 'AXWindowDeminiaturized')
+      assert(not ten:_chooseWindow(choice), "stale provisional choice accepted after " .. outcome)
+      local promoted = outcome == "ordinary" or outcome == "superseded"
+      assert((ten.cores.space:state().manager.windows[9] ~= nil) == promoted)
+      assert(#ten.chooserRows == (promoted and 1 or 0) and (not promoted or not ten.chooserRows[1].provisional))
+      assert(f.focuses == ((outcome == "ordinary" or outcome == "dialog") and 1 or 0))
+      assert(#ten.focusHistory:snapshot() == (outcome == "ordinary" and 1 or 0))
+      if outcome == "ordinary" then assert(f.activeSpace == "space" and not ten.focusHistory:pending()) end
+      if outcome == "dialog" or outcome == "dialog-excluded" then
+        assert(f.activeSpace == (outcome == "dialog" and "space" or "next-space"))
+        assert(not ten.handleRegistry:target(9) and not ten.focusHistory:pending() and f.frames == 0)
+      end
+      ten:stop()
+    end
+  end,
   ["FOCUS-005 LIFE-001: failed native restore preflight clears pending without focusing"] = function()
     local f = fakeHs(); local ten = load(f); ten:start()
     focus(ten, 9)

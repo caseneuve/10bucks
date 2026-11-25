@@ -7,14 +7,14 @@ function Chooser.reduce(rows, event)
   local found = false
   for _, row in ipairs(rows) do
     local matches = row.windowId == event.windowId and row.lease == event.lease
-    if event.type == "RemoveApplication" and row.pid == event.pid then
+    if (event.type == "RemoveApplication" or (event.type == "HideApplication" and row.provisional)) and row.pid == event.pid then
       -- Authoritative application termination.
-    elseif event.type == "Remove" and matches then
+    elseif (event.type == "Remove" or (event.type == "RemoveProvisional" and row.provisional)) and matches then
     elseif event.type == "Upsert" and row.windowId == event.row.windowId then
       nextRows[#nextRows + 1] = event.row; found = true
     elseif event.type == "Title" and matches then
       nextRows[#nextRows + 1] = { windowId = row.windowId, lease = row.lease,
-        pid = row.pid, text = event.title, subText = row.subText }
+        pid = row.pid, text = event.title, subText = row.subText, provisional = row.provisional }
     else nextRows[#nextRows + 1] = row end
   end
   if event.type == "Upsert" and not found then nextRows[#nextRows + 1] = event.row end
@@ -103,8 +103,10 @@ function Chooser.filter(rows, query)
     -- Do not expose cache tables or transient scores to native consumers.
     local text = row.text
     if not text:find("%S") and row.subText:find("%S") then text = "[" .. row.subText .. "]" end
-    choices[#choices + 1] = { text = text, subText = row.subText,
-      windowId = row.windowId, lease = row.lease }
+    local subText = row.subText
+    if row.provisional then subText = subText == "" and "Minimized" or (subText .. " · Minimized") end
+    choices[#choices + 1] = { text = text, subText = subText,
+      windowId = row.windowId, lease = row.lease, provisional = row.provisional }
   end
   return choices
 end
