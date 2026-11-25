@@ -612,7 +612,7 @@ function Host:discoveryStatus()
   return { pending = s.pending, complete = s.complete, unresolvedCount = s.unresolvedCount, reason = s.reason }
 end
 
-function Host:_bootstrapRegular(callback)
+function Host:_bootstrapWindows(callback)
   local factory = self.nativeDiscovery or require("lib.macos.regular_discovery")
   local generation, candidates, seen, missing = self.generation, {}, {}, {}
   self.startupDiscovery = { pending = true, complete = false, unresolvedCount = 0 }
@@ -622,7 +622,7 @@ function Host:_bootstrapRegular(callback)
     self.startupDiscovery = { pending = false, complete = false, unresolvedCount = 0, reason = "inventory-unavailable" }
     return
   end
-  local regular = {}
+  local listed = {}
   for _, spaces in pairs(topology) do
     for _, space in ipairs(spaces) do
       local kind = moduleCall(self.hs.spaces.spaceType, space)
@@ -630,18 +630,18 @@ function Host:_bootstrapRegular(callback)
         self.startupDiscovery = { pending = false, complete = false, unresolvedCount = 0, reason = "ownership-unavailable" }
         return
       end
-      if kind == "user" then
+      if kind == "user" or kind == "fullscreen" then
         local ids = moduleCall(self.hs.spaces.windowsForSpace, space)
         if type(ids) ~= "table" then
           self.startupDiscovery = { pending = false, complete = false, unresolvedCount = 0, reason = "ownership-unavailable" }
           return
         end
-        for _, id in ipairs(ids) do regular[id] = true end
+        for _, id in ipairs(ids) do listed[id] = true end
       end
     end
   end
   for _, row in ipairs(inventory) do
-    if regular[row.windowId] and row.pid ~= self.hs.processInfo.processID then
+    if listed[row.windowId] and row.pid ~= self.hs.processInfo.processID then
       candidates[row.windowId] = row
     end
   end
@@ -670,7 +670,7 @@ function Host:_bootstrapRegular(callback)
     end
   end
   -- Scheduling only: normal-level hints get the finite budget first. Every
-  -- foreign regular candidate remains required, including higher-level rows.
+  -- listed foreign candidate remains required, including higher-level rows.
   table.sort(missing, function(a, b)
     local normalA = candidates[a.windowId].layer == 0
     local normalB = candidates[b.windowId].layer == 0
@@ -745,7 +745,7 @@ function Host:subscribeExistingWindows(callback, bootstrap, attempt)
     and not self:_checkRetainedApplications() then return { detach = function() end } end
   self.windowCallback = callback
   if bootstrap ~= false then
-    self:_bootstrapRegular(callback)
+    self:_bootstrapWindows(callback)
     return { detach = function() end }
   end
   local members
@@ -811,7 +811,7 @@ function Host:subscribeExistingWindows(callback, bootstrap, attempt)
     end
     return { detach = function() end }
   end
-  self:_bootstrapRegular(callback)
+  self:_bootstrapWindows(callback)
   return { detach = function() end }
 end
 
