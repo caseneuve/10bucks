@@ -99,6 +99,12 @@ requested focus. Selection obeys the separately approved restoration boundary.
 - Minimized-window cold-start resolution was **not** separately proved by this probe.
   Fullscreen selection/restoration remains distinct from merely listing a target.
 
+### Minimized restart evidence (2026-11-25, e6c8a18)
+
+**Verified in the guest:** with A minimized on D1, restarting only the manager on D2 left A minimized and D2 active. Startup found A's exact AX resource and sole D1 owner, but the chooser had no A row. The ordinary window's native subrole changed from `AXStandardWindow` to `AXDialog` when minimized; the eligibility rule excluded it. This is not an enumeration or Space-assignment failure. A real nonmodal, resizable, minimizable dialog also exposed the same tested titlebar controls. Requiring `AXDocument` misses ordinary non-document windows. No safe generic distinction established by these probes; do not broaden admission on this evidence. Decision needed on explicit user-directed restoration of ambiguous minimized windows versus managed-only chooser scope. No startup or chooser code change.
+
+Local artifacts under `vm/results/10bucks-run-ft-eaa07ef31097/`: `minimized-cold-e6c8a18-r1` (failed acceptance), `-r2`/`-r3` (eligibility attribution), and `minimized-subrole-controls-r1`/`-r2` (native positive/negative controls).
+
 ### Hypotheses / remaining investigation
 
 - A later owned-fixture raw `CGWindowListCopyWindowInfo(kCGWindowListOptionAll)`
