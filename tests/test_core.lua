@@ -50,6 +50,22 @@ local function frames(intents)
 end
 
 return {
+  ["COL-006 WIN-002: returning right after moving a new window restores the previous right top"] = function()
+    local effects
+    local core = new(function(intents) effects = intents end)
+    local function submit(event) assert(core:submit(event)) end
+    local function focus(id) submit({ type = "ActualFocusChanged", id = id }) end
+    submit({ type = "CycleLayout" })
+    for _, id in ipairs({ "A", "G1", "C" }) do submit(ready(id)); focus(id) end
+    submit({ type = "FocusPrevious" }); focus("G1")
+    submit(ready("G2")); focus("G2")
+    submit({ type = "MoveFocusedToOther", memberId = "G2" })
+    submit({ type = "FocusRightGroup" })
+    local target
+    for _, intent in ipairs(effects) do if intent.kind == "focus" then target = intent.windowId end end
+    equal(target, "G1")
+    equal(table.concat(core:state().coordinators["space-1"].layouts.columns.stacks[2].members, ","), "G1,C")
+  end,
   ["STACK-001 COL-004 WIN-003 FOCUS-005 BAR-003: established tab group keeps its slot and effects follow only the selected tab"] = function()
     local group, other = "native-tabs:1", "native-tabs:2"
     local observed

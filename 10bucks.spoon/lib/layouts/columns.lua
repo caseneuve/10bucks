@@ -225,6 +225,16 @@ function Columns.validate(state, memberIds, context)
   return true
 end
 
+local function lastFocusedMember(stack, context)
+  local history = context and context.managedFocusHistory or {}
+  for i = #history, 1, -1 do
+    local id = history[i]
+    if isAvailable(context.availableMembers, id) then
+      for _, member in ipairs(stack.members) do if member == id then return id end end
+    end
+  end
+end
+
 function Columns.initialState(memberIds, context)
   memberIds = memberIds or {}
   local expected, err = memberSet(memberIds)
@@ -245,16 +255,8 @@ function Columns.initialState(memberIds, context)
   -- New groups inherit their most recent available managed focus, not z-order
   -- or a reordering of admission membership. Existing layout states retain their
   -- own selections on later activations.
-  local history = context and context.managedFocusHistory or {}
   for _, stack in ipairs(stacks) do
-    for index = #history, 1, -1 do
-      local id = history[index]
-      if isAvailable(context.availableMembers, id) then
-        local found = false
-        for _, member in ipairs(stack.members) do if member == id then found = true; break end end
-        if found then stack.selectedId = id; break end
-      end
-    end
+    stack.selectedId = lastFocusedMember(stack, context) or stack.selectedId
   end
   local activeStack = #stacks > 0 and #stacks or nil
   if validId(context and context.focusedMemberId) then
@@ -459,7 +461,9 @@ function Columns.reduce(state, event, context)
     local stacks = copyStacks(state.stacks)
     local newSource, destination = stacks[sourceIndex], stacks[destinationIndex]
     table.remove(newSource.members, selectedIndex)
-    newSource.selectedId = newSource.members[math.min(selectedIndex, #newSource.members)]
+    if newSource.selectedId == selectedId then
+      newSource.selectedId = lastFocusedMember(newSource, context) or newSource.members[math.min(selectedIndex, #newSource.members)]
+    end
     destination.members[#destination.members + 1] = selectedId
     destination.selectedId = selectedId
     return copyState(state, stacks, destinationIndex)
