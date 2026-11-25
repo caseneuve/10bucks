@@ -144,6 +144,19 @@ return {
     assert(f.focusRequests == 0)
     host:stop()
   end,
+  ["DISC-001 FS-005: empty AXWindows can expose the exact inactive fullscreen main window without reconstruction"] = function()
+    local f, host, _, events, _, _, b, callback = discoveryFixture()
+    local app = b:application()
+    app.allWindows = function() return {} end
+    app.mainWindow = function() return b end
+    host.nativeDiscovery.inventory = function() return { { windowId = 10, pid = app:pid(), layer = 0 } } end
+    f.hs.spaces.spaceType = function(space) return space == 11 and "fullscreen" or "user" end
+    b.isFullScreen = function() return true end
+    host:subscribeExistingWindows(callback)
+    assert(#events == 1 and events[1].handle == b and events[1].metadata.spaceType == "fullscreen")
+    assert(host:discoveryStatus().complete and not host.discoveryJob and f.focusRequests == 0)
+    host:stop()
+  end,
   ["DISC-001: terminal exclusion settles while unknown ownership and sink failures remain incomplete"] = function()
     for _, mode in ipairs({ "exclude", "owner", "sink", "poll", "timer", "deadline" }) do
       local f, host, job, _, timers, complete, _, callback = discoveryFixture()

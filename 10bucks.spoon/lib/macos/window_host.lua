@@ -622,7 +622,7 @@ function Host:_bootstrapWindows(callback)
     self.startupDiscovery = { pending = false, complete = false, unresolvedCount = 0, reason = "inventory-unavailable" }
     return
   end
-  local listed = {}
+  local listed, fullscreenPids = {}, {}
   for _, spaces in pairs(topology) do
     for _, space in ipairs(spaces) do
       local kind = moduleCall(self.hs.spaces.spaceType, space)
@@ -636,30 +636,37 @@ function Host:_bootstrapWindows(callback)
           self.startupDiscovery = { pending = false, complete = false, unresolvedCount = 0, reason = "ownership-unavailable" }
           return
         end
-        for _, id in ipairs(ids) do listed[id] = true end
+        for _, id in ipairs(ids) do listed[id] = kind end
       end
     end
   end
   for _, row in ipairs(inventory) do
     if listed[row.windowId] and row.pid ~= self.hs.processInfo.processID then
       candidates[row.windowId] = row
+      if listed[row.windowId] == "fullscreen" then fullscreenPids[row.pid] = true end
     end
   end
   self:_record("bootstrapApplicationQueries")
   for _, app in ipairs(self.hs.application.runningApplications()) do
     if not self.started or generation ~= self.generation then return end
     pcall(self._attachApp, self, app, callback)
-    local ok, windows = pcall(app.allWindows, app)
-    if ok and type(windows) == "table" then
-      for _, window in ipairs(windows) do
-        if not self.started or generation ~= self.generation then return end
-        local id = call(window, "id")
-        local candidate = candidates[id]
-        if candidate and call(app, "pid") == candidate.pid then
-          local outcome = self:_ready(window, "bootstrap", callback)
-          seen[id] = outcome == "ready" or outcome == "excluded"
-        end
+    local pid = call(app, "pid")
+    local function accept(window, fullscreenOnly)
+      if not self.started or generation ~= self.generation then return end
+      local id = call(window, "id")
+      local candidate = candidates[id]
+      if candidate and not seen[id] and candidate.pid == pid
+        and (not fullscreenOnly or (listed[id] == "fullscreen" and call(window, "application") == app)) then
+        local outcome = self:_ready(window, "bootstrap", callback)
+        seen[id] = outcome == "ready" or outcome == "excluded"
       end
+    end
+    local windows = call(app, "allWindows")
+    if type(windows) == "table" then for _, window in ipairs(windows) do accept(window) end end
+    -- A background app can expose its fullscreen main window but no AXWindows.
+    -- Reading this attribute neither activates the app nor requests focus.
+    if fullscreenPids[pid] and self.started and generation == self.generation then
+      accept(call(app, "mainWindow"), true)
     end
   end
   local captured = {}
