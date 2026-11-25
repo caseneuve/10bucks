@@ -476,6 +476,9 @@ function Tenbucks:_deliverEvent(event, handle)
   else
     if eventCore then self:_submitCore(eventCore, event) end
     self:_afterCoreEvent(event, eventCore)
+    if event.type == "ActualFocusChanged" and (event.tabGroup or event.tabOwners) and self.windowChooser then
+      self.windowChooser:refresh()
+    end
     if event.type == "WindowRestored" or event.type == "WindowEnteredNativeFullscreen" then
       self:_updateChooser({ type = "RemoveProvisional", windowId = event.id, lease = event.resource })
     end
@@ -618,6 +621,11 @@ function Tenbucks:_focusManagedTarget(target)
   return true
 end
 
+function Tenbucks:_chooserTabVisible(target)
+  local core = target and self.cores[target.spaceId]
+  return not core or core:chooserTabVisible(target.windowId)
+end
+
 function Tenbucks:_chooseWindow(choice)
   if not self.started or (type(choice.lease) ~= "number" and type(choice.lease) ~= "string") then
     return false, "stale-chooser-target"
@@ -629,7 +637,7 @@ function Tenbucks:_chooseWindow(choice)
     if self.workspace and self.workspace:state().switch.inFlight then return false, "desktop-switch-pending" end
     return self:_withEffectBatch(function() return self:_restoreProvisional(target, row) end)
   end
-  if not target or not self:_targetIsManaged(target) then return false, "stale-chooser-target" end
+  if not target or not self:_chooserTabVisible(target) or not self:_targetIsManaged(target) then return false, "stale-chooser-target" end
   local core, window = self:_coreForManagedWindow(target.windowId, target.lease)
   local unplaced = self.focusHistory:unplacedTarget(target.windowId)
   if not window and not unplaced then return false, "stale-chooser-target" end
@@ -647,7 +655,13 @@ function Tenbucks:_submitCommand(command)
   if command.type == "OpenWindowChooser" then
     if not self.started then return false, "not-started" end
     if not self.windowChooser then
-      self.windowChooser = NativeChooser.new(hs, function(query) return WindowChooser.filter(self.chooserRows, query) end,
+      self.windowChooser = NativeChooser.new(hs, function(query)
+        local rows = {}
+        for _, row in ipairs(self.chooserRows) do
+          if self:_chooserTabVisible(self.handleRegistry:target(row.windowId, row.lease)) then rows[#rows + 1] = row end
+        end
+        return WindowChooser.filter(rows, query)
+      end,
         function(choice) return self:_chooseWindow(choice) end)
     end
     self.windowChooser:show(); return true

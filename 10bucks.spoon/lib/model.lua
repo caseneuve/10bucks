@@ -189,6 +189,11 @@ function Model.new(identity)
   return state
 end
 
+function Model.isTabRepresentative(window)
+  local facts = window.observations
+  return (not facts.tabGroup or facts.tabSelected == true) and not facts.tabOwnerless
+end
+
 function Model.isAvailable(window)
   local lifecycle = window and window.lifecycle
   return lifecycle ~= nil and not lifecycle.minimized and not lifecycle.appHidden and not lifecycle.nativeFullscreen

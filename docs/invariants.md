@@ -66,7 +66,7 @@ An excluded window is outside layout membership, chooser results, and managed fo
 
 Focus, z-order, Space activation, snapshots, reflow, and title changes MUST NOT reorder a stack. Availability changes preserve survivor order except for the visible-column normalization required by COL-004.
 
-A positively identified native window tab group occupies one layout slot. Switching its selected tab changes the target of geometry and `j`/`k`, not the slot's column, order, or bar count. Distinct windows of the same application remain independent. An inactive tab is not a destroyed window; missing Space ownership is not proof of group identity or death.
+A positively identified native window tab group occupies one layout slot. Switching its selected tab changes the target of geometry and `j`/`k`, not the slot's column, order, or bar count. The chooser shows only the selected tab's title and focuses that exact tab; other windows of the same app have their own rows. Distinct windows of the same application remain independent. An inactive tab is not a destroyed window; missing Space ownership is not proof of group identity or death.
 
 ### WIN-003 — Admission order
 
@@ -298,9 +298,9 @@ Optional predicates receive immutable normalized metadata. They MUST NOT receive
 
 ## Discovery
 
-### DISC-001 — Bounded regular-desktop cold bootstrap
+### DISC-001 — Bounded cold bootstrap
 
-MVP performs one bounded best-effort startup discovery across regular desktops, without activating those desktops or requesting focus. Native inventory is a discovery hint, not management or liveness proof; each admission requires confirmed native ownership, eligibility and exact resource identity. Unresolved candidates remain unknown, never guessed, excluded or removed merely to claim completeness. Startup records attempt settlement separately from complete resolution. Confirmed managed chooser rows remain usable while discovery is pending or incomplete; the chooser MUST NOT add discovery warnings or block opening. Regular-desktop activation and native lifecycle events continue incremental discovery afterward, without permanent retry polling. This user-approved MVP does not guarantee every pre-existing window is resolved at cold start. Fullscreen cold-start completeness remains deferred to TODO0003. Passive discovery may expose an ambiguous minimized regular-desktop window to the chooser as specified in CHOOSE-001. Already discovered unavailable members retain their existing state.
+MVP performs one bounded best-effort startup discovery across regular desktops and native fullscreen Spaces, without activating them or requesting focus. Native inventory is a discovery hint, not management or liveness proof; each admission requires confirmed native ownership, eligibility and exact resource identity. Unresolved candidates remain unknown, never guessed, excluded or removed merely to claim completeness. Startup records attempt settlement separately from complete resolution. Confirmed managed chooser rows remain usable while discovery is pending or incomplete; the chooser MUST NOT add discovery warnings or block opening. Regular-desktop activation and native lifecycle events continue incremental discovery afterward, without permanent retry polling. This user-approved MVP does not guarantee every pre-existing window is resolved at cold start. Fullscreen cold-start completeness remains deferred to TODO0003. Passive discovery may expose an ambiguous minimized regular-desktop window to the chooser as specified in CHOOSE-001. Already discovered unavailable members retain their existing state.
 
 ### DISC-002 — Uncertain unavailable windows
 

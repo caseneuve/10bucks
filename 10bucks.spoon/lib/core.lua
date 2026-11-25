@@ -41,7 +41,7 @@ local function context(manager, displayId, spaceId)
     local slot = facts.tabGroup or id
     slotByWindow[id] = slot
     if available[slot] == nil then ids[#ids + 1] = slot; available[slot] = false end
-    if Model.isAvailable(window) and not facts.tabOwnerless and (not facts.tabGroup or facts.tabSelected) then
+    if Model.isAvailable(window) and Model.isTabRepresentative(window) then
       available[slot], windowBySlot[slot] = true, id
     end
   end
@@ -422,6 +422,14 @@ function Core:status()
   local layout = context(state.manager, self.displayId, self.spaceId)
   local coordinator = state.coordinators[self.spaceId]
   return Coordinator.status(coordinator, layout.availableMembers, layout, self.dependencies), coordinator.activeLayoutId
+end
+
+-- Read one committed row without copying the whole layout on every keystroke.
+function Core:chooserTabVisible(id)
+  local window = self.runtime.committedState.manager.windows[id]
+  if not window then return true end
+  if not window.observations.tabGroup and not Model.isAvailable(window) then return true end
+  return Model.isTabRepresentative(window)
 end
 
 function Core:state() return self.runtime:state() end
