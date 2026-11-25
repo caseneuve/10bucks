@@ -91,7 +91,10 @@ function Model.validate(state)
       return fail("window lifecycle is malformed")
     end
     if type(window.observations) ~= "table"
-      or (window.observations.visible ~= nil and type(window.observations.visible) ~= "boolean") then
+      or (window.observations.visible ~= nil and type(window.observations.visible) ~= "boolean")
+      or (window.observations.tabGroup ~= nil and type(window.observations.tabGroup) ~= "string")
+      or (window.observations.tabSelected ~= nil and type(window.observations.tabSelected) ~= "boolean")
+      or (window.observations.tabOwnerless ~= nil and type(window.observations.tabOwnerless) ~= "boolean") then
       return fail("window observations are malformed")
     end
     if window.ruleAction ~= "manage" then return fail("managed window rule decision is malformed") end
@@ -253,24 +256,86 @@ local function normalizeReady(state, event)
   }
 end
 
+-- Positive exact AX group identity, not window lifetime or Space absence.
+local function selectTab(state, window, group)
+  if not window then return false end
+  local facts = window.observations
+  if group == false and facts.tabGroup then
+    facts.tabGroup, facts.tabSelected = nil, nil
+    return true
+  end
+  if type(group) ~= "string" then return false end
+  local changed = facts.tabGroup ~= group or facts.tabSelected ~= true
+  for _, candidate in pairs(state.windows) do
+    local other = candidate.observations
+    if candidate ~= window and other.tabGroup == group and other.tabSelected then
+      other.tabSelected, changed = false, true
+    end
+  end
+  facts.tabGroup, facts.tabSelected = group, true
+  return changed
+end
+
+local function observeTabOwners(state, event)
+  local changed = false
+  for id, fact in pairs(event.tabOwners or {}) do
+    local window = state.windows[id]
+    if window and (fact.ownerless == false or (fact.ownerless == true and event.tabGroup)) then
+      -- Keep an existing group slot stable during a handoff for which readiness
+      -- has not yet confirmed the new window. The host blocks its old effects.
+      if not (fact.ownerless and window.observations.tabGroup == event.tabGroup and not state.windows[event.id]) then
+        local value = fact.ownerless or nil
+        if window.observations.tabOwnerless ~= value then
+          window.observations.tabOwnerless, changed = value, true
+        end
+      end
+    end
+  end
+  return changed
+end
+
+local function tabSelectionChanged(window, group)
+  if not window or group == nil then return false end
+  local facts = window.observations
+  if group == false then return facts.tabGroup ~= nil end
+  return group ~= facts.tabGroup or not facts.tabSelected
+end
+
 function Model.reduce(state, event)
   requireValid(state)
   if type(event) ~= "table" or type(event.type) ~= "string" then error("event must be normalized", 2) end
   if not plain(event) then error("normalized events must contain plain Lua values", 2) end
 
   if event.type == "WindowReady" then
-    if state.windows[event.id] then return state end
+    if state.windows[event.id] then
+      if not event.tabOwners and not tabSelectionChanged(state.windows[event.id], event.tabGroup) then return state end
+      local nextState = copy(state)
+      local changed = observeTabOwners(nextState, event)
+      if selectTab(nextState, nextState.windows[event.id], event.tabGroup) or changed then return nextState end
+      return state
+    end
     local nextState = copy(state)
     local window = normalizeReady(nextState, event)
     if not window then return state end
     nextState.windows[window.id] = window
+    selectTab(nextState, window, event.tabGroup)
+    observeTabOwners(nextState, event)
     table.insert(nextState.spaces[window.placementSpaceId].memberIds, window.id)
     requireValid(nextState)
     return nextState
   end
 
-  if event.type == "WindowAbsentFromSnapshot" then
-    return state
+  if event.type == "WindowAbsentFromSnapshot" then return state end
+  if event.type == "ActualFocusChanged" and not event.tabOwners then
+    local actual, window = state.focus.actualWindow, state.windows[event.id]
+    if actual.id == event.id and validId(event.id) and actual.title == event.title
+      and actual.applicationName == event.applicationName and not tabSelectionChanged(window, event.tabGroup) then
+      local history = state.focus.managedHistory
+      local desired = window and state.focus.desiredBySpace[window.placementSpaceId]
+      if not window or history[#history] == event.id or (desired.pending and desired.targetId ~= event.id) then
+        return state
+      end
+    end
   end
 
   local nextState = copy(state)
@@ -327,6 +392,8 @@ function Model.reduce(state, event)
     if not validId(event.id) then error("ActualFocusChanged requires an id", 2) end
     nextState.focus.actualWindow = { id = event.id, title = event.title, applicationName = event.applicationName }
     local member = nextState.windows[event.id]
+    selectTab(nextState, member, event.tabGroup)
+    observeTabOwners(nextState, event)
     if member then
       local desired = nextState.focus.desiredBySpace[member.placementSpaceId]
       -- A stale callback may update actual-focus presentation, but it cannot

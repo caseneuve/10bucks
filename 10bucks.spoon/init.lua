@@ -14,7 +14,6 @@ local Bindings = require("lib.bindings")
 local CanaryInstrumentation = require("lib.macos.canary_instrumentation")
 local FocusHistory = require("lib.focus_history")
 local HandleRegistry = require("lib.macos.handle_registry")
-local Coordinator = require("lib.layouts.coordinator")
 local Model = require("lib.model")
 local Bar = require("lib.bar")
 local NativeBar = require("lib.macos.bar")
@@ -79,12 +78,7 @@ function Tenbucks:_publishBar()
   if not self.bar or not self.context then return end
   local status, layout = { position = nil, count = 0 }, "stack"
   if self.core and not self.suspended then
-    local state = self.core:state()
-    local coordinator = state.coordinators[self.core.spaceId]
-    local available = {}; for id, window in pairs(state.manager.windows) do available[id] = Model.isAvailable(window) end
-    status = Coordinator.status(coordinator, available, { displayId = self.core.displayId, spaceId = self.core.spaceId,
-      availableMembers = available }, self.core.dependencies)
-    layout = coordinator.activeLayoutId
+    status, layout = self.core:status()
   end
   self.bar:present(Bar.format(Bar.view({ context = self.context, status = status, layout = layout,
     actual = self.actualPresentation, timestamp = hs.timer.secondsSinceEpoch(), dark = self.darkAppearance })))
@@ -310,6 +304,13 @@ function Tenbucks:_submitEvent(event, handle)
 end
 
 function Tenbucks:_deliverEvent(event, handle)
+  if event.tabOwners then
+    local checked = {}
+    for id, fact in pairs(event.tabOwners) do
+      if self.handleRegistry:matches(id, fact.lease) then checked[id] = fact end
+    end
+    event.tabOwners = next(checked) and checked or nil
+  end
   -- A stale lifecycle callback cannot route or mutate actual presentation by
   -- an ID alone after its window resource lease ended. Current global focus is
   -- a separate native read and remains presentation-authoritative.

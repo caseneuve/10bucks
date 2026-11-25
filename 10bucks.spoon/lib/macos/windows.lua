@@ -112,6 +112,7 @@ function Windows:_readyTransaction(observation, generation)
     return
   end
   event.resource, event.appResource = observation.resource, observation.appResource
+  event.tabGroup, event.tabOwners = observation.tabGroup, observation.tabOwners
   -- STATE-002: composition commits the exact lifetime decision before attachment.
   event.decision = self.native.decide(event, observation.creationGraceElapsed)
   if event.decision.action == "defer" then
@@ -187,7 +188,7 @@ function Windows:_probe(id, generation, force)
   local hadCachedResource = self.cache[id] ~= nil
   self.probing[id] = true
   local subscription, completed = nil, false
-  local function completion(metadata, handle, resource, appResource)
+  local function completion(metadata, handle, resource, appResource, tabGroup, tabOwners)
     if completed then return end
     completed = true
     if subscription then
@@ -204,7 +205,8 @@ function Windows:_probe(id, generation, force)
         for key, value in pairs(metadata.application) do normalized.application[key] = value end
       end
       normalized.origin = "targetedReadiness"
-      return self:_ready({ metadata = normalized, handle = handle, resource = resource, appResource = appResource }, generation)
+      return self:_ready({ metadata = normalized, handle = handle, resource = resource, appResource = appResource,
+        tabGroup = tabGroup, tabOwners = tabOwners }, generation)
     elseif not hadCachedResource then
       self:_discardProvisional(id, resource)
     end
@@ -264,16 +266,22 @@ function Windows:_window(observation, generation)
   end
   if observation.kind == "focus" then
     if observation.id ~= nil and not validId(observation.id) then return end
-    self:_emit({ type = "ActualFocusChanged", id = observation.id,
-      title = type(observation.title) == "string" and observation.title or nil,
-      applicationName = type(observation.applicationName) == "string" and observation.applicationName or nil,
-      applicationPid = observation.applicationPid, resource = observation.resource,
-      appResource = observation.appResource, presentationResource = observation.presentationResource,
-      nativeFullscreen = observation.nativeFullscreen == true })
-    if observation.id ~= nil then
-      local entry = self.cache[observation.id]
-      self:_probe(observation.id, generation, entry and entry.creationFullscreen ~= nil)
+    local function emitFocus()
+      local entry = observation.id and self.cache[observation.id]
+      -- Tabs may change native ID without AXWindowCreated. Readiness must carry
+      -- the selection and peer availability together, before focus projection.
+      if observation.tabGroup and not entry then self:_probe(observation.id, generation) end
+      self:_emit({ type = "ActualFocusChanged", id = observation.id,
+        title = type(observation.title) == "string" and observation.title or nil,
+        applicationName = type(observation.applicationName) == "string" and observation.applicationName or nil,
+        applicationPid = observation.applicationPid, resource = observation.resource,
+        appResource = observation.appResource, presentationResource = observation.presentationResource,
+        nativeFullscreen = observation.nativeFullscreen == true, tabGroup = observation.tabGroup, tabOwners = observation.tabOwners })
+      if observation.id ~= nil and (not observation.tabGroup or entry) then
+        self:_probe(observation.id, generation, entry and entry.creationFullscreen ~= nil)
+      end
     end
+    if observation.tabGroup then self.withTransaction(emitFocus) else emitFocus() end
     return
   end
   if observation.kind == "destroyed" and validId(observation.id) then

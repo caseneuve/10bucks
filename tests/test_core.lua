@@ -50,6 +50,83 @@ local function frames(intents)
 end
 
 return {
+  ["STACK-001 COL-004 WIN-003 FOCUS-005 BAR-003: established tab group keeps its slot and effects follow only the selected tab"] = function()
+    local group, other = "native-tabs:1", "native-tabs:2"
+    local observed
+    local core = new(function(intents) observed = intents end)
+    local function admit(id, tabGroup)
+      local event = bootstrapReady(id)
+      event.tabGroup = tabGroup
+      assert(core:submit(event))
+    end
+    local function focus(id, tabGroup)
+      assert(core:submit({ type = "ActualFocusChanged", id = id, tabGroup = tabGroup }))
+    end
+    admit("left")
+    admit("control", other) -- same app, distinct AX group
+    admit("first", group)
+    focus("first", group)
+    assert(core:submit({ type = "CycleLayout" }))
+    focus("control", other)
+    assert(core:submit({ type = "MoveFocusedToOther", memberId = "control" }))
+    focus("control", other)
+    focus("first", group)
+    local base = core:state().coordinators["space-1"].layouts.columns
+    equal(table.concat(base.stacks[1].members, ","), "left")
+    equal(table.concat(base.stacks[2].members, ","), group .. "," .. other)
+    local status = core:status(); equal(status.count, 2); equal(status.position, 1)
+
+    admit("second", group)
+    focus("second", group)
+    assert(core:submit({ type = "Reflow" }))
+    status = core:status(); equal(status.count, 2); equal(status.position, 1)
+    local layout = core:state().coordinators["space-1"].layouts.columns
+    equal(table.concat(layout.stacks[2].members, ","), group .. "," .. other)
+    local sawSecond = false
+    for _, frame in ipairs(frames(observed)) do
+      assert(frame.windowId ~= "first")
+      if frame.windowId == "second" then equal(frame.frame.x, 510); sawSecond = true end
+    end
+    assert(sawSecond)
+    local function navigate(command, expected)
+      assert(core:submit({ type = command }))
+      for _, intent in ipairs(observed) do
+        if intent.kind == "focus" then equal(intent.windowId, expected); return end
+      end
+      error("missing focus intent")
+    end
+    navigate("FocusNext", "control"); focus("control", other)
+    navigate("FocusPrevious", "second"); focus("second", group)
+    assert(core:state().manager.windows.first)
+    assert(core:submit({ type = "WindowDestroyed", id = "first" }))
+    status = core:status(); equal(status.count, 2); equal(status.position, 1)
+  end,
+
+  ["LIFE-003 WIN-003 STACK-001 BAR-003: first tab creation suppresses exact ownerless slot without assigning or destroying it"] = function()
+    local observed
+    local core = new(function(intents) observed = intents end)
+    assert(core:submit(bootstrapReady("control")))
+    assert(core:submit(bootstrapReady("original")))
+    local event = bootstrapReady("new")
+    event.tabGroup = "native-tabs:1"
+    event.tabOwners = { original = { ownerless = true }, control = { ownerless = false } }
+    assert(core:submit(event))
+    local original = core:state().manager.windows.original
+    assert(original and original.observations.tabOwnerless and not original.observations.tabGroup)
+    local status = core:status(); equal(status.count, 2)
+    for _, frame in ipairs(frames(observed)) do assert(frame.windowId ~= "original") end
+    -- Unknown owner read (no fact) preserves both membership and the last checked availability.
+    assert(core:submit({ type = "ActualFocusChanged", id = "new", tabGroup = event.tabGroup }))
+    status = core:status(); equal(status.count, 2); equal(status.position, 2)
+    assert(core:submit({ type = "FocusNext" }))
+    local desired = core:state().manager.focus.desiredBySpace["space-1"]
+    equal(desired.targetId, "control")
+    assert(core:submit({ type = "ActualFocusChanged", id = "control" }))
+    assert(core:submit({ type = "ActualFocusChanged", id = "original", tabOwners = { original = { ownerless = false } } }))
+    status = core:status(); equal(status.count, 3)
+    assert(not core:state().manager.windows.original.observations.tabOwnerless)
+  end,
+
   ["COL-004 COL-005 LIFE-001 FOCUS-004 STATE-002: minimizing sole right member re-splits before effects, restore and admission keep visible columns"] = function()
     local observed, core
     core = new(function(intents) observed = intents end)

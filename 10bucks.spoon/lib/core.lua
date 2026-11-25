@@ -31,42 +31,41 @@ local function validId(value)
   return (type(value) == "string" and value ~= "") or (type(value) == "number" and value == value)
 end
 
-local function members(manager, spaceId)
-  return manager.spaces[spaceId].memberIds
-end
-
-local function availability(manager)
-  local result = {}
-  for id, window in pairs(manager.windows) do result[id] = Model.isAvailable(window) end
-  return result
-end
-
+-- Native windows remain separately managed (LIFE-003, WIN-003). Layout
+-- membership describes slots; only a group's selected window gets effects.
 local function context(manager, displayId, spaceId)
-  local actual = manager.focus.actualWindow.id
-  local available = availability(manager)
-  local desired = manager.focus.desiredBySpace[spaceId]
-  local focused = desired and desired.pending and desired.targetId
-    and available[desired.targetId] and desired.targetId or nil
-  if not focused then focused = manager.windows[actual] and available[actual] and actual or nil end
-  if not focused then
-    for index = #manager.focus.managedHistory, 1, -1 do
-      local candidate = manager.focus.managedHistory[index]
-      local window = manager.windows[candidate]
-      if window and window.placementSpaceId == spaceId and available[candidate] then
-        focused = candidate
-        break
-      end
+  local ids, available, slotByWindow, windowBySlot = {}, {}, {}, {}
+  for _, id in ipairs(manager.spaces[spaceId].memberIds) do
+    local window = manager.windows[id]
+    local facts = window.observations
+    local slot = facts.tabGroup or id
+    slotByWindow[id] = slot
+    if available[slot] == nil then ids[#ids + 1] = slot; available[slot] = false end
+    if Model.isAvailable(window) and not facts.tabOwnerless and (not facts.tabGroup or facts.tabSelected) then
+      available[slot], windowBySlot[slot] = true, id
     end
   end
-  return {
-    displayId = displayId,
-    spaceId = spaceId,
-    availableMembers = available,
-    -- Layout activation follows actual managed focus, or the last available
-    -- managed focus when a popup/unmanaged window currently owns macOS focus.
-    focusedMemberId = focused,
-    managedFocusHistory = manager.focus.managedHistory,
-  }
+  local function focusedSlot(id)
+    local slot = slotByWindow[id]
+    if available[slot] then return slot end
+  end
+  local history = {}
+  for _, id in ipairs(manager.focus.managedHistory) do
+    if slotByWindow[id] then history[#history + 1] = slotByWindow[id] end
+  end
+  local desired = manager.focus.desiredBySpace[spaceId]
+  local focused = (desired.pending and focusedSlot(desired.targetId)) or focusedSlot(manager.focus.actualWindow.id)
+  if not focused then
+    for index = #history, 1, -1 do
+      if available[history[index]] then focused = history[index]; break end
+    end
+  end
+  return { displayId = displayId, spaceId = spaceId, members = ids, availableMembers = available,
+    slotByWindow = slotByWindow, windowBySlot = windowBySlot, focusedMemberId = focused, managedFocusHistory = history }
+end
+
+local function selectable(layout, id)
+  return layout.windowBySlot[layout.slotByWindow[id]] == id and id ~= nil
 end
 
 local function contains(ids, id)
@@ -116,8 +115,11 @@ local function isGroupSelection(coordinator, memberId, group)
 end
 
 local function setDesired(manager, spaceId, targetId, pending, sourceGroup)
+  local previous = manager.focus.desiredBySpace[spaceId]
+  if not pending and not previous.pending and previous.targetId == targetId and previous.sourceGroup == sourceGroup then
+    return manager
+  end
   local nextManager = copy(manager)
-  local previous = nextManager.focus.desiredBySpace[spaceId]
   nextManager.focus.desiredBySpace[spaceId] = {
     targetId = targetId,
     pending = pending == true,
@@ -147,8 +149,23 @@ local function validateComposite(state, displayId, spaceId, dependencies)
   if not space or space.displayId ~= displayId or not state.coordinators[spaceId] then
     return false, "core scope identity is malformed"
   end
-  return Coordinator.validate(state.coordinators[spaceId], members(state.manager, spaceId),
-    context(state.manager, displayId, spaceId), dependencies)
+  local layout = context(state.manager, displayId, spaceId)
+  return Coordinator.validate(state.coordinators[spaceId], layout.members, layout, dependencies)
+end
+
+-- A group can first be confirmed for an already admitted window. Keep that
+-- window's physical column and order by renaming its slot in place.
+local function renameSlot(coordinator, old, new)
+  local nextState = copy(coordinator)
+  for _, layout in pairs(nextState.layouts) do
+    for _, stack in ipairs(layout.stacks or { layout }) do
+      for index, member in ipairs(stack.members) do
+        if member == old then stack.members[index] = new end
+      end
+      if stack.selectedId == old then stack.selectedId = new end
+    end
+  end
+  return nextState
 end
 
 local function reduceComposite(current, transaction, displayId, spaceId, dependencies)
@@ -161,14 +178,23 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
   local isCommand = transaction.type == "Command"
   if not isCommand then manager = Model.reduce(manager, transaction) end
   local coordinator = current.coordinators[spaceId]
-  local oldIds, newIds = members(before, spaceId), members(manager, spaceId)
+  local prior = context(before, displayId, spaceId)
+  local layout = context(manager, displayId, spaceId)
+  local oldIds, newIds = prior.members, layout.members
+  local oldSlot, newSlot = prior.slotByWindow[transaction.id], layout.slotByWindow[transaction.id]
+  if oldSlot and newSlot and newSlot ~= oldSlot and not contains(newIds, oldSlot) and not contains(oldIds, newSlot) then
+    coordinator = renameSlot(coordinator, oldSlot, newSlot)
+    for index, slot in ipairs(oldIds) do if slot == oldSlot then oldIds[index] = newSlot end end
+  end
+  local mergedSlot = oldSlot and newSlot and oldSlot ~= newSlot and contains(prior.members, oldSlot)
+    and contains(oldIds, newSlot) and oldSlot
 
   local removedSelected, recoveryGroup = false, nil
   -- Capture recovery authority from the complete pre-removal layout before
   -- any multi-member pruning can erase a later selected source.
   for _, id in ipairs(oldIds) do
     local group = groupForMember(coordinator, id)
-    if not contains(newIds, id) and isGroupSelection(coordinator, id, group)
+    if id ~= mergedSlot and not contains(newIds, id) and isGroupSelection(coordinator, id, group)
       and (not selectedGroup(coordinator) or group == selectedGroup(coordinator)) then
       removedSelected, recoveryGroup = true, group
     end
@@ -177,41 +203,45 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
     if not contains(newIds, id) then
       local sourceGroup = groupForMember(coordinator, id)
       local wasSelected = isGroupSelection(coordinator, id, sourceGroup)
-      local needsRecovery = wasSelected and (not selectedGroup(coordinator) or sourceGroup == selectedGroup(coordinator))
+      local needsRecovery = id ~= mergedSlot and wasSelected and (not selectedGroup(coordinator) or sourceGroup == selectedGroup(coordinator))
       coordinator = Coordinator.reduce(coordinator,
         { type = "Remove", memberId = id, recoverSource = needsRecovery }, newIds,
-        context(manager, displayId, spaceId), dependencies)
+        layout, dependencies)
     end
   end
   for _, id in ipairs(newIds) do
     if not contains(oldIds, id) then
       coordinator = Coordinator.reduce(coordinator, { type = "Admit", memberId = id }, newIds,
-        context(manager, displayId, spaceId), dependencies)
+        layout, dependencies)
     end
   end
-  if transaction.type == "ActualFocusChanged" and manager.windows[transaction.id] then
+  local observedWindow = manager.windows[transaction.id]
+  if (transaction.type == "ActualFocusChanged" or (transaction.type == "WindowReady" and transaction.tabGroup
+      and manager.focus.actualWindow.id == transaction.id)) and observedWindow
+    and (not observedWindow.observations.tabGroup or observedWindow.observations.tabSelected) then
     local priorDesired = before.focus.desiredBySpace[spaceId]
     if not priorDesired.pending or priorDesired.targetId == transaction.id then
-      coordinator = Coordinator.reduce(coordinator, { type = "ManagedFocusObserved", memberId = transaction.id }, newIds,
-        context(manager, displayId, spaceId), dependencies)
+      coordinator = Coordinator.reduce(coordinator, { type = "ManagedFocusObserved", memberId = newSlot }, newIds,
+        layout, dependencies)
       manager = setDesired(manager, spaceId, transaction.id, false, selectedGroup(coordinator))
     end
   end
   local minimizedSelection = transaction.type == "WindowMinimized"
-    and selectedId(coordinator) == transaction.id and not availability(manager)[transaction.id]
+    and selectedId(coordinator) == newSlot and prior.windowBySlot[oldSlot] == transaction.id
+    and not layout.availableMembers[newSlot]
   if minimizedSelection then recoveryGroup = selectedGroup(coordinator) end
-  if not sameData(availability(before), availability(manager)) then
+  if not sameData(prior.availableMembers, layout.availableMembers) and (not mergedSlot or minimizedSelection) then
     coordinator = Coordinator.reduce(coordinator,
       { type = "AvailabilityChanged", sourceGroup = recoveryGroup, recoverSource = minimizedSelection or removedSelected }, newIds,
-      context(manager, displayId, spaceId), dependencies)
+      layout, dependencies)
   end
   if minimizedSelection then
     coordinator = Coordinator.reduce(coordinator, { type = "RecoverSource", sourceGroup = recoveryGroup }, newIds,
-      context(manager, displayId, spaceId), dependencies)
+      layout, dependencies)
     removedSelected = true
   elseif removedSelected then
     coordinator = Coordinator.reduce(coordinator, { type = "RecoverSource", sourceGroup = recoveryGroup }, newIds,
-      context(manager, displayId, spaceId), dependencies)
+      layout, dependencies)
   end
   local commandChanged, commandAccepted = false, false
   if isCommand then
@@ -219,29 +249,29 @@ local function reduceComposite(current, transaction, displayId, spaceId, depende
     if transaction.name == "FocusTarget" then
       local window = manager.windows[transaction.windowId]
       commandAccepted = window ~= nil and window.placementSpaceId == spaceId
-        and (availability(manager)[transaction.windowId] == true or fullscreenFocusable(window))
-      if commandAccepted and availability(manager)[transaction.windowId] then
+        and (selectable(layout, transaction.windowId) == true or fullscreenFocusable(window))
+      if commandAccepted and selectable(layout, transaction.windowId) then
         coordinator = Coordinator.reduce(coordinator,
-          { type = "ManagedFocusObserved", memberId = transaction.windowId }, newIds,
-          context(manager, displayId, spaceId), dependencies)
+          { type = "ManagedFocusObserved", memberId = layout.slotByWindow[transaction.windowId] }, newIds,
+          layout, dependencies)
       end
     else
       local event = { type = transaction.name }
       for key, value in pairs(transaction) do if key ~= "type" and key ~= "name" then event[key] = value end end
+      if event.type == "MoveFocusedToOther" then event.memberId = layout.slotByWindow[event.memberId] end
       local capability
-      coordinator, capability = Coordinator.reduce(coordinator, event, newIds, context(manager, displayId, spaceId), dependencies)
+      coordinator, capability = Coordinator.reduce(coordinator, event, newIds, layout, dependencies)
       commandAccepted = capability.handled == true
     end
     commandChanged = coordinator ~= beforeCommand
   end
-  local available = availability(manager)
-  local target = transaction.name == "FocusTarget" and transaction.windowId or selectedId(coordinator, available)
-  local admitted = #newIds > #oldIds
+  local target = transaction.name == "FocusTarget" and transaction.windowId or layout.windowBySlot[selectedId(coordinator, layout.availableMembers)]
+  local admitted = transaction.type == "WindowReady" and #newIds > #oldIds
   local bootstrapAdmission = admitted and transaction.type == "WindowReady"
     and transaction.metadata and transaction.metadata.origin == "bootstrap"
   local directional = transaction.name == "FocusLeftGroup" or transaction.name == "FocusRightGroup"
   local commandFocus = isCommand and commandAccepted and focusCommands[transaction.name] and (not directional or commandChanged)
-  if focusAuthority and target and (available[target] or fullscreenFocusable(manager.windows[target])) and ((admitted and not bootstrapAdmission) or removedSelected or commandFocus) then
+  if focusAuthority and target and (selectable(layout, target) or fullscreenFocusable(manager.windows[target])) and ((admitted and not bootstrapAdmission) or removedSelected or commandFocus) then
     manager = setDesired(manager, spaceId, target, true, selectedGroup(coordinator))
   elseif focusAuthority and isCommand and commandAccepted
     and (transaction.name == "CycleLayout" or transaction.name == "ActivateLayout") and target then
@@ -269,8 +299,9 @@ function Core.new(options)
   if options.observeIntents ~= nil and type(options.observeIntents) ~= "function" then error("observeIntents must be a function", 2) end
   local initialManager = options.initialModelState or Model.new({ displayId = options.displayId, activeRegularSpaceId = options.regularSpaceId })
   local initial = { manager = copy(initialManager), coordinators = {} }
+  local layout = context(initial.manager, options.displayId, options.regularSpaceId)
   initial.coordinators[options.regularSpaceId] = options.initialCoordinatorState or Coordinator.initialState(
-    members(initial.manager, options.regularSpaceId), context(initial.manager, options.displayId, options.regularSpaceId), options.layoutDependencies)
+    layout.members, layout, options.layoutDependencies)
 
   local core = setmetatable({ displayId = options.displayId, spaceId = options.regularSpaceId,
     workArea = copy(options.workArea), dependencies = options.layoutDependencies, lastResult = { accepted = true }, observer = options.observeIntents or function() end }, Core)
@@ -281,20 +312,21 @@ function Core.new(options)
     deriveIntents = function(committed, input, _, previous)
       local coordinator = committed.coordinators[core.spaceId]
       local intents = {}
-      local available = availability(committed.manager)
+      local layout = context(committed.manager, core.displayId, core.spaceId)
+      local prior = context(previous.manager, core.displayId, core.spaceId)
       local commandAccepted = false
       if input.type == "Command" then
         local event = { type = input.name }
         for key, value in pairs(input) do if key ~= "type" and key ~= "name" then event[key] = value end end
+        if event.type == "MoveFocusedToOther" then event.memberId = layout.slotByWindow[event.memberId] end
         local capability
         if input.name == "FocusTarget" then
           local window = committed.manager.windows[input.windowId]
           capability = { handled = window ~= nil and window.placementSpaceId == core.spaceId
-              and (available[input.windowId] == true or fullscreenFocusable(window)),
+              and (selectable(layout, input.windowId) or fullscreenFocusable(window)),
             reason = "unknown-or-unavailable-target" }
         else
-          _, capability = Coordinator.reduce(coordinator, event, members(committed.manager, core.spaceId),
-            context(committed.manager, core.displayId, core.spaceId), core.dependencies)
+          _, capability = Coordinator.reduce(coordinator, event, layout.members, layout, core.dependencies)
         end
         commandAccepted = capability.handled == true
         if not capability.handled then intents[#intents + 1] = { kind = "result", accepted = false, reason = capability.reason } end
@@ -311,16 +343,15 @@ function Core.new(options)
       end
       local synchronize = commandAccepted or lifecycleChanged
         or not sameData(coordinator, previous.coordinators[core.spaceId])
-        or not sameData(members(committed.manager, core.spaceId), members(previous.manager, core.spaceId))
-        or not sameData(available, availability(previous.manager))
-        or (actualId ~= previous.manager.focus.actualWindow.id and available[actualId] == true
-          and not desired.pending)
+        or not sameData(layout.members, prior.members)
+        or not sameData(layout.windowBySlot, prior.windowBySlot)
+        or (actualId ~= previous.manager.focus.actualWindow.id and selectable(layout, actualId) and not desired.pending)
       if synchronize then
-        local projected = Coordinator.project(coordinator, available, core.workArea,
-          context(committed.manager, core.displayId, core.spaceId), core.dependencies)
+        local projected = Coordinator.project(coordinator, layout.availableMembers, core.workArea, layout, core.dependencies)
         core.currentFrames = {}
         local emitted = {}
         for _, frame in ipairs(projected) do
+          frame.windowId = layout.windowBySlot[frame.windowId]
           core.currentFrames[frame.windowId] = copy(frame.frame)
           if not emitted[frame.windowId] then
             emitted[frame.windowId] = true
@@ -337,7 +368,7 @@ function Core.new(options)
       local requestsFocus = desired.generation > priorDesired.generation
       local explicitFullscreen = input.type == "Command" and input.name == "FocusTarget"
         and fullscreenFocusable(committed.manager.windows[desired.targetId])
-      if requestsFocus and desired.pending and desired.targetId and (available[desired.targetId] or explicitFullscreen) then
+      if requestsFocus and desired.pending and desired.targetId and (selectable(layout, desired.targetId) or explicitFullscreen) then
         intents[#intents + 1] = { kind = "focus", windowId = desired.targetId, displayId = core.displayId,
           spaceId = core.spaceId, generation = desired.generation }
       end
@@ -386,6 +417,13 @@ function Core:setWorkArea(nextWorkArea)
   self.workArea = copy(nextWorkArea)
   self.currentFrames = nil
 end
+function Core:status()
+  local state = self.runtime:state()
+  local layout = context(state.manager, self.displayId, self.spaceId)
+  local coordinator = state.coordinators[self.spaceId]
+  return Coordinator.status(coordinator, layout.availableMembers, layout, self.dependencies), coordinator.activeLayoutId
+end
+
 function Core:state() return self.runtime:state() end
 function Core:version() return self.runtime:version() end
 

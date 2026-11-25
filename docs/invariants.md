@@ -66,6 +66,8 @@ An excluded window is outside layout membership, chooser results, and managed fo
 
 Focus, z-order, Space activation, snapshots, reflow, and title changes MUST NOT reorder a stack. Availability changes preserve survivor order except for the visible-column normalization required by COL-004.
 
+A positively identified native window tab group occupies one layout slot. Switching its selected tab changes the target of geometry and `j`/`k`, not the slot's column, order, or bar count. Distinct windows of the same application remain independent. An inactive tab is not a destroyed window; missing Space ownership is not proof of group identity or death.
+
 ### WIN-003 — Admission order
 
 A newly created or post-start discovered window appends according to the active layout's admission policy and receives managed selection/focus intent. Cold-bootstrap discovery appends without requesting focus merely because it was discovered; actual managed focus determines bootstrap selection as specified by COL-009. Only explicit structural commands and COL-004/COL-005 visible-column normalization may otherwise change layout order/grouping.

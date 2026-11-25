@@ -138,6 +138,87 @@ function Host:_owner(id)
   if kind == "fullscreen" or kind == "user" then return owners[1], kind end
 end
 
+-- AXTabGroup equality, not AX labels or owner absence, identifies a group.
+-- Only use the immediate bar whose AXWindow is this exact selected window.
+function Host:_tabFacts(id, record, confirmedOwner, refresh)
+  local element = record.element
+  local managed = self.managedObservers[id] ~= nil
+  local retry = record.tabOwnerRetry and (refresh or confirmedOwner)
+  if not refresh and not retry and record.tabChecked and not record.tabOwnerless
+    and (not record.tabGroupElement or record.tabSelected) then
+    return record.tabGroupToken, not managed and record.pendingTabOwners or nil
+  end
+  local children = call(element, "attributeValue", "AXChildren")
+  local group
+  if type(children) == "table" then
+    for _, child in ipairs(children) do
+      if call(child, "attributeValue", "AXRole") == "AXTabGroup"
+        and call(child, "attributeValue", "AXWindow") == element then
+        local tabs = call(child, "attributeValue", "AXTabs")
+        local selected = call(child, "attributeValue", "AXValue")
+        if type(tabs) == "table" then
+          for _, tab in ipairs(tabs) do
+            if tab == selected and call(tab, "attributeValue", "AXSubrole") == "AXTabButton" then group = child; break end
+          end
+        end
+        if group then break end
+      end
+    end
+  end
+  if not self:current(id, record.lease, record.appLease, record.pid) then return end
+  record.tabChecked = type(children) == "table"
+  local token, owners = nil, {}
+  local spaces = self.hs.spaces
+  local candidates = {}
+  local selectionChanged = group and (record.tabGroupElement ~= group or not record.tabSelected)
+  if group then
+    token = record.tabGroupElement == group and record.tabGroupToken or nil
+    if selectionChanged or retry then
+      record.tabOwnerRetry = nil
+      for peerId, peer in pairs(self.handles) do
+        if peer.appLease == record.appLease and peer.active then
+          if peer.tabGroupElement == group then
+            token, peer.tabSelected = peer.tabGroupToken, false
+          end
+          if peerId ~= id and self.managedObservers[peerId] then candidates[peerId] = peer end
+        end
+      end
+      token = token or ("native-tabs:" .. self:_nextLease())
+    end
+    record.tabGroupElement, record.tabGroupToken, record.tabSelected = group, token, true
+  end
+  local ended = not group and record.tabGroupElement and call(record.tabGroupElement, "isValid") == false
+  if record.tabOwnerless or ended then candidates[id] = record end
+  for peerId, peer in pairs(candidates) do
+    self:_record("targetedOwnershipQueries")
+    local spacesForPeer = moduleCall(spaces and spaces.windowSpaces, peerId)
+    if type(spacesForPeer) == "table" then
+      local ownerless = next(spacesForPeer) == nil
+      local exact = not ownerless or (token and peerId ~= id
+        and call(peer.handle, "id") == peerId and call(peer.element, "isValid") == true)
+      if exact and self:current(peerId, peer.lease, peer.appLease, peer.pid)
+        and (ownerless ~= (peer.tabOwnerless == true) or (peerId == id and ended and not ownerless)) then
+        peer.tabOwnerless = ownerless
+        owners[peerId] = { lease = peer.lease, ownerless = ownerless }
+      end
+    elseif selectionChanged and peerId ~= id then
+      -- One recheck at an existing main-window/readiness boundary, no timer.
+      record.tabOwnerRetry = true
+    end
+  end
+  if not self:current(id, record.lease, record.appLease, record.pid) then return end
+  if confirmedOwner and (record.tabOwnerless or ended) then
+    record.tabOwnerless = false
+    owners[id] = { lease = record.lease, ownerless = false }
+  end
+  if ended and owners[id] and not owners[id].ownerless then
+    record.tabGroupElement, record.tabGroupToken, record.tabSelected = nil, nil, nil
+    return false, owners
+  end
+  if next(owners) and not managed then record.pendingTabOwners = owners end
+  return token, next(owners) and owners or (not managed and record.pendingTabOwners or nil)
+end
+
 function Host:_metadata(window, origin, spaceId, spaceType)
   local app, id = call(window, "application"), call(window, "id")
   local pid = call(app, "pid")
@@ -281,6 +362,8 @@ function Host:_ready(window, origin, callback, membershipSet, token)
   if token and not self:_readinessCurrent(token) then return "rejected" end
   local record = self:_remember(window)
   if not record then return "rejected" end
+  local tabGroup, tabOwners
+  if spaceType == "user" then tabGroup, tabOwners = self:_tabFacts(id, record, true) end
   if token then
     token.publishLease = record.lease
     if not self:_readinessCurrent(token, record) then return "rejected" end
@@ -288,7 +371,8 @@ function Host:_ready(window, origin, callback, membershipSet, token)
   end
   -- Publication may defer; keep the same candidate identity and retry budget.
   local ok, accepted = pcall(callback, { kind = "ready", metadata = metadata, handle = window, resource = record.lease,
-    appResource = record.appLease, creationGraceElapsed = token and token.attempts > 1 })
+    appResource = record.appLease, creationGraceElapsed = token and token.attempts > 1,
+    tabGroup = tabGroup, tabOwners = tabOwners })
   local deferred = accepted == "uncertain" or accepted == "await-creation"
   if token and not deferred and self.readiness[id] == token then self:_cancelReadiness(id) end
   if not ok then error(accepted, 0) end
@@ -394,11 +478,13 @@ function Host:_attachApp(app, callback)
       self:_checkApplicationWindows(record.pid, record.lease)
       -- Payload is not global focus; sample independently after removal commits.
       self:observeFocus()
+    elseif event == "AXMainWindowChanged" then
+      self:observeFocus(nil, record.pid)
     end
   end)
   if not ok or not watcher then if record.appAttachment == attachment then record.appAttachment = nil end; return record end
   if not self.started or generation ~= self.generation or not record.active or self.appResources[record.pid] ~= record then pcall(watcher.stop, watcher); return nil end
-  local started, subscription = pcall(self._startOwned, self, watcher, { "AXWindowCreated", "AXFocusedWindowChanged" })
+  local started, subscription = pcall(self._startOwned, self, watcher, { "AXWindowCreated", "AXFocusedWindowChanged", "AXMainWindowChanged" })
   if not started then if record.appAttachment == attachment then record.appAttachment = nil end; error(subscription, 0) end
   if not self.started or generation ~= self.generation or not record.active or self.appResources[record.pid] ~= record then subscription.detach(); return nil end
   local ownedSubscription = subscription
@@ -726,7 +812,10 @@ function Host:probeReadiness(id, callback)
   local metadata = spaceId and self:_metadata(record.handle, "targetedReadiness", spaceId, spaceType)
   if metadata then
     self:_remember(record.handle)
-    local admitted = callback(metadata, record.handle, record.lease, record.appLease)
+    local tabGroup, tabOwners
+    if spaceType == "user" then tabGroup, tabOwners = self:_tabFacts(id, record, true) end
+    if not self:current(id, record.lease, record.appLease, record.pid) then return { detach = function() end } end
+    local admitted = callback(metadata, record.handle, record.lease, record.appLease, tabGroup, tabOwners)
     -- Admission does not change MRU. Observe again only after the independent
     -- fullscreen readiness transaction, guarding against intervening focus.
     if admitted == true and spaceType == "fullscreen" then self:observeFocus(id)
@@ -780,6 +869,7 @@ function Host:enableManaged(id, lease)
   local record = self.handles[id]
   if record and record.lease == lease and record.active and record.subscription then
     self.managedObservers[id] = { record = record, attachment = record.windowAttachment }
+    record.pendingTabOwners = nil
     self:_trackValidity()
   end
 end
@@ -1003,17 +1093,17 @@ function Host:_checkWindowValidity(id, record)
   return false
 end
 
-function Host:observeFocus(expectedId)
+function Host:observeFocus(expectedId, mainPid)
   -- A close can omit AX destruction yet leave an invalid exact AX resource.
   -- Reduce that fact before macOS fallback focus can redirect source recovery.
-  if expectedId == nil and self.windowCallback then self:_checkPreviousFocus() end
+  if expectedId == nil and not mainPid and self.windowCallback then self:_checkPreviousFocus() end
   self:_record("targetedFocusQueries")
   local reader = self.hs.window and self.hs.window.focusedWindow
   if type(reader) ~= "function" then return false end
   local ok, focused = pcall(reader)
   if not ok or not self.windowCallback then return false end
   if focused == nil then
-    if expectedId ~= nil then return false end
+    if expectedId ~= nil or mainPid then return false end
     self:_observePresentation(nil, nil, nil, nil)
     self:_cancelValidity()
     self.windowCallback({ kind = "focus" }); return true
@@ -1027,14 +1117,19 @@ function Host:observeFocus(expectedId)
   if expectedId ~= nil and actualId ~= expectedId then return false end
   local app = call(focused, "application")
   local pid = call(app, "pid")
+  if mainPid and mainPid ~= pid then return false end
   -- App acceptance is independent from a same-ID window conflict. BAR needs
   -- the accepted app lease to clear a genuinely terminated focused source.
   local appRecord = self:_acceptApp(app)
   local record = self:_remember(focused)
+  local tabGroup, tabOwners
+  if record then tabGroup, tabOwners = self:_tabFacts(actualId, record, false, mainPid ~= nil) end
+  if mainPid and tabGroup == nil and not tabOwners then return false end
   self:_observePresentation(focused, actualId, pid, app)
   self.windowCallback({ kind = "focus", id = actualId, title = call(focused, "title"),
     applicationName = call(app, "name"), applicationPid = pid, nativeFullscreen = call(focused, "isFullScreen") == true,
-    resource = record and record.lease, appResource = appRecord and appRecord.lease, presentationResource = self.presentationLease })
+    resource = record and record.lease, appResource = appRecord and appRecord.lease, presentationResource = self.presentationLease,
+    tabGroup = tabGroup, tabOwners = tabOwners })
   self:_trackValidity()
   return true
 end
@@ -1135,7 +1230,7 @@ function Host:execute(adapter, intents, current)
     local target = { windowId = intent.windowId, spaceId = intent.spaceId, lease = intent.lease }
     local window = self.handleRegistry and self.handleRegistry:resolve(target)
     if not window and not self.handleRegistry then window = adapter:handleForId(intent.windowId) end
-    if window and intent.kind == "frame" then
+    if window and intent.kind == "frame" and not (record and record.tabOwnerless) then
       -- Core emits frames only at real synchronization boundaries. Readback
       -- there is necessary to detect manual drift, even if our last write matches.
       self:_record("frameQueries")

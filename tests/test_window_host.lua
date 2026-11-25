@@ -77,6 +77,52 @@ local function discoveryFixture()
 end
 
 return {
+  ["WIN-003 LIFE-003: exact AX tab transition checks ownerless peers, not duplicate focus or readiness"] = function()
+    local f, app, oldElement = fake()
+    local oldWindow = f.window
+    local window = {}; for key, value in pairs(oldWindow) do window[key] = value end
+    window.id = function() return 10 end
+    oldElement.isValid = function() return true end
+    local current, group, control = nil, nil, { id = function() return 11 end, application = function() return app end }
+    local function node(attributes)
+      return { attributeValue = function(_, key) return attributes[key] end, isValid = function() return true end }
+    end
+    local newElement, controlElement = nil, node({})
+    newElement = { attributeValue = function(_, key) return key == "AXChildren" and (current == newElement and { group } or {}) end }
+    oldElement.attributeValue = function(_, key) return key == "AXChildren" and (current == oldElement and { group } or {}) end
+    local button = node({ AXSubrole = "AXTabButton" })
+    group = { attributeValue = function(_, key)
+      return ({ AXRole = "AXTabGroup", AXWindow = current, AXTabs = { button }, AXValue = button })[key]
+    end }
+    local owners = { [10] = { 9 }, [11] = { 9 } }
+    f.hs.axuielement.windowElement = function(w) return w == oldWindow and oldElement or (w == window and newElement or controlElement) end
+    f.hs.spaces.windowSpaces = function(id) f.ownerQueries = f.ownerQueries + 1; return owners[id] end
+    local host = Host.new(f.hs, { displayId = "d", regularSpaceId = 9 }):start()
+    host:_attachApp(app, function() end)
+    host.windowCallback = function(event) f.lastFocus = event end
+    local old, separate = host:_remember(oldWindow), host:_remember(control)
+    old.subscription, separate.subscription = {}, {}
+    host:enableManaged(9, old.lease); host:enableManaged(11, separate.lease)
+    f.focusedWindow, current = window, newElement
+    f.appWatchers[1].callback(window, "AXMainWindowChanged")
+    local token = assert(f.lastFocus.tabGroup)
+    assert(not f.lastFocus.tabOwners and not old.tabOwnerless)
+    local checked = f.ownerQueries
+    owners[9] = {}
+    f.appWatchers[1].callback(window, "AXMainWindowChanged")
+    assert(f.lastFocus.tabGroup == token and f.lastFocus.tabOwners[9].ownerless and not f.lastFocus.tabOwners[11])
+    assert(f.ownerQueries > checked and host.handles[9] == old and not separate.tabOwnerless)
+    checked = f.ownerQueries
+    host:observeFocus(10); assert(f.ownerQueries == checked)
+    local new = host.handles[10]
+    host:_tabFacts(10, new, true); assert(f.ownerQueries == checked)
+    new.subscription = {}; host:enableManaged(10, new.lease)
+    owners[9], owners[10] = { 9 }, {}
+    newElement.isValid = function() return true end
+    f.focusedWindow, current = oldWindow, oldElement
+    f.appWatchers[1].callback(oldWindow, "AXMainWindowChanged")
+    assert(f.lastFocus.tabGroup == token and f.lastFocus.tabOwners[10].ownerless and not old.tabOwnerless)
+  end,
   ["DISC-001 CHOOSE-002: finite startup admits inactive regular resource without focus or repeated enumeration"] = function()
     local f, host, job, events, _, complete, _, callback = discoveryFixture()
     host:subscribeExistingWindows(callback)
